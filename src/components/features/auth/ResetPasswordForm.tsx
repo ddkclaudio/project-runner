@@ -104,7 +104,7 @@ export function ResetPasswordForm() {
                   disabled={loading}
                 />
               </div>
-              <Button type="submit" variant="primary" size="lg" loading={loading} style={{ width: '100%' }}>
+              <Button type="submit" variant="secondary" size="lg" loading={loading} style={{ width: '100%' }}>
                 Guardar senha
               </Button>
             </>

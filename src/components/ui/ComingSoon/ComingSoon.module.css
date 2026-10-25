@@ -28,7 +28,7 @@
 .title {
   font-size: var(--font-2xl);
   font-weight: 700;
-  color: var(--text-primary);
+  color: var(--text-secondary);
 }
 
 .description {

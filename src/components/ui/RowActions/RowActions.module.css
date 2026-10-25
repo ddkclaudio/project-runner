@@ -18,5 +18,5 @@
 }
 .kebab:hover {
   background: var(--bg-active);
-  color: var(--text-primary);
+  color: var(--text-secondary);
 }

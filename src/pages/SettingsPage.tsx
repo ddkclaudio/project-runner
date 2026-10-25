@@ -111,7 +111,7 @@ export function SettingsPage({ section }: { section: 'general' | 'github' | 'app
             {update ? <InlineAlert variant={update.updateAvailable ? 'warning' : 'info'}>{update.message}</InlineAlert> : null}
             <div style={{ display: 'flex', gap: 8 }}>
               <Button onClick={() => void launcherCheckUpdate(true).then(setUpdate).catch((err) => toast.error(launcherError(err)))}>Procurar atualização</Button>
-              <Button variant="primary" disabled={!update?.updateAvailable} onClick={() => void launcherApplyUpdate().catch((err) => toast.error(launcherError(err)))}>Aplicar</Button>
+              <Button variant="secondary" disabled={!update?.updateAvailable} onClick={() => void launcherApplyUpdate().catch((err) => toast.error(launcherError(err)))}>Aplicar</Button>
             </div>
           </>
         ) : null}
@@ -132,7 +132,7 @@ export function SettingsPage({ section }: { section: 'general' | 'github' | 'app
             <Input label="Comando Linux para executáveis Windows" value={draft.linuxWindowsLaunchCommand} onChange={(event) => patch({ linuxWindowsLaunchCommand: event.target.value })} hint="{exe}, {gamePath} e {exeDir}" />
           </>
         ) : null}
-        <Button variant="primary" onClick={() => void save()}>Guardar</Button>
+        <Button variant="secondary" onClick={() => void save()}>Guardar</Button>
       </div>
     </PageShell>
   );

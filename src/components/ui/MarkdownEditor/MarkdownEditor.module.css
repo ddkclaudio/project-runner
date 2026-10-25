@@ -129,7 +129,7 @@
   flex-wrap: wrap;
   gap: 2px;
   padding: 6px 8px;
-  color: var(--text-primary) !important;
+  color: var(--text-secondary) !important;
   font-family: inherit !important;
   font-size: var(--font-base) !important;
   font-weight: 400 !important;
@@ -142,7 +142,7 @@
 .editor :global(.mdxeditor-toolbar [data-toolbar-item]),
 .editor :global(.mdxeditor-toolbar [class*='selectTrigger']),
 .editor :global(.mdxeditor-toolbar [class*='SelectTrigger']) {
-  color: var(--text-primary) !important;
+  color: var(--text-secondary) !important;
   background-color: transparent !important;
   font-family: inherit !important;
   font-size: var(--font-base) !important;
@@ -180,7 +180,7 @@
 .editor :global(.mdxeditor-toolbar [class*='toolbarButton']:hover),
 .editor :global(.mdxeditor-toolbar [class*='ToolbarButton']:hover) {
   background-color: var(--bg-hover) !important;
-  color: var(--text-primary) !important;
+  color: var(--text-secondary) !important;
 }
 
 .editor :global(.mdxeditor-toolbar [class*='toolbarToggleItem'][data-state='on']),
@@ -430,7 +430,7 @@
 :global(.mdxeditor-popup-container [class*='ButtonDropdownContainer']),
 :global(.mdxeditor-popup-container [role='listbox']) {
   background-color: var(--bg-elevated) !important;
-  color: var(--text-primary) !important;
+  color: var(--text-secondary) !important;
   border: 1px solid var(--border-default) !important;
   border-radius: var(--radius-md) !important;
   box-shadow: 0 10px 32px color-mix(in srgb, #000 40%, transparent) !important;
@@ -448,7 +448,7 @@
 :global(.mdxeditor-popup-container [class*='selectItem']),
 :global(.mdxeditor-popup-container [class*='SelectItem']),
 :global(.mdxeditor-popup-container [role='option']) {
-  color: var(--text-primary) !important;
+  color: var(--text-secondary) !important;
   background-color: transparent !important;
   cursor: pointer;
   font-family: inherit !important;
@@ -464,7 +464,7 @@
 :global(.mdxeditor-popup-container [class*='SelectItem'][data-highlighted]),
 :global(.mdxeditor-popup-container [role='option'][data-highlighted]) {
   background-color: var(--bg-hover) !important;
-  color: var(--text-primary) !important;
+  color: var(--text-secondary) !important;
   outline: none !important;
   font-weight: 400 !important;
 }
@@ -490,7 +490,7 @@
 :global(.mdxeditor-popup-container [role='dialog']),
 :global(.mdxeditor-popup-container [data-radix-popover-content]) {
   background: var(--bg-elevated) !important;
-  color: var(--text-primary) !important;
+  color: var(--text-secondary) !important;
   border: 1px solid var(--border-default) !important;
   border-radius: var(--radius-md);
   box-shadow: 0 10px 32px color-mix(in srgb, #000 40%, transparent);

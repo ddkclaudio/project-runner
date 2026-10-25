@@ -43,7 +43,7 @@
 .title {
   font-size: 13px;
   font-weight: 600;
-  color: var(--text-primary);
+  color: var(--text-secondary);
 }
 
 .headerActions {
@@ -73,7 +73,7 @@
 
 .closeBtn:hover,
 .headerActionBtn:hover {
-  color: var(--text-primary);
+  color: var(--text-secondary);
   background: var(--bg-active);
 }
 
@@ -183,7 +183,7 @@
 }
 
 .fieldActionBtn:hover:not(:disabled) {
-  color: var(--text-primary);
+  color: var(--text-secondary);
   background: var(--bg-active);
 }
 

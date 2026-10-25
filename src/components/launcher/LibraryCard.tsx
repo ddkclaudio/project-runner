@@ -2,9 +2,11 @@ import { convertFileSrc } from '@tauri-apps/api/core';
 import { IconPlayerPlay, IconDownload, IconRefresh, IconFolder, IconEyeOff, IconEye } from '@tabler/icons-react';
 import { useNavigate } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
-import { ItemCard } from '@/components/ui/ItemCard';
+import { ItemCard, gridCardStyles as gc } from '@/components/ui/ItemCard';
+import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
-import { StatusBadge } from '@/components/ui/StatusBadge';
+import { StatusBadge, type StatusTone } from '@/components/ui/StatusBadge';
+import type { ContextMenuItem } from '@/components/ui/ContextMenu';
 import { useToast } from '@/components/ui/Toast';
 import {
   appHide,
@@ -13,7 +15,6 @@ import {
   appLaunch,
   appOpenFolder,
   launcherError,
-  statusLabel,
   windowClose,
   type AppView,
   type InstallResult,
@@ -97,6 +98,37 @@ export function useLibraryMutations() {
   };
 }
 
+export function appStatusMeta(status: string): { label: string; tone: StatusTone } {
+  if (status === 'installed') return { label: 'Instalada', tone: 'success' };
+  if (status === 'update') return { label: 'Atualização', tone: 'warning' };
+  return { label: 'Por instalar', tone: 'muted' };
+}
+
+export function versionBadge(app: AppView): { label: string; variant: 'green' | 'amber' | 'neutral' } {
+  if (app.status === 'update') return { label: app.installedVersion || 'Atualização', variant: 'amber' };
+  if (app.installedVersion) return { label: app.installedVersion, variant: 'green' };
+  return { label: 'Por instalar', variant: 'neutral' };
+}
+
+export function libraryMenu(
+  app: AppView,
+  actions: ReturnType<typeof useLibraryMutations>,
+  onPrimary: (app: AppView) => void,
+): ContextMenuItem[] {
+  const primary = actions.primaryLabel(app);
+  const PrimaryIcon = app.status === 'update' ? IconRefresh : app.status === 'installed' ? IconPlayerPlay : IconDownload;
+  return [
+    { label: 'Abrir', icon: <IconEye size={15} />, onClick: () => actions.open(app) },
+    { label: primary, icon: <PrimaryIcon size={15} />, onClick: () => onPrimary(app) },
+    { label: 'Pasta', icon: <IconFolder size={15} />, onClick: () => void actions.openFolder(app) },
+    {
+      label: app.manuallyHidden ? 'Mostrar' : 'Ocultar',
+      icon: <IconEyeOff size={15} />,
+      onClick: () => void actions.hide(app),
+    },
+  ];
+}
+
 export function LibraryCard({
   app,
   focused,
@@ -109,61 +141,36 @@ export function LibraryCard({
   onPrimary: (app: AppView) => void;
 }) {
   const actions = useLibraryMutations();
-  const icon = appIconSrc(app);
-  const primary = actions.primaryLabel(app);
-  const PrimaryIcon = app.status === 'update' ? IconRefresh : app.status === 'installed' ? IconPlayerPlay : IconDownload;
+  const version = versionBadge(app);
+  const status = progress
+    ? { label: `${progress.phase} ${progress.percent}%`, tone: 'info' as const }
+    : appStatusMeta(app.status);
 
   return (
-    <div data-library-card tabIndex={0} className={focused ? styles.focused : undefined}>
+    <div data-library-card tabIndex={0} className={focused ? `${styles.cardHost} ${styles.focused}` : styles.cardHost}>
       <ItemCard
-        aria-label={app.name}
+        aria-label={`Abrir app ${app.name}`}
+        highlight={focused}
         onClick={() => actions.open(app)}
         actions={{
-          label: `Ações de ${app.name}`,
-          items: [
-            { label: 'Abrir', icon: <IconEye size={15} />, onClick: () => actions.open(app) },
-            { label: primary, icon: <PrimaryIcon size={15} />, onClick: () => onPrimary(app) },
-            { label: 'Pasta', icon: <IconFolder size={15} />, onClick: () => void actions.openFolder(app) },
-            {
-              label: app.manuallyHidden ? 'Mostrar' : 'Ocultar',
-              icon: <IconEyeOff size={15} />,
-              onClick: () => void actions.hide(app),
-            },
-          ],
+          label: `Ações para ${app.name}`,
+          items: libraryMenu(app, actions, onPrimary),
         }}
       >
-        <div className={styles.cardBody}>
-          {icon ? <img className={styles.icon} src={icon} alt="" /> : <span className={styles.icon} />}
-          <h2 className={styles.title}>{app.name}</h2>
-          <p className={styles.meta}>{app.repository}</p>
-          <p className={styles.meta}>
-            {app.installedVersion ? `Instalada ${app.installedVersion}` : 'Ainda não instalada'}
-            {app.remoteVersion ? ` · remota ${app.remoteVersion}` : ''}
-          </p>
+        <div className={gc.body}>
+          <div className={gc.title}>{app.name}</div>
+          <div className={gc.sub} title={app.repository}>
+            {app.repository}
+          </div>
+          <div className={gc.meta}>
+            <Badge variant={version.variant}>{version.label}</Badge>
+            <StatusBadge label={status.label} tone={status.tone} />
+          </div>
           {progress ? (
-            <div>
-              <div className={styles.progress} aria-valuenow={progress.percent} role="progressbar">
-                <span style={{ width: `${progress.percent}%` }} />
-              </div>
-              <p className={styles.meta}>{progress.phase} {progress.percent}%</p>
+            <div className={styles.progress} aria-valuenow={progress.percent} role="progressbar">
+              <span style={{ width: `${progress.percent}%` }} />
             </div>
           ) : null}
-          <div className={styles.row}>
-            <StatusBadge
-              label={statusLabel(app.status)}
-              tone={app.status === 'update' ? 'warning' : app.status === 'installed' ? 'success' : 'muted'}
-            />
-            <Button
-              size="sm"
-              variant="primary"
-              onClick={(event) => {
-                event.stopPropagation();
-                onPrimary(app);
-              }}
-            >
-              {primary}
-            </Button>
-          </div>
         </div>
       </ItemCard>
     </div>

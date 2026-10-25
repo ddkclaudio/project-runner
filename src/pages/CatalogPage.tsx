@@ -81,7 +81,7 @@ export function CatalogPage({ mode }: { mode: 'remote' | 'files' }) {
         <div className={styles.stack}>
           <Input label="JSON" value={raw} onChange={(event) => setRaw(event.target.value)} placeholder='{"apps":[]}' />
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-            <Button variant="primary" onClick={() => void libraryImport(raw).then(async (count) => {
+            <Button variant="secondary" onClick={() => void libraryImport(raw).then(async (count) => {
               await queryClient.invalidateQueries({ queryKey: ['launcher', 'library'] });
               toast.success(`${count} apps importadas.`);
             }).catch((err) => toast.error(launcherError(err)))}>
@@ -123,7 +123,7 @@ export function CatalogPage({ mode }: { mode: 'remote' | 'files' }) {
                   <p className={styles.title}>{app.name}</p>
                   <p className={styles.meta}>{app.repository}</p>
                 </div>
-                <Button size="sm" variant="primary" onClick={() => void add(app)}>Adicionar</Button>
+                <Button size="sm" variant="secondary" onClick={() => void add(app)}>Adicionar</Button>
               </div>
             ))}
           </section>

@@ -75,7 +75,7 @@
   font-size: var(--font-lg, 15px);
   font-weight: 650;
   letter-spacing: -0.02em;
-  color: var(--text-primary);
+  color: var(--text-secondary);
   line-height: 1.35;
   overflow: hidden;
 }
@@ -113,7 +113,7 @@
 
 .iconBtn:hover {
   background: var(--bg-active);
-  color: var(--text-primary);
+  color: var(--text-secondary);
 }
 
 .iconBtn:focus-visible {

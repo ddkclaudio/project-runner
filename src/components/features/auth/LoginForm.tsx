@@ -75,7 +75,7 @@ export function LoginForm() {
             />
           </div>
           <div className={styles.submitWrapper}>
-            <Button type="submit" variant="primary" size="lg" loading={loading} style={{ width: '100%' }}>
+            <Button type="submit" variant="secondary" size="lg" loading={loading} style={{ width: '100%' }}>
               Entrar
             </Button>
           </div>

@@ -99,7 +99,7 @@ export function RegisterForm() {
               error={confirm.length > 0 && password !== confirm ? 'As senhas não coincidem.' : undefined}
             />
           </div>
-          <Button type="submit" variant="primary" size="lg" loading={loading} style={{ width: '100%', marginTop: 8 }}>
+          <Button type="submit" variant="secondary" size="lg" loading={loading} style={{ width: '100%', marginTop: 8 }}>
             Criar conta
           </Button>
           <AuthCard.Hint>

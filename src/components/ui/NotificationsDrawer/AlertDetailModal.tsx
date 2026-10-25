@@ -354,7 +354,7 @@ export function AlertDetailModal({
               ) : null}
               {suggestionsHref ? (
                 <Button
-                  variant="primary"
+                  variant="secondary"
                   leftIcon={<IconBrain size={14} />}
                   onClick={openSuggestions}
                 >

@@ -14,7 +14,7 @@
 .title {
   font-size: 15px;
   font-weight: 600;
-  color: var(--text-primary);
+  color: var(--text-secondary);
   margin-bottom: 6px;
 }
 
@@ -58,7 +58,7 @@
 .rowLabel {
   font-size: 13px;
   font-weight: 500;
-  color: var(--text-primary);
+  color: var(--text-secondary);
   padding-top: 7px;
   line-height: 1.4;
 }

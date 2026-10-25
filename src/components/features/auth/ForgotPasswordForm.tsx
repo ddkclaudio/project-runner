@@ -80,7 +80,7 @@ export function ForgotPasswordForm() {
             </div>
           )}
           {!sent ? (
-            <Button type="submit" variant="primary" size="lg" loading={loading} style={{ width: '100%' }}>
+            <Button type="submit" variant="secondary" size="lg" loading={loading} style={{ width: '100%' }}>
               Gerar código
             </Button>
           ) : null}

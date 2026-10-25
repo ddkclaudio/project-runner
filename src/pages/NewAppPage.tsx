@@ -46,7 +46,7 @@ export function NewAppPage() {
         <Input label="Repositório" placeholder="dono/nome" value={repository} onChange={(event) => setRepository(event.target.value)} required />
         <Input label="Pasta" hint="Se ficar vazio, usa o nome do repositório." value={folderName} onChange={(event) => setFolderName(event.target.value)} />
         <Input label="Ícone" placeholder="https://..." value={appIconUrl} onChange={(event) => setAppIconUrl(event.target.value)} />
-        <Button type="submit" variant="primary" loading={pending}>Adicionar</Button>
+        <Button type="submit" variant="secondary" loading={pending}>Adicionar</Button>
       </form>
     </PageShell>
   );

@@ -62,7 +62,7 @@
 
 .menuBtn:hover {
   background: var(--bg-active);
-  color: var(--text-primary);
+  color: var(--text-secondary);
 }
 
 .hideOnTablet,
@@ -144,7 +144,7 @@
 
 .crumbActive {
   font-weight: 500;
-  color: var(--text-primary);
+  color: var(--text-secondary);
 }
 
 .metaPill {

@@ -9,7 +9,7 @@
 .pageTitle {
   font-size: 22px;
   font-weight: 600;
-  color: var(--text-primary);
+  color: var(--text-secondary);
   margin: 0 0 4px;
 }
 
@@ -30,7 +30,7 @@
 .sectionTitle {
   font-size: 14px;
   font-weight: 600;
-  color: var(--text-primary);
+  color: var(--text-secondary);
   margin: 0 0 4px;
 }
 
@@ -134,7 +134,7 @@
 .sliderValue {
   font-size: 13px;
   font-weight: 600;
-  color: var(--text-primary);
+  color: var(--text-secondary);
   min-width: 36px;
   text-align: right;
 }

@@ -101,7 +101,7 @@ function Overview({ app }: { app: AppView }) {
           {app.lastPlayed ? ` · último uso ${app.lastPlayed}` : ''}
         </p>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-          <Button variant="primary" onClick={() => void primary()}>{actions.primaryLabel(app)}</Button>
+          <Button variant="secondary" onClick={() => void primary()}>{actions.primaryLabel(app)}</Button>
           <Button onClick={() => void actions.openFolder(app)}>Abrir pasta</Button>
           <Button onClick={() => void actions.hide(app)}>{app.manuallyHidden ? 'Mostrar' : 'Ocultar'}</Button>
           <Button onClick={() => void openUrl(`https://github.com/${app.repository}`)}>GitHub</Button>
@@ -164,7 +164,7 @@ function Versions({ app }: { app: AppView }) {
               <p className={styles.title}>{release.tag}</p>
               <p className={styles.meta}>{release.published}</p>
             </div>
-            <Button size="sm" variant="primary" onClick={() => void actions.install(app, { tag: release.tag }).catch(() => undefined)}>Instalar</Button>
+            <Button size="sm" variant="secondary" onClick={() => void actions.install(app, { tag: release.tag }).catch(() => undefined)}>Instalar</Button>
           </div>
         ))}
       </div>
@@ -184,7 +184,7 @@ function Executable({ app }: { app: AppView }) {
         {(executables.data ?? []).map((executable) => (
           <Button
             key={executable}
-            variant={executable === app.selectedExecutable ? 'primary' : 'secondary'}
+            variant="secondary"
             onClick={() => void appSetExecutable(app.repository, executable).then(() => queryClient.invalidateQueries({ queryKey: ['launcher'] })).then(() => toast.success('Executável gravado.')).catch((err) => toast.error(launcherError(err)))}
           >
             {executable}
@@ -201,7 +201,7 @@ function Shortcuts({ app }: { app: AppView }) {
     <PageShell>
       <PageShell.Heading subtitle="O atalho abre o Painel com o nome desta app.">Atalhos</PageShell.Heading>
       <div style={{ display: 'flex', gap: 8 }}>
-        <Button variant="primary" onClick={() => void appShortcutDesktop(app.repository).then((path) => toast.success(path)).catch((err) => toast.error(launcherError(err)))}>Ambiente de trabalho</Button>
+        <Button variant="secondary" onClick={() => void appShortcutDesktop(app.repository).then((path) => toast.success(path)).catch((err) => toast.error(launcherError(err)))}>Ambiente de trabalho</Button>
         <Button onClick={() => void appShortcutSteam(app.repository).then((path) => toast.success(path)).catch((err) => toast.error(launcherError(err)))}>Steam</Button>
       </div>
     </PageShell>

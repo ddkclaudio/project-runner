@@ -1,36 +1,49 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
-import { IconPlus } from '@tabler/icons-react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { IconArrowsSort, IconCircle, IconPlus } from '@tabler/icons-react';
 import { PageShell } from '@/components/ui/PageShell';
 import { Button } from '@/components/ui/Button';
 import { GridView } from '@/components/ui/GridView';
-import { Select } from '@/components/ui/Select';
+import { ViewToolbar, type ViewMode } from '@/components/ui/ViewToolbar';
+import { FilterDropdown, type FilterOption } from '@/components/ui/FilterDropdown';
 import { Modal } from '@/components/ui/Modal';
 import { InlineAlert } from '@/components/ui/InlineAlert';
 import { listen } from '@tauri-apps/api/event';
-import { libraryList, libraryRefresh, librarySetFilter, librarySetSort, settingsGet, type AppView } from '@/lib/launcher-api';
+import { libraryList, libraryRefresh, librarySetFilter, librarySetSort, settingsGet, settingsSave, type AppView } from '@/lib/launcher-api';
 import { isEditableTarget } from '@/lib/hotkeys';
 import { ChoiceList, LibraryCard, useLibraryMutations } from '@/components/launcher/LibraryCard';
+import { LibraryListView } from '@/components/launcher/LibraryListView';
 import { useToast } from '@/components/ui/Toast';
 import { launcherError } from '@/lib/launcher-api';
-import styles from './library.module.css';
 
-const SORTS = [
-  { value: 'LastPlayed', label: 'Último uso' },
-  { value: 'Name', label: 'Nome' },
-  { value: 'NameDesc', label: 'Nome inverso' },
-  { value: 'Installed', label: 'Instaladas primeiro' },
-  { value: 'NotInstalled', label: 'Por instalar primeiro' },
+type LibraryStatus = 'all' | 'installed' | 'not_installed' | 'update' | 'hidden';
+
+const STATUS_FILTERS: { value: LibraryStatus; label: string; color: string }[] = [
+  { value: 'installed', label: 'Instalada', color: 'var(--brand-green)' },
+  { value: 'update', label: 'Atualização', color: 'var(--status-amber)' },
+  { value: 'not_installed', label: 'Por instalar', color: 'var(--text-muted)' },
+  { value: 'hidden', label: 'Oculta', color: 'var(--text-disabled)' },
+];
+
+const SORT_OPTIONS: FilterOption[] = [
+  { value: 'Name', label: 'Nome', icon: <IconArrowsSort size={13} aria-hidden="true" /> },
+  { value: 'NameDesc', label: 'Nome inverso', icon: <IconArrowsSort size={13} aria-hidden="true" /> },
+  { value: 'Installed', label: 'Instaladas primeiro', icon: <IconArrowsSort size={13} aria-hidden="true" /> },
+  { value: 'NotInstalled', label: 'Por instalar primeiro', icon: <IconArrowsSort size={13} aria-hidden="true" /> },
+  { value: 'LastPlayed', label: 'Último uso', icon: <IconArrowsSort size={13} aria-hidden="true" /> },
 ];
 
 export function HomePage() {
   const toast = useToast();
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const actions = useLibraryMutations();
   const library = useQuery({ queryKey: ['launcher', 'library'], queryFn: libraryList });
   const settings = useQuery({ queryKey: ['launcher', 'settings'], queryFn: settingsGet });
-  const [showHidden, setShowHidden] = useState(false);
+  const [query, setQuery] = useState('');
+  const [statusFilter, setStatusFilter] = useState<LibraryStatus>('all');
+  const statusSynced = useRef(false);
   const [focus, setFocus] = useState(0);
   const [progress, setProgress] = useState<Record<string, { percent: number; phase: string }>>({});
   const [choice, setChoice] = useState<{ app: AppView; assets: string[]; warning?: string | null; confirm?: boolean } | null>(null);
@@ -56,16 +69,30 @@ export function HomePage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const apps = useMemo(() => {
-    const all = library.data?.apps ?? [];
-    return all.filter((app) => {
-      if (app.filterHidden) return false;
-      if (!showHidden && app.manuallyHidden) return false;
-      return true;
-    });
-  }, [library.data, showHidden]);
+  useEffect(() => {
+    if (!library.data || statusSynced.current) return;
+    statusSynced.current = true;
+    if (library.data.installedOnly) setStatusFilter('installed');
+  }, [library.data]);
 
-  const continueApp = apps.find((app) => app.repository === library.data?.continueRepository);
+  const apps = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return (library.data?.apps ?? []).filter((app) => {
+      if (statusFilter === 'hidden') {
+        if (!app.manuallyHidden) return false;
+      } else if (app.manuallyHidden || app.filterHidden) {
+        return false;
+      } else if (statusFilter === 'installed' && app.status === 'not_installed') {
+        return false;
+      } else if (statusFilter === 'not_installed' && app.status !== 'not_installed') {
+        return false;
+      } else if (statusFilter === 'update' && app.status !== 'update') {
+        return false;
+      }
+      if (!q) return true;
+      return app.name.toLowerCase().includes(q) || app.repository.toLowerCase().includes(q);
+    });
+  }, [library.data, query, statusFilter]);
 
   useEffect(() => {
     if (settings.data && !settings.data.enableGamepadInput) return;
@@ -163,65 +190,91 @@ export function HomePage() {
     }
   }
 
+  async function changeStatus(value: string | null) {
+    const next = (value ?? 'all') as LibraryStatus;
+    setStatusFilter(next);
+    const installedOnly = next === 'installed';
+    if (installedOnly !== Boolean(library.data?.installedOnly)) await changeFilter(installedOnly);
+  }
+
+  async function changeView(mode: ViewMode) {
+    const current = settings.data;
+    if (!current) return;
+    const { dataDir: _dataDir, appVersion: _appVersion, ...rest } = current;
+    try {
+      await settingsSave({ ...rest, useGridView: mode === 'grid' });
+      await queryClient.invalidateQueries({ queryKey: ['launcher'] });
+    } catch (err) {
+      toast.error(launcherError(err));
+    }
+  }
+
+  const snapshot = library.data;
+  const sortBy = snapshot?.sortBy || 'LastPlayed';
+  const view: ViewMode = snapshot?.useGrid === false ? 'list' : 'grid';
+  const appCount = snapshot ? snapshot.apps.length : 0;
+  const listLoading = library.isLoading && appCount === 0;
+  const emptyMessage = query || statusFilter !== 'all' ? 'Nenhuma app corresponde aos filtros.' : 'Nenhuma app na biblioteca ainda.';
+
   return (
     <PageShell>
-      <PageShell.Heading
-        subtitle="As apps vêm do GitHub, instalam-se numa pasta local e arrancam daqui."
-        actions={
-          <Button variant="primary" leftIcon={<IconPlus size={15} />} onClick={() => navigate('/apps/new')}>
+      <PageShell.Heading>Biblioteca</PageShell.Heading>
+      <ViewToolbar
+        query={query}
+        onQueryChange={setQuery}
+        searchPlaceholder="Buscar app"
+        searchAriaLabel="Buscar apps"
+        view={view}
+        onViewChange={(mode) => void changeView(mode)}
+        ariaLabel="Barra de apps"
+        filters={[
+          {
+            key: 'filters',
+            label: 'Filtros',
+            content: (
+              <FilterDropdown
+                title="Filtros e ordenação"
+                aria-label="Filtros e ordenação"
+                active={statusFilter !== 'all' || sortBy !== 'LastPlayed'}
+                sections={[
+                  {
+                    id: 'status',
+                    title: 'Status',
+                    value: statusFilter === 'all' ? null : statusFilter,
+                    onChange: (value) => void changeStatus(value),
+                    options: STATUS_FILTERS.map((item) => ({
+                      value: item.value,
+                      label: item.label,
+                      icon: (
+                        <IconCircle size={8} fill={item.color} style={{ color: item.color }} aria-hidden="true" />
+                      ),
+                    })),
+                  },
+                  {
+                    id: 'sort',
+                    title: 'Ordenar por',
+                    value: sortBy,
+                    onChange: (value) => void changeSort(value ?? 'LastPlayed'),
+                    options: SORT_OPTIONS,
+                    clearable: false,
+                  },
+                ]}
+              />
+            ),
+          },
+        ]}
+        rightSlot={
+          <Button variant="secondary" size="sm" leftIcon={<IconPlus size={14} />} aria-label="Criar nova app" onClick={() => navigate('/apps/new')}>
             Nova app
           </Button>
         }
-      >
-        Biblioteca
-      </PageShell.Heading>
-      <PageShell.Toolbar
-        left={
-          <>
-            <Button
-              variant={library.data?.installedOnly ? 'secondary' : 'primary'}
-              onClick={() => void changeFilter(false)}
-            >
-              Todas
-            </Button>
-            <Button
-              variant={library.data?.installedOnly ? 'primary' : 'secondary'}
-              onClick={() => void changeFilter(true)}
-            >
-              Instaladas
-            </Button>
-            <Button variant="ghost" onClick={() => setShowHidden((value) => !value)}>
-              {showHidden ? 'Esconder ocultas' : 'Mostrar ocultas'}
-            </Button>
-            {continueApp ? (
-              <Button variant="secondary" onClick={() => void primary(continueApp)}>
-                Continuar {continueApp.name}
-              </Button>
-            ) : null}
-          </>
-        }
-        right={
-          <Select
-            aria-label="Ordenar"
-            value={library.data?.sortBy || 'LastPlayed'}
-            onChange={(value) => void changeSort(value)}
-            options={SORTS}
-          />
-        }
       />
-      {library.data?.useGrid === false ? (
-        <div className={styles.list}>
-          {apps.map((app, index) => (
-            <LibraryCard key={app.repository} app={app} focused={focus === index} progress={progress[app.repository]} onPrimary={(item) => void primary(item)} />
-          ))}
-          {apps.length === 0 ? <p className={styles.meta}>A biblioteca está vazia.</p> : null}
-        </div>
-      ) : (
+      {view === 'grid' ? (
         <GridView
           items={apps}
           keyField="repository"
-          loading={library.isLoading}
-          emptyMessage="A biblioteca está vazia. Adicione uma app ou abra o catálogo."
+          loading={listLoading}
+          emptyMessage={emptyMessage}
           renderItem={(app) => (
             <LibraryCard
               app={app}
@@ -231,6 +284,8 @@ export function HomePage() {
             />
           )}
         />
+      ) : (
+        <LibraryListView apps={apps} loading={listLoading} onPrimary={(item) => void primary(item)} onOpen={(item) => actions.open(item)} />
       )}
       <Modal isOpen={Boolean(choice)} onClose={() => setChoice(null)} title="Escolher ficheiro">
         <Modal.Content>

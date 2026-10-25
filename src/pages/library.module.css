@@ -17,7 +17,31 @@
   margin: 0;
   font-size: 15px;
   font-weight: 600;
-  color: var(--text-primary);
+  color: var(--text-secondary);
+}
+
+.appLink {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  text-decoration: none;
+}
+
+.appName {
+  font-size: var(--font-md);
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.appRef {
+  font-size: var(--font-base);
+  color: var(--text-muted);
+}
+
+.date {
+  font-size: var(--font-base);
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
 }
 
 .meta {
@@ -71,9 +95,19 @@
   justify-content: flex-start;
 }
 
+.cardHost {
+  height: 100%;
+  min-width: 0;
+}
+
+.cardHost > * {
+  height: 100%;
+}
+
 .focused {
   outline: 2px solid var(--brand-green);
   outline-offset: 2px;
+  border-radius: var(--radius-lg);
 }
 
 .backdrop {
