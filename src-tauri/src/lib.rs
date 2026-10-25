@@ -9,7 +9,11 @@ use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::{Manager, State};
 mod launcher;
+mod orgs;
+mod session;
 pub use launcher::{cli_requested, run_cli};
+use orgs::{PublicInvite, PublicMember, PublicOrg};
+use session::AppPaths;
 
 const SESSION_SECONDS: i64 = 60 * 60 * 24 * 30;
 const RESET_SECONDS: i64 = 60 * 15;
@@ -26,6 +30,8 @@ struct UserRecord {
     name: String,
     email: String,
     password_hash: String,
+    #[serde(default)]
+    active_org_id: Option<String>,
     #[serde(default)]
     reset_code: Option<String>,
     #[serde(default)]
@@ -46,21 +52,20 @@ struct PublicUser {
     email: String,
     display_name: String,
     photo_url: Option<String>,
+    active_org_id: Option<String>,
 }
 
 #[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 struct AuthSession {
     token: String,
     user: PublicUser,
+    active_org: Option<PublicOrg>,
 }
 
 #[derive(Serialize)]
 struct ResetIssued {
     code: Option<String>,
-}
-
-struct AuthState {
-    path: PathBuf,
 }
 
 fn now_secs() -> i64 {
@@ -74,6 +79,10 @@ fn random_token() -> String {
     let mut bytes = [0u8; 32];
     OsRng.fill_bytes(&mut bytes);
     bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+pub fn random_token_public() -> String {
+    random_token()
 }
 
 fn hash_password(password: &str) -> Result<String, String> {
@@ -101,7 +110,7 @@ fn load_db(path: &PathBuf) -> AuthDb {
     let Ok(raw) = fs::read_to_string(path) else {
         return AuthDb::default();
     };
-    serde_json::from_str(&raw).unwrap_or_default()
+    serde_json::from_str(raw.trim_start_matches('\u{feff}')).unwrap_or_default()
 }
 
 fn save_db(path: &PathBuf, db: &AuthDb) -> Result<(), String> {
@@ -118,6 +127,7 @@ fn public_user(user: &UserRecord) -> PublicUser {
         email: user.email.clone(),
         display_name: user.name.clone(),
         photo_url: None,
+        active_org_id: user.active_org_id.clone(),
     }
 }
 
@@ -138,9 +148,40 @@ fn validate_password(password: &str) -> Result<(), String> {
     Ok(())
 }
 
+fn user_id_from_token(paths: &AppPaths, token: &str) -> Result<String, String> {
+    let mut db = load_db(&paths.auth_path);
+    let now = now_secs();
+    db.sessions.retain(|session| session.expires > now);
+    let user_id = db
+        .sessions
+        .iter()
+        .find(|session| session.token == token)
+        .map(|session| session.user_id.clone());
+    let _ = save_db(&paths.auth_path, &db);
+    user_id.ok_or_else(|| "Sessão inválida.".into())
+}
+
+fn find_user<'a>(db: &'a AuthDb, user_id: &str) -> Result<&'a UserRecord, String> {
+    db.users
+        .iter()
+        .find(|user| user.id == user_id)
+        .ok_or_else(|| "Utilizador não encontrado.".into())
+}
+
+fn activate_for_user(paths: &AppPaths, user: &UserRecord) -> Result<PublicOrg, String> {
+    session::ensure_user_has_org(paths, &user.id, &user.name)?;
+    let org = session::activate_user_org(paths, &user.id, user.active_org_id.as_deref())?;
+    let mut db = load_db(&paths.auth_path);
+    if let Some(record) = db.users.iter_mut().find(|item| item.id == user.id) {
+        record.active_org_id = Some(org.id.clone());
+        save_db(&paths.auth_path, &db)?;
+    }
+    Ok(org)
+}
+
 #[tauri::command]
 fn register(
-    state: State<'_, AuthState>,
+    paths: State<'_, AppPaths>,
     name: String,
     email: String,
     password: String,
@@ -155,16 +196,23 @@ fn register(
     }
     validate_password(&password)?;
 
-    let mut db = load_db(&state.path);
+    let mut db = load_db(&paths.auth_path);
     if db.users.iter().any(|user| user.email == email) {
         return Err("Este e-mail já está cadastrado.".into());
     }
 
+    let user_id = random_token();
+    let mut orgs_db = orgs::load(&paths.orgs_path);
+    let org = orgs::create_org_for_owner(&mut orgs_db, &paths.global_root, &user_id, &name)?;
+    orgs::migrate_legacy_into_org(&paths.global_root, &org.id)?;
+    orgs::save(&paths.orgs_path, &orgs_db)?;
+
     let user = UserRecord {
-        id: random_token(),
+        id: user_id.clone(),
         name,
         email,
         password_hash: hash_password(&password)?,
+        active_org_id: Some(org.id.clone()),
         reset_code: None,
         reset_expires: None,
     };
@@ -172,20 +220,18 @@ fn register(
     let session = AuthSession {
         token,
         user: public_user(&user),
+        active_org: Some(orgs::public_org(&orgs_db, &org.id, &user.id)?),
     };
     db.users.push(user);
-    save_db(&state.path, &db)?;
+    save_db(&paths.auth_path, &db)?;
+    paths.set_active(&user_id, &org.id)?;
     Ok(session)
 }
 
 #[tauri::command]
-fn login(
-    state: State<'_, AuthState>,
-    email: String,
-    password: String,
-) -> Result<AuthSession, String> {
+fn login(paths: State<'_, AppPaths>, email: String, password: String) -> Result<AuthSession, String> {
     let email = normalize_email(&email);
-    let mut db = load_db(&state.path);
+    let mut db = load_db(&paths.auth_path);
     let Some(user) = db.users.iter().find(|user| user.email == email).cloned() else {
         return Err("E-mail ou senha incorretos.".into());
     };
@@ -193,23 +239,28 @@ fn login(
         return Err("E-mail ou senha incorretos.".into());
     }
     let token = issue_session(&mut db, &user.id);
-    save_db(&state.path, &db)?;
+    save_db(&paths.auth_path, &db)?;
+    let active_org = activate_for_user(&paths, &user).ok();
+    let mut user = user;
+    user.active_org_id = active_org.as_ref().map(|org| org.id.clone());
     Ok(AuthSession {
         token,
         user: public_user(&user),
+        active_org,
     })
 }
 
 #[tauri::command]
-fn logout(state: State<'_, AuthState>, token: String) -> Result<(), String> {
-    let mut db = load_db(&state.path);
+fn logout(paths: State<'_, AppPaths>, token: String) -> Result<(), String> {
+    let mut db = load_db(&paths.auth_path);
     db.sessions.retain(|session| session.token != token);
-    save_db(&state.path, &db)
+    paths.clear_active();
+    save_db(&paths.auth_path, &db)
 }
 
 #[tauri::command]
-fn current_user(state: State<'_, AuthState>, token: String) -> Result<Option<PublicUser>, String> {
-    let mut db = load_db(&state.path);
+fn current_user(paths: State<'_, AppPaths>, token: String) -> Result<Option<PublicUser>, String> {
+    let mut db = load_db(&paths.auth_path);
     let now = now_secs();
     db.sessions.retain(|session| session.expires > now);
     let user_id = db
@@ -217,21 +268,23 @@ fn current_user(state: State<'_, AuthState>, token: String) -> Result<Option<Pub
         .iter()
         .find(|session| session.token == token)
         .map(|session| session.user_id.clone());
-    save_db(&state.path, &db)?;
+    save_db(&paths.auth_path, &db)?;
     let Some(user_id) = user_id else {
+        paths.clear_active();
         return Ok(None);
     };
-    Ok(db
-        .users
-        .iter()
-        .find(|user| user.id == user_id)
-        .map(public_user))
+    let Some(user) = db.users.iter().find(|user| user.id == user_id).cloned() else {
+        return Ok(None);
+    };
+    let _ = activate_for_user(&paths, &user);
+    let db = load_db(&paths.auth_path);
+    Ok(db.users.iter().find(|item| item.id == user_id).map(public_user))
 }
 
 #[tauri::command]
-fn forgot_password(state: State<'_, AuthState>, email: String) -> Result<ResetIssued, String> {
+fn forgot_password(paths: State<'_, AppPaths>, email: String) -> Result<ResetIssued, String> {
     let email = normalize_email(&email);
-    let mut db = load_db(&state.path);
+    let mut db = load_db(&paths.auth_path);
     let Some(user) = db.users.iter_mut().find(|user| user.email == email) else {
         return Ok(ResetIssued { code: None });
     };
@@ -242,13 +295,13 @@ fn forgot_password(state: State<'_, AuthState>, email: String) -> Result<ResetIs
         .to_uppercase();
     user.reset_code = Some(code.clone());
     user.reset_expires = Some(now_secs() + RESET_SECONDS);
-    save_db(&state.path, &db)?;
+    save_db(&paths.auth_path, &db)?;
     Ok(ResetIssued { code: Some(code) })
 }
 
 #[tauri::command]
 fn reset_password(
-    state: State<'_, AuthState>,
+    paths: State<'_, AppPaths>,
     email: String,
     code: String,
     password: String,
@@ -257,7 +310,7 @@ fn reset_password(
     let code = code.trim().to_uppercase();
     validate_password(&password)?;
 
-    let mut db = load_db(&state.path);
+    let mut db = load_db(&paths.auth_path);
     let Some(user) = db.users.iter_mut().find(|user| user.email == email) else {
         return Err("Código inválido ou expirado.".into());
     };
@@ -271,7 +324,152 @@ fn reset_password(
     user.reset_expires = None;
     let user_id = user.id.clone();
     db.sessions.retain(|session| session.user_id != user_id);
-    save_db(&state.path, &db)
+    save_db(&paths.auth_path, &db)
+}
+
+#[tauri::command]
+fn list_orgs(paths: State<'_, AppPaths>, token: String) -> Result<Vec<PublicOrg>, String> {
+    let user_id = user_id_from_token(&paths, &token)?;
+    let db = orgs::load(&paths.orgs_path);
+    Ok(orgs::list_for_user(&db, &user_id))
+}
+
+#[tauri::command]
+fn current_org(paths: State<'_, AppPaths>, token: String) -> Result<Option<PublicOrg>, String> {
+    let user_id = user_id_from_token(&paths, &token)?;
+    let auth = load_db(&paths.auth_path);
+    let user = find_user(&auth, &user_id)?;
+    Ok(activate_for_user(&paths, user).ok())
+}
+
+#[tauri::command]
+fn create_org(paths: State<'_, AppPaths>, token: String, name: String) -> Result<PublicOrg, String> {
+    let user_id = user_id_from_token(&paths, &token)?;
+    let mut db = orgs::load(&paths.orgs_path);
+    let org = orgs::create_org_for_owner(&mut db, &paths.global_root, &user_id, &name)?;
+    orgs::save(&paths.orgs_path, &db)?;
+    paths.set_active(&user_id, &org.id)?;
+    let mut auth = load_db(&paths.auth_path);
+    if let Some(user) = auth.users.iter_mut().find(|user| user.id == user_id) {
+        user.active_org_id = Some(org.id.clone());
+        save_db(&paths.auth_path, &auth)?;
+    }
+    orgs::public_org(&db, &org.id, &user_id)
+}
+
+#[tauri::command]
+fn set_active_org(paths: State<'_, AppPaths>, token: String, org_id: String) -> Result<PublicOrg, String> {
+    let user_id = user_id_from_token(&paths, &token)?;
+    let db = orgs::load(&paths.orgs_path);
+    orgs::require_member(&db, &org_id, &user_id)?;
+    paths.set_active(&user_id, &org_id)?;
+    let mut auth = load_db(&paths.auth_path);
+    if let Some(user) = auth.users.iter_mut().find(|user| user.id == user_id) {
+        user.active_org_id = Some(org_id.clone());
+        save_db(&paths.auth_path, &auth)?;
+    }
+    orgs::public_org(&db, &org_id, &user_id)
+}
+
+#[tauri::command]
+fn list_members(paths: State<'_, AppPaths>, token: String, org_id: String) -> Result<Vec<PublicMember>, String> {
+    let user_id = user_id_from_token(&paths, &token)?;
+    let db = orgs::load(&paths.orgs_path);
+    orgs::require_member(&db, &org_id, &user_id)?;
+    let auth = load_db(&paths.auth_path);
+    Ok(db
+        .memberships
+        .iter()
+        .filter(|item| item.org_id == org_id)
+        .filter_map(|item| {
+            let user = auth.users.iter().find(|user| user.id == item.user_id)?;
+            Some(PublicMember {
+                user_id: user.id.clone(),
+                email: user.email.clone(),
+                display_name: user.name.clone(),
+                role: item.role.clone(),
+            })
+        })
+        .collect())
+}
+
+#[tauri::command]
+fn list_invites(paths: State<'_, AppPaths>, token: String, org_id: String) -> Result<Vec<PublicInvite>, String> {
+    let user_id = user_id_from_token(&paths, &token)?;
+    let db = orgs::load(&paths.orgs_path);
+    orgs::list_invites(&db, &org_id, &user_id)
+}
+
+#[tauri::command]
+fn invite_member(
+    paths: State<'_, AppPaths>,
+    token: String,
+    org_id: String,
+    email: String,
+    role: String,
+) -> Result<PublicInvite, String> {
+    let user_id = user_id_from_token(&paths, &token)?;
+    let mut db = orgs::load(&paths.orgs_path);
+    let invite = orgs::create_invite(&mut db, &org_id, &email, &role, &user_id)?;
+    orgs::save(&paths.orgs_path, &db)?;
+    Ok(invite)
+}
+
+#[tauri::command]
+fn accept_invite(paths: State<'_, AppPaths>, token: String, code: String) -> Result<PublicOrg, String> {
+    let user_id = user_id_from_token(&paths, &token)?;
+    let auth = load_db(&paths.auth_path);
+    let user = find_user(&auth, &user_id)?;
+    let mut db = orgs::load(&paths.orgs_path);
+    let org = orgs::accept_invite(&mut db, &user_id, &user.email, &code)?;
+    orgs::save(&paths.orgs_path, &db)?;
+    paths.set_active(&user_id, &org.id)?;
+    let mut auth = load_db(&paths.auth_path);
+    if let Some(record) = auth.users.iter_mut().find(|item| item.id == user_id) {
+        record.active_org_id = Some(org.id.clone());
+        save_db(&paths.auth_path, &auth)?;
+    }
+    Ok(org)
+}
+
+#[tauri::command]
+fn revoke_invite(
+    paths: State<'_, AppPaths>,
+    token: String,
+    org_id: String,
+    invite_id: String,
+) -> Result<(), String> {
+    let user_id = user_id_from_token(&paths, &token)?;
+    let mut db = orgs::load(&paths.orgs_path);
+    orgs::revoke_invite(&mut db, &org_id, &invite_id, &user_id)?;
+    orgs::save(&paths.orgs_path, &db)
+}
+
+#[tauri::command]
+fn remove_member(
+    paths: State<'_, AppPaths>,
+    token: String,
+    org_id: String,
+    target_user_id: String,
+) -> Result<(), String> {
+    let user_id = user_id_from_token(&paths, &token)?;
+    let mut db = orgs::load(&paths.orgs_path);
+    orgs::remove_member(&mut db, &org_id, &target_user_id, &user_id)?;
+    orgs::save(&paths.orgs_path, &db)
+}
+
+#[tauri::command]
+fn update_member_role(
+    paths: State<'_, AppPaths>,
+    token: String,
+    org_id: String,
+    target_user_id: String,
+    role: String,
+) -> Result<(), String> {
+    let user_id = user_id_from_token(&paths, &token)?;
+    let mut db = orgs::load(&paths.orgs_path);
+    orgs::update_member_role(&mut db, &org_id, &target_user_id, &role, &user_id)?;
+    orgs::save(&paths.orgs_path, &db)
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -280,12 +478,10 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
             let root = launcher::resolve_root();
-            launcher::store::ensure_root(&root).map_err(std::io::Error::other)?;
-            launcher::store::cleanup_backups(&root);
-            app.manage(AuthState {
-                path: root.join("auth.json"),
-            });
-            app.manage(launcher::LauncherState { root });
+            fs::create_dir_all(&root).map_err(std::io::Error::other)?;
+            fs::create_dir_all(root.join("orgs")).map_err(std::io::Error::other)?;
+            let paths = AppPaths::new(root);
+            app.manage(paths);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -295,6 +491,17 @@ pub fn run() {
             current_user,
             forgot_password,
             reset_password,
+            list_orgs,
+            current_org,
+            create_org,
+            set_active_org,
+            list_members,
+            list_invites,
+            invite_member,
+            accept_invite,
+            revoke_invite,
+            remove_member,
+            update_member_role,
             launcher::commands::launcher_boot,
             launcher::commands::library_list,
             launcher::commands::library_refresh,
@@ -309,6 +516,7 @@ pub fn run() {
             launcher::commands::app_detail,
             launcher::commands::app_install,
             launcher::commands::app_launch,
+            launcher::commands::app_stop,
             launcher::commands::app_open_folder,
             launcher::commands::app_executables,
             launcher::commands::app_set_executable,
@@ -318,6 +526,8 @@ pub fn run() {
             launcher::commands::app_set_icon,
             launcher::commands::app_clear_icon,
             launcher::commands::app_releases,
+            launcher::commands::app_branches,
+            launcher::commands::app_set_branch,
             launcher::commands::app_changelog,
             launcher::commands::app_shortcut_desktop,
             launcher::commands::app_shortcut_steam,

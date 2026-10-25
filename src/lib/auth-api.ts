@@ -5,11 +5,19 @@ export type AuthUser = {
   email: string;
   displayName: string;
   photoURL?: string | null;
+  activeOrgId?: string | null;
 };
 
 export type AuthSession = {
   token: string;
   user: AuthUser;
+  activeOrg?: {
+    id: string;
+    name: string;
+    slug: string;
+    role: string;
+    isOwner: boolean;
+  } | null;
 };
 
 export const SESSION_STORAGE_KEY = 'painel-session';

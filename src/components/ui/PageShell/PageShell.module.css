@@ -61,7 +61,7 @@
 .heading {
   font-size: var(--font-2xl);
   font-weight: 600;
-  color: var(--text-secondary);
+  color: var(--text-primary);
   overflow-wrap: anywhere;
   text-wrap: balance;
   scroll-margin-top: 16px;

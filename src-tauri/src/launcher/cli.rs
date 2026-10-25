@@ -3,6 +3,23 @@ use crate::launcher::launch;
 use crate::launcher::self_update;
 use crate::launcher::store::{self, find_app_by_name};
 use std::io::{self, Write};
+use std::path::{Path, PathBuf};
+
+fn cli_org_root(global: &Path) -> PathBuf {
+    let orgs = global.join("orgs");
+    if let Ok(entries) = std::fs::read_dir(&orgs) {
+        let mut dirs: Vec<_> = entries
+            .flatten()
+            .map(|entry| entry.path())
+            .filter(|path| path.is_dir())
+            .collect();
+        dirs.sort();
+        if let Some(first) = dirs.into_iter().next() {
+            return first;
+        }
+    }
+    global.to_path_buf()
+}
 
 pub fn cli_requested() -> bool {
     std::env::args().skip(1).any(|arg| {
@@ -37,7 +54,8 @@ async fn execute() -> Result<(), String> {
     args.retain(|arg| arg != "--");
     let command = args.first().map(|arg| arg.as_str()).unwrap_or("--help");
     let name = args.iter().skip(1).cloned().collect::<Vec<_>>().join(" ");
-    let root = store::resolve_root();
+    let global = store::resolve_root();
+    let root = cli_org_root(&global);
     store::ensure_root(&root)?;
     match command {
         "--help" | "-h" => {

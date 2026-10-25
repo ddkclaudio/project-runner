@@ -75,7 +75,10 @@ pub fn launch(root: &Path, repository: &str, executable: Option<String>) -> Resu
             message: "Há vários executáveis. Escolha qual arranca.".into(),
         });
     };
-    spawn_process(&exe, &dir, &store::load_settings(root))?;
+    let spawned = spawn_process(&exe, &dir, &store::load_settings(root))?;
+    if let Some((pid, process_name)) = spawned {
+        let _ = crate::launcher::runtime::record(root, repository, pid, &process_name);
+    }
     let stamp = Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
     let _ = fs::write(dir.join("LastPlayed.txt"), stamp);
     let close = store::load_settings(root)
@@ -91,14 +94,22 @@ pub fn launch(root: &Path, repository: &str, executable: Option<String>) -> Resu
     })
 }
 
-fn spawn_process(exe: &Path, dir: &Path, settings: &serde_json::Value) -> Result<(), String> {
+fn process_image_name(exe: &Path) -> String {
+    exe.file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("unknown.exe")
+        .to_string()
+}
+
+fn spawn_process(exe: &Path, dir: &Path, settings: &serde_json::Value) -> Result<Option<(u32, String)>, String> {
     let ext = exe.extension().and_then(|ext| ext.to_str()).unwrap_or("").to_lowercase();
+    let image = process_image_name(exe);
     if cfg!(target_os = "macos") && ext == "app" {
-        Command::new("open").arg(exe).spawn().map_err(|err| err.to_string())?;
-        return Ok(());
+        let child = Command::new("open").arg(exe).spawn().map_err(|err| err.to_string())?;
+        return Ok(Some((child.id(), image)));
     }
     if cfg!(target_os = "linux") && ext == "exe" {
-        return spawn_linux_windows(exe, dir, settings);
+        return spawn_linux_windows(exe, dir, settings).map(|pid| pid.map(|id| (id, image)));
     }
     #[cfg(unix)]
     {
@@ -113,11 +124,11 @@ fn spawn_process(exe: &Path, dir: &Path, settings: &serde_json::Value) -> Result
     if let Some(parent) = exe.parent() {
         command.current_dir(parent);
     }
-    command.spawn().map_err(|err| err.to_string())?;
-    Ok(())
+    let child = command.spawn().map_err(|err| err.to_string())?;
+    Ok(Some((child.id(), image)))
 }
 
-fn spawn_linux_windows(exe: &Path, dir: &Path, settings: &serde_json::Value) -> Result<(), String> {
+fn spawn_linux_windows(exe: &Path, dir: &Path, settings: &serde_json::Value) -> Result<Option<u32>, String> {
     let template = settings
         .get("LinuxWindowsLaunchCommand")
         .and_then(|value| value.as_str())
@@ -138,12 +149,12 @@ fn spawn_linux_windows(exe: &Path, dir: &Path, settings: &serde_json::Value) -> 
         }
         let mut command = Command::new("sh");
         command.arg("-c").arg(rendered);
-        command.spawn().map_err(|err| err.to_string())?;
-        return Ok(());
+        let child = command.spawn().map_err(|err| err.to_string())?;
+        return Ok(Some(child.id()));
     }
     for binary in ["wine64", "wine"] {
-        if Command::new(binary).arg(exe).current_dir(dir).spawn().is_ok() {
-            return Ok(());
+        if let Ok(child) = Command::new(binary).arg(exe).current_dir(dir).spawn() {
+            return Ok(Some(child.id()));
         }
     }
     if let Some(proton) = find_proton() {
@@ -153,8 +164,8 @@ fn spawn_linux_windows(exe: &Path, dir: &Path, settings: &serde_json::Value) -> 
         command.arg("run").arg(exe).current_dir(dir);
         command.env("STEAM_COMPAT_DATA_PATH", &compat);
         command.env("STEAM_COMPAT_CLIENT_INSTALL_PATH", dir);
-        command.spawn().map_err(|err| err.to_string())?;
-        return Ok(());
+        let child = command.spawn().map_err(|err| err.to_string())?;
+        return Ok(Some(child.id()));
     }
     Err("No Linux, instale wine64, wine ou Proton, ou defina o comando de lançamento.".into())
 }

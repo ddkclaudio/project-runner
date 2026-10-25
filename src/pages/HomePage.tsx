@@ -39,7 +39,7 @@ export function HomePage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const actions = useLibraryMutations();
-  const library = useQuery({ queryKey: ['launcher', 'library'], queryFn: libraryList });
+  const library = useQuery({ queryKey: ['launcher', 'library'], queryFn: libraryList, refetchInterval: 3000 });
   const settings = useQuery({ queryKey: ['launcher', 'settings'], queryFn: settingsGet });
   const [query, setQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<LibraryStatus>('all');

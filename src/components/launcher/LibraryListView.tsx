@@ -55,7 +55,12 @@ export function LibraryListView({
       label: 'STATUS',
       render: (row) => {
         const status = appStatusMeta(row.status);
-        return <StatusBadge label={status.label} tone={status.tone} />;
+        return (
+          <span style={{ display: 'inline-flex', gap: 6, alignItems: 'center' }}>
+            <StatusBadge label={status.label} tone={status.tone} />
+            {row.running ? <StatusBadge label="Em execução" tone="success" /> : null}
+          </span>
+        );
       },
     },
     {
@@ -90,6 +95,7 @@ export function LibraryListView({
       rows={apps}
       keyField="repository"
       onRowClick={onOpen}
+      rowClassName={(row) => (row.running ? styles.running : undefined)}
       rowActions={(row) => <ActionsCell app={row} onPrimary={onPrimary} />}
       emptyMessage="Nenhuma app encontrada"
     />

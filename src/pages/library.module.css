@@ -1,21 +1,23 @@
+/* Shared content-page layout helpers (centered via PageShell). */
+
 .cardBody {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--space-2);
   min-height: 132px;
 }
 
 .icon {
   width: 36px;
   height: 36px;
-  border-radius: 8px;
+  border-radius: var(--radius-lg);
   object-fit: cover;
   background: var(--bg-muted);
 }
 
 .title {
   margin: 0;
-  font-size: 15px;
+  font-size: var(--font-lg);
   font-weight: 600;
   color: var(--text-secondary);
 }
@@ -46,15 +48,16 @@
 
 .meta {
   margin: 0;
-  color: var(--text-secondary);
-  font-size: 12px;
+  color: var(--text-muted);
+  font-size: var(--font-base);
+  line-height: 1.5;
 }
 
 .row {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
+  gap: var(--space-2);
   margin-top: auto;
 }
 
@@ -71,23 +74,20 @@
   background: var(--brand-green);
 }
 
-.list {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
+/* Vertical stacks under PageShell (app detail, catalog tools). */
 .stack {
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: var(--space-4);
+  width: 100%;
   max-width: 720px;
+  min-width: 0;
 }
 
 .choice {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--space-2);
 }
 
 .choice > button {
@@ -110,6 +110,11 @@
   border-radius: var(--radius-lg);
 }
 
+.running {
+  box-shadow: 0 0 0 2px var(--brand-green);
+  border-radius: var(--radius-lg);
+}
+
 .backdrop {
   position: absolute;
   inset: 0;
@@ -125,4 +130,107 @@
   background: var(--bg-base);
   pointer-events: none;
   z-index: 0;
+}
+
+/* Toolbar / action clusters under headings */
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-5);
+  min-width: 0;
+}
+
+/* Simple list rows (orgs, members) — mirrors projects list density */
+.list {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  min-width: 0;
+}
+
+.listRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-3) 0;
+  border-bottom: 1px solid var(--border-subtle);
+  min-width: 0;
+}
+
+.listRow:last-child {
+  border-bottom: none;
+}
+
+.listMain {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+  flex: 1;
+}
+
+.listText {
+  min-width: 0;
+}
+
+.listTitle {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  font-size: var(--font-md);
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.listMeta {
+  margin-top: 2px;
+  font-size: var(--font-base);
+  color: var(--text-muted);
+}
+
+.listActions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  flex-shrink: 0;
+}
+
+/* Vertical gap between major blocks (form card → danger zone, list → invite). */
+.blockGap {
+  margin-top: var(--space-6);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  min-width: 0;
+}
+
+.empty {
+  font-size: var(--font-base);
+  color: var(--text-muted);
+  padding: var(--space-8) 0;
+  line-height: 1.5;
+}
+
+.empty a {
+  color: var(--text-secondary);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+@media (max-width: 767px) {
+  .listRow {
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--space-2);
+  }
+
+  .listActions {
+    width: 100%;
+    justify-content: flex-start;
+  }
 }

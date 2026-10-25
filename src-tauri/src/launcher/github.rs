@@ -167,6 +167,28 @@ pub async fn refresh_cache(root: &Path, force: bool) -> Result<(), String> {
     Ok(())
 }
 
+pub async fn list_branches(root: &Path, repository: &str) -> Result<Vec<String>, String> {
+    let token = token_of(root);
+    let http = client(60)?;
+    let response = auth(
+        http.get(format!("https://api.github.com/repos/{repository}/branches?per_page=100")),
+        &token,
+    )
+    .header("Accept", "application/vnd.github+json")
+    .send()
+    .await
+    .map_err(|err| err.to_string())?;
+    let status = response.status();
+    let body = response.text().await.map_err(|err| err.to_string())?;
+    map_status(status, &body)?;
+    let value: Value = serde_json::from_str(&body).map_err(|_| "A resposta do GitHub não é JSON.".to_string())?;
+    let items = value.as_array().cloned().unwrap_or_default();
+    Ok(items
+        .into_iter()
+        .filter_map(|item| item.get("name")?.as_str().map(|name| name.to_string()))
+        .collect())
+}
+
 pub async fn list_releases(root: &Path, repository: &str) -> Result<Vec<Value>, String> {
     let token = token_of(root);
     let http = client(60)?;

@@ -1,0 +1,41 @@
+.controls {
+  display: flex;
+  align-items: stretch;
+  height: var(--topbar-height, 44px);
+  margin-inline-end: -14px;
+  flex-shrink: 0;
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 46px;
+  height: 100%;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition:
+    background var(--transition-base),
+    color var(--transition-base);
+}
+
+.btn:hover {
+  background: var(--bg-active);
+  color: var(--text-primary);
+}
+
+.btn:focus-visible {
+  outline: 2px solid var(--brand-green);
+  outline-offset: -2px;
+  z-index: 1;
+}
+
+.close:hover {
+  background: color-mix(in srgb, var(--danger, #e5484d) 88%, transparent);
+  color: #fff;
+}

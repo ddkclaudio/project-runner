@@ -145,11 +145,19 @@ export function LibraryCard({
     ? { label: `${progress.phase} ${progress.percent}%`, tone: 'info' as const }
     : appStatusMeta(app.status);
 
+  const hostClass = [
+    styles.cardHost,
+    focused ? styles.focused : '',
+    app.running ? styles.running : '',
+  ]
+    .filter(Boolean)
+    .join(' ');
+
   return (
-    <div data-library-card tabIndex={0} className={focused ? `${styles.cardHost} ${styles.focused}` : styles.cardHost}>
+    <div data-library-card tabIndex={0} className={hostClass}>
       <ItemCard
         aria-label={`Abrir app ${app.name}`}
-        highlight={focused}
+        highlight={focused || Boolean(app.running)}
         onClick={() => actions.open(app)}
         actions={{
           label: `Ações para ${app.name}`,
@@ -164,6 +172,7 @@ export function LibraryCard({
           <div className={gc.meta}>
             {version ? <Badge variant={version.variant}>{version.label}</Badge> : null}
             <StatusBadge label={status.label} tone={status.tone} />
+            {app.running ? <StatusBadge label="Em execução" tone="success" /> : null}
           </div>
           {progress ? (
             <div className={styles.progress} aria-valuenow={progress.percent} role="progressbar">

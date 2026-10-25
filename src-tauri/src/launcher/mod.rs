@@ -4,15 +4,10 @@ pub mod commands;
 pub mod github;
 pub mod install;
 pub mod launch;
+pub mod runtime;
 pub mod self_update;
 pub mod store;
 pub mod version;
 
 pub use cli::{cli_requested, run_cli};
 pub use store::resolve_root;
-
-use std::path::PathBuf;
-
-pub struct LauncherState {
-    pub root: PathBuf,
-}

@@ -4,7 +4,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { PageShell } from '@/components/ui/PageShell';
 import { Input } from '@/components/ui/Input';
 import { Button } from '@/components/ui/Button';
-import { InlineAlert } from '@/components/ui/InlineAlert';
+import { FormCard, FormRow } from '@/components/ui/FormCard';
 import { appHref, launcherError, librarySave } from '@/lib/launcher-api';
 
 export function NewAppPage() {
@@ -39,15 +39,33 @@ export function NewAppPage() {
 
   return (
     <PageShell>
-      <PageShell.Heading subtitle="A entrada fica em apps.json, ao lado do executável do Painel.">Nova app</PageShell.Heading>
-      <form onSubmit={(event) => void onSubmit(event)} style={{ display: 'flex', flexDirection: 'column', gap: 14, maxWidth: 520 }}>
-        {error ? <InlineAlert>{error}</InlineAlert> : null}
-        <Input label="Nome" value={name} onChange={(event) => setName(event.target.value)} required />
-        <Input label="Repositório" placeholder="dono/nome" value={repository} onChange={(event) => setRepository(event.target.value)} required />
-        <Input label="Pasta" hint="Se ficar vazio, usa o nome do repositório." value={folderName} onChange={(event) => setFolderName(event.target.value)} />
-        <Input label="Ícone" placeholder="https://..." value={appIconUrl} onChange={(event) => setAppIconUrl(event.target.value)} />
-        <Button type="submit" variant="secondary" loading={pending}>Adicionar</Button>
-      </form>
+      <FormCard onSubmit={(event) => void onSubmit(event)} aria-label="Nova app">
+        {error ? <FormCard.Alert>{error}</FormCard.Alert> : null}
+        <FormCard.Header
+          title="Nova app"
+          subtitle="A entrada fica em apps.json, ao lado do executável do Painel."
+        />
+        <FormRow label="Nome">
+          <Input value={name} onChange={(event) => setName(event.target.value)} required />
+        </FormRow>
+        <FormRow label="Repositório">
+          <Input placeholder="dono/nome" value={repository} onChange={(event) => setRepository(event.target.value)} required />
+        </FormRow>
+        <FormRow label="Pasta" optionalLabel="(opcional)">
+          <Input value={folderName} onChange={(event) => setFolderName(event.target.value)} />
+          <FormCard.Hint>Se ficar vazio, usa o nome do repositório.</FormCard.Hint>
+        </FormRow>
+        <FormRow label="Ícone" optionalLabel="(opcional)">
+          <Input placeholder="https://..." value={appIconUrl} onChange={(event) => setAppIconUrl(event.target.value)} />
+        </FormRow>
+        <FormCard.Footer
+          right={
+            <Button type="submit" variant="secondary" loading={pending}>
+              Adicionar
+            </Button>
+          }
+        />
+      </FormCard>
     </PageShell>
   );
 }

@@ -21,6 +21,8 @@ export type AppView = AppEntry & {
   manuallyHidden: boolean;
   filterHidden: boolean;
   selectedExecutable?: string | null;
+  running?: boolean;
+  selectedBranch?: string | null;
 };
 
 export type LibrarySnapshot = {
@@ -150,6 +152,18 @@ export function appInstall(repository: string, options?: { assetName?: string; t
 
 export function appLaunch(repository: string, executable?: string) {
   return invoke<LaunchResult>('app_launch', { repository, executable: executable ?? null });
+}
+
+export function appStop(repository: string) {
+  return invoke<void>('app_stop', { repository });
+}
+
+export function appBranches(repository: string) {
+  return invoke<string[]>('app_branches', { repository });
+}
+
+export function appSetBranch(repository: string, branch: string) {
+  return invoke<AppView>('app_set_branch', { repository, branch });
 }
 
 export function appOpenFolder(repository: string) {

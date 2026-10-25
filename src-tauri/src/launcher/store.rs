@@ -41,6 +41,8 @@ pub struct AppView {
     pub manually_hidden: bool,
     pub filter_hidden: bool,
     pub selected_executable: Option<String>,
+    pub running: bool,
+    pub selected_branch: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -711,6 +713,8 @@ pub fn view_app(root: &Path, app: &AppEntry, settings: &Value, cache: &Value) ->
         manually_hidden: listed(&manual, app),
         filter_hidden: listed(&filter, app),
         selected_executable: read_text(&dir.join("selected_executable.txt")),
+        running: crate::launcher::runtime::is_running(root, &app.repository),
+        selected_branch: crate::launcher::runtime::selected_branch(root, &app.repository),
     }
 }
 

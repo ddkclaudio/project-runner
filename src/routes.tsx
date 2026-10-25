@@ -11,6 +11,11 @@ import { NewAppPage } from '@/pages/NewAppPage';
 import { AppPage } from '@/pages/AppPage';
 import { CatalogPage } from '@/pages/CatalogPage';
 import { SettingsPage } from '@/pages/SettingsPage';
+import { NewOrgPage } from '@/pages/NewOrgPage';
+import { OrgsPage } from '@/pages/OrgsPage';
+import { OrgMembersPage } from '@/pages/OrgMembersPage';
+import { AcceptInvitePage } from '@/pages/AcceptInvitePage';
+import { OrgProvider } from '@/contexts/OrgContext';
 
 function BootScreen() {
   return <div style={{ minHeight: '100dvh', background: 'var(--bg-base)' }} />;
@@ -22,9 +27,11 @@ export function RequireAuth() {
   if (loading) return <BootScreen />;
   if (!user) return <Navigate to="/login" replace state={{ from: location.pathname }} />;
   return (
-    <AppShell>
-      <Outlet />
-    </AppShell>
+    <OrgProvider>
+      <AppShell>
+        <Outlet />
+      </AppShell>
+    </OrgProvider>
   );
 }
 
@@ -58,6 +65,10 @@ export const routes = [
       { path: '/apps/new', element: <NewAppPage /> },
       { path: '/apps/:owner/:repo', element: <AppPage /> },
       { path: '/apps/:owner/:repo/:section', element: <AppPage /> },
+      { path: '/orgs', element: <OrgsPage /> },
+      { path: '/orgs/new', element: <NewOrgPage /> },
+      { path: '/orgs/invite', element: <AcceptInvitePage /> },
+      { path: '/orgs/:orgId/members', element: <OrgMembersPage /> },
       { path: '/components', element: <ComponentsPage /> },
     ],
   },

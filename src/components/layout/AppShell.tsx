@@ -5,23 +5,33 @@ import { convertFileSrc } from '@tauri-apps/api/core';
 import { LayoutNavEffects, useLayoutNav } from '@/hooks/useLayoutNav';
 import { AppMenuSidebar, LibrarySidebar } from './AppSidebar';
 import { AppSwitcher } from './AppSwitcher';
+import { OrgSwitcher } from './OrgSwitcher';
+import { BranchSwitcher } from './BranchSwitcher';
+import { ActionSwitcher } from './ActionSwitcher';
 import { SidebarCatalog, SidebarSettings } from './SectionNav';
 import { SidebarComponents } from './SidebarComponents';
 import { Topbar, TopbarBrand, TopbarMenuButton, TopbarRightControls, TopbarSeparator } from '@/components/ui/Topbar';
 import { launcherBoot, settingsGet } from '@/lib/launcher-api';
 import { parseAppRoute } from '@/lib/launcher-nav';
+import { useOrg } from '@/contexts/OrgContext';
 import styles from './shell.module.css';
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const { pathname } = useLocation();
   const { navOpen, toggleNav, closeNav } = useLayoutNav();
+  const { activeOrg, loading: orgLoading } = useOrg();
   const appRoute = parseAppRoute(pathname);
-  const settings = useQuery({ queryKey: ['launcher', 'settings'], queryFn: settingsGet });
+  const settings = useQuery({
+    queryKey: ['launcher', 'settings', activeOrg?.id],
+    queryFn: settingsGet,
+    enabled: Boolean(activeOrg),
+  });
   const audioRef = useRef<HTMLAudioElement>(null);
 
   useEffect(() => {
+    if (!activeOrg) return;
     void launcherBoot().catch(() => undefined);
-  }, []);
+  }, [activeOrg?.id]);
 
   useEffect(() => {
     const audio = audioRef.current;
@@ -68,7 +78,17 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               <TopbarMenuButton open={navOpen} onClick={toggleNav} />
               <TopbarBrand />
               <TopbarSeparator />
-              {appRoute ? <AppSwitcher pathname={pathname} /> : null}
+              <OrgSwitcher />
+              {appRoute ? (
+                <>
+                  <TopbarSeparator />
+                  <AppSwitcher pathname={pathname} />
+                  <TopbarSeparator />
+                  <BranchSwitcher repository={appRoute.repository} />
+                  <TopbarSeparator />
+                  <ActionSwitcher repository={appRoute.repository} />
+                </>
+              ) : null}
             </>
           }
           right={<TopbarRightControls />}
@@ -83,7 +103,13 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           <button type="button" className={styles.backdrop} aria-label="Fechar menu de navegação" onClick={closeNav} />
         ) : null}
         <main className={styles.main} id="main-content" tabIndex={-1}>
-          {children}
+          {orgLoading ? (
+            <div className={styles.mainMessage}>A carregar organização…</div>
+          ) : null}
+          {!orgLoading && !activeOrg ? (
+            <div className={styles.mainMessage}>Crie ou escolha uma organização para continuar.</div>
+          ) : null}
+          {!orgLoading && activeOrg ? children : null}
         </main>
       </div>
     </div>
