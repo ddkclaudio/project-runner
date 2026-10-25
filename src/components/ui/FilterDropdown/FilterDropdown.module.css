@@ -47,13 +47,13 @@
 .filterPillBtnOn {
   background: color-mix(in srgb, var(--brand-green) 12%, transparent);
   border-color: color-mix(in srgb, var(--brand-green) 45%, transparent);
-  color: var(--brand-green);
+  color: var(--text-brand);
 }
 
 .filterIconBtnOn:hover,
 .filterPillBtnOn:hover {
   background: color-mix(in srgb, var(--brand-green) 18%, transparent);
-  color: var(--brand-green);
+  color: var(--text-brand);
 }
 
 .filterActiveBadge {
@@ -66,7 +66,7 @@
   border-radius: 99px;
   background: var(--brand-green);
   color: var(--text-on-brand);
-  font-size: 9px;
+  font-size: 11px;
   font-weight: 700;
   line-height: 14px;
   text-align: center;
@@ -97,10 +97,8 @@
 
 .sectionTitle {
   padding: 6px 12px 4px;
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
+  font-size: 12px;
+  font-weight: 500;
   color: var(--text-muted);
 }
 
@@ -135,11 +133,11 @@
 }
 
 .filterDropItemOn {
-  color: var(--brand-green);
+  color: var(--text-brand);
 }
 
 .filterDropItemOn:hover {
-  color: var(--brand-green);
+  color: var(--text-brand);
 }
 
 .filterDropBadge {
@@ -152,7 +150,7 @@
   padding: 0 5px;
   background: var(--bg-active);
   border-radius: 99px;
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 600;
   color: var(--text-muted);
   line-height: 1;

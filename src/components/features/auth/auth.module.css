@@ -36,9 +36,7 @@
   margin: 0 0 4px;
   font-weight: 600;
   color: var(--status-amber);
-  font-size: 12px;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
+  font-size: 13px;
 }
 
 .devLinkHint {
@@ -49,7 +47,7 @@
 
 .devLink {
   display: inline-flex;
-  color: var(--brand-green, var(--brand-green));
+  color: var(--text-brand);
   font-weight: 500;
   text-decoration: underline;
   word-break: break-all;

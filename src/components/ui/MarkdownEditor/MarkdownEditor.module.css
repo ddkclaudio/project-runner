@@ -188,7 +188,7 @@
 .editor :global(.mdxeditor-toolbar [class*='toolbarButton'][data-state='on']),
 .editor :global(.mdxeditor-toolbar [class*='ToolbarButton'][data-state='on']) {
   background-color: var(--bg-active) !important;
-  color: var(--brand-green) !important;
+  color: var(--text-brand) !important;
 }
 
 /* Não forçar fill/stroke, os ícones usam path fill="currentColor" com svg fill="none"
@@ -355,7 +355,7 @@
 
 .content :global(a),
 .editor :global(.mdxeditor-root-contenteditable a) {
-  color: var(--brand-green) !important;
+  color: var(--text-brand) !important;
   font-weight: 400;
   text-decoration: underline;
   text-underline-offset: 2px;
@@ -381,7 +381,7 @@
 .content :global(code),
 .editor :global(.mdxeditor-root-contenteditable code) {
   background: var(--bg-muted);
-  color: var(--brand-green) !important;
+  color: var(--text-brand) !important;
   border: 1px solid var(--border-subtle);
   border-radius: 4px;
   padding: 1px 5px;
@@ -475,14 +475,14 @@
 :global(.mdxeditor-popup-container [class*='selectItem'][data-state='checked']),
 :global(.mdxeditor-popup-container [class*='SelectItem'][data-state='checked']) {
   background-color: color-mix(in srgb, var(--brand-green) 16%, var(--bg-elevated)) !important;
-  color: var(--brand-green) !important;
+  color: var(--text-brand) !important;
   font-weight: 500 !important;
 }
 
 :global(.mdxeditor-select-content [data-state='checked'][data-highlighted]),
 :global(.mdxeditor-popup-container [class*='SelectItem'][data-state='checked'][data-highlighted]) {
   background-color: color-mix(in srgb, var(--brand-green) 24%, var(--bg-elevated)) !important;
-  color: var(--brand-green) !important;
+  color: var(--text-brand) !important;
   font-weight: 500 !important;
 }
 

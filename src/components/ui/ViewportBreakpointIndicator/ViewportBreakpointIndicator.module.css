@@ -28,7 +28,7 @@
 }
 
 .icon {
-  color: var(--brand-green);
+  color: var(--text-brand);
   flex-shrink: 0;
 }
 

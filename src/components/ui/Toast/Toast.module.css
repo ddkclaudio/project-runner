@@ -125,11 +125,11 @@
 }
 
 .success .iconWrap {
-  color: var(--brand-green);
+  color: var(--text-brand);
 }
 
 .success .progress {
-  color: var(--brand-green);
+  color: var(--text-brand);
 }
 
 .error {

@@ -68,6 +68,7 @@ export function ForgotPasswordForm() {
             <div className={styles.field}>
               <Input
                 type="email"
+                spellCheck={false}
                 label="E-mail"
                 leftIcon={<IconMail size={15} />}
                 placeholder="seu@email.com"

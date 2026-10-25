@@ -108,7 +108,7 @@
 }
 
 .logoIcon {
-  color: var(--brand-green);
+  color: var(--text-brand);
   flex-shrink: 0;
   display: block;
 }
@@ -148,8 +148,7 @@
 }
 
 .metaPill {
-  font-size: 10px;
-  letter-spacing: 0.5px;
+  font-size: 11px;
   border-radius: var(--radius-sm);
   padding: 1px 6px;
   flex-shrink: 0;

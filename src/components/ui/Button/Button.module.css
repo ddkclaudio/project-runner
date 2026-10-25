@@ -11,9 +11,15 @@
   transition:
     background var(--transition-base),
     border-color var(--transition-base),
-    transform 80ms ease;
+    transform 140ms var(--ease-out, cubic-bezier(0.23, 1, 0.32, 1));
   white-space: nowrap;
+}
+.btn:focus {
   outline: none;
+}
+.btn:focus-visible {
+  outline: 2px solid var(--brand-green);
+  outline-offset: 2px;
 }
 
 .btn:disabled {

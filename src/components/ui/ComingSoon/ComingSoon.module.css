@@ -22,7 +22,7 @@
 }
 
 .icon {
-  color: var(--brand-green);
+  color: var(--text-brand);
 }
 
 .title {
@@ -41,7 +41,7 @@
 .link {
   margin-top: var(--space-2);
   font-size: var(--font-md);
-  color: var(--brand-green);
+  color: var(--text-brand);
   text-decoration: none;
   border: 1px solid var(--brand-green-dark);
   border-radius: var(--radius-md);

@@ -23,11 +23,11 @@
 }
 
 .primary {
-  color: var(--brand-green);
+  color: var(--text-brand);
   text-decoration: none;
 }
 
 .primary:hover {
   text-decoration: underline;
-  color: var(--brand-green);
+  color: var(--text-brand);
 }

@@ -44,7 +44,7 @@ export function HomePage() {
   const [query, setQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<LibraryStatus>('all');
   const statusSynced = useRef(false);
-  const [focus, setFocus] = useState(0);
+  const [focus, setFocus] = useState(-1);
   const [progress, setProgress] = useState<Record<string, { percent: number; phase: string }>>({});
   const [choice, setChoice] = useState<{ app: AppView; assets: string[]; warning?: string | null; confirm?: boolean } | null>(null);
   const [exeChoice, setExeChoice] = useState<{ app: AppView; executables: string[] } | null>(null);
@@ -214,7 +214,7 @@ export function HomePage() {
   const view: ViewMode = snapshot?.useGrid === false ? 'list' : 'grid';
   const appCount = snapshot ? snapshot.apps.length : 0;
   const listLoading = library.isLoading && appCount === 0;
-  const emptyMessage = query || statusFilter !== 'all' ? 'Nenhuma app corresponde aos filtros.' : 'Nenhuma app na biblioteca ainda.';
+  const emptyMessage = query || statusFilter !== 'all' ? 'Nenhuma app corresponde aos filtros.' : 'Nenhuma app na biblioteca. Adicione uma para descarregar e lançar.';
 
   return (
     <PageShell>
@@ -278,7 +278,7 @@ export function HomePage() {
           renderItem={(app) => (
             <LibraryCard
               app={app}
-              focused={apps[focus]?.repository === app.repository}
+              focused={focus >= 0 && apps[focus]?.repository === app.repository}
               progress={progress[app.repository]}
               onPrimary={(item) => void primary(item)}
             />

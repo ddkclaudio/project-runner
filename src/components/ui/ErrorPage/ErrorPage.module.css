@@ -48,7 +48,7 @@
 }
 
 .green .codeGlow {
-  color: var(--brand-green);
+  color: var(--text-brand);
 }
 
 .amber .codeGlow {

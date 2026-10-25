@@ -52,6 +52,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
   return (
     <div className={styles.shell}>
+      <a className={styles.skip} href="#main-content">
+        Saltar para o conteúdo
+      </a>
       <LayoutNavEffects />
       {image ? <div className={styles.atmosphere} style={{ backgroundImage: `url("${convertFileSrc(image)}")` }} /> : null}
       {image ? <div className={styles.atmosphereScrim} style={{ opacity: 1 - opacity }} /> : null}
@@ -79,7 +82,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         {navOpen ? (
           <button type="button" className={styles.backdrop} aria-label="Fechar menu de navegação" onClick={closeNav} />
         ) : null}
-        <main className={styles.main} id="main-content">
+        <main className={styles.main} id="main-content" tabIndex={-1}>
           {children}
         </main>
       </div>

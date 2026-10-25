@@ -141,11 +141,11 @@
 }
 
 .iconBtnSuccess {
-  color: var(--brand-green);
+  color: var(--text-brand);
 }
 
 .iconBtnSuccess:hover {
-  color: var(--brand-green);
+  color: var(--text-brand);
 }
 
 .iconBtnDanger {

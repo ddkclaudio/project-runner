@@ -51,6 +51,7 @@ export function LoginForm() {
             <Input
               id="login-email"
               type="email"
+              spellCheck={false}
               label="E-mail"
               placeholder="seu@email.com"
               value={email}

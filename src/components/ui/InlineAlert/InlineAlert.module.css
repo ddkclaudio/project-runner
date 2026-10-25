@@ -37,7 +37,7 @@
 .success {
   background: color-mix(in srgb, var(--brand-green) 8%, transparent);
   border: 1px solid color-mix(in srgb, var(--brand-green) 20%, transparent);
-  color: var(--brand-green);
+  color: var(--text-brand);
 }
 
 .warning {

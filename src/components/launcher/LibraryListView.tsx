@@ -64,6 +64,7 @@ export function LibraryListView({
       sortable: true,
       render: (row) => {
         const version = versionBadge(row);
+        if (!version) return <span className={styles.date}>—</span>;
         return <Badge variant={version.variant}>{version.label}</Badge>;
       },
     },

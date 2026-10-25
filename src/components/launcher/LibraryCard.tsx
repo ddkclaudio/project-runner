@@ -104,10 +104,9 @@ export function appStatusMeta(status: string): { label: string; tone: StatusTone
   return { label: 'Por instalar', tone: 'muted' };
 }
 
-export function versionBadge(app: AppView): { label: string; variant: 'green' | 'amber' | 'neutral' } {
-  if (app.status === 'update') return { label: app.installedVersion || 'Atualização', variant: 'amber' };
-  if (app.installedVersion) return { label: app.installedVersion, variant: 'green' };
-  return { label: 'Por instalar', variant: 'neutral' };
+export function versionBadge(app: AppView): { label: string; variant: 'green' | 'amber' | 'neutral' } | null {
+  if (app.installedVersion) return { label: app.installedVersion, variant: app.status === 'update' ? 'amber' : 'green' };
+  return null;
 }
 
 export function libraryMenu(
@@ -163,7 +162,7 @@ export function LibraryCard({
             {app.repository}
           </div>
           <div className={gc.meta}>
-            <Badge variant={version.variant}>{version.label}</Badge>
+            {version ? <Badge variant={version.variant}>{version.label}</Badge> : null}
             <StatusBadge label={status.label} tone={status.tone} />
           </div>
           {progress ? (

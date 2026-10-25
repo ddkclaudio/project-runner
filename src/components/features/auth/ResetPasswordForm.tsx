@@ -64,6 +64,7 @@ export function ResetPasswordForm() {
               <div className={styles.field}>
                 <Input
                   type="email"
+                  spellCheck={false}
                   label="E-mail"
                   value={email}
                   onChange={(e) => setEmail(e.target.value.toLowerCase())}
