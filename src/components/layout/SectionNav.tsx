@@ -22,11 +22,6 @@ export function SidebarCatalog() {
 
 export function SidebarSettings() {
   const { pathname } = useLocation();
-  const item = (label: string, href: string) => ({
-    label,
-    href,
-    active: href === '/settings' ? pathname === '/settings' : pathname.startsWith(href),
-  });
   return (
     <SectionSidebar
       title="Definições"
@@ -35,10 +30,11 @@ export function SidebarSettings() {
         {
           title: 'PAINEL',
           items: [
-            item('Geral', '/settings'),
-            item('GitHub', '/settings/github'),
-            item('Aparência', '/settings/appearance'),
-            item('Lançamento', '/settings/launch'),
+            {
+              label: 'Perfil',
+              href: '/settings/profile',
+              active: pathname.startsWith('/settings'),
+            },
           ],
         },
       ]}

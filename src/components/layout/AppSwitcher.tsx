@@ -3,19 +3,30 @@ import { useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { IconApps, IconPlus, IconArrowRight } from '@tabler/icons-react';
 import { SwitcherDropdown } from '@/components/ui/SwitcherDropdown';
-import { libraryList, appHref } from '@/lib/launcher-api';
+import { libraryList } from '@/lib/launcher-api';
 import { parseAppRoute } from '@/lib/launcher-nav';
+import { resolveSwitcherNavigation } from '@/lib/contextSwitchers';
 
 export function AppSwitcher({ pathname }: { pathname: string }) {
   const navigate = useNavigate();
   const route = parseAppRoute(pathname);
   const library = useQuery({ queryKey: ['launcher', 'library'], queryFn: libraryList });
   const items = useMemo(
-    () => (library.data?.apps ?? []).map((app) => ({ id: app.repository, label: app.name, searchText: `${app.name} ${app.repository}` })),
+    () =>
+      (library.data?.apps ?? []).map((app) => ({
+        id: app.folderName || app.repository,
+        label: app.name,
+        searchText: `${app.name} ${app.repository} ${app.folderName || ''}`,
+      })),
     [library.data],
   );
   if (!route) return null;
-  const current = library.data?.apps.find((app) => app.repository.toLowerCase() === route.repository.toLowerCase());
+  const routeKey = (route.folder || route.repository).toLowerCase();
+  const current =
+    library.data?.apps.find((app) => (app.folderName || '').toLowerCase() === routeKey) ??
+    (route.folder
+      ? undefined
+      : library.data?.apps.find((app) => app.repository.toLowerCase() === routeKey));
 
   return (
     <SwitcherDropdown
@@ -24,9 +35,12 @@ export function AppSwitcher({ pathname }: { pathname: string }) {
       searchPlaceholder="Buscar app..."
       searchAriaLabel="Buscar apps"
       items={items}
-      selectedId={route.repository}
+      selectedId={route.folder || current?.folderName || route.repository}
       loading={library.isLoading}
-      onSelect={(id) => navigate(appHref(id, route.section))}
+      onSelect={(id) => {
+        const href = resolveSwitcherNavigation('app', id, pathname);
+        if (href) navigate(href);
+      }}
       actions={[
         { label: 'Nova app', icon: <IconPlus size={14} />, onClick: () => navigate('/apps/new') },
         { label: 'Voltar à biblioteca', icon: <IconArrowRight size={14} />, onClick: () => navigate('/') },

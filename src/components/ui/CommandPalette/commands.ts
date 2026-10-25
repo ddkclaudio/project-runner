@@ -47,7 +47,7 @@ export const COMMANDS: Command[] = [
     icon: React.createElement(IconSettings, { size: 15 }),
     shortcut: shortcutKeys('nav-settings'),
     keywords: ['settings', 'definições', 'configurações'],
-    href: '/settings',
+    href: '/settings/profile',
   },
   {
     id: 'nav-components',

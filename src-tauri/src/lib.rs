@@ -7,13 +7,23 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
-use tauri::{Manager, State};
+use tauri::menu::{Menu, MenuItem};
+use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
+use tauri::{Manager, State, WindowEvent};
 mod launcher;
 mod orgs;
 mod session;
 pub use launcher::{cli_requested, run_cli};
 use orgs::{PublicInvite, PublicMember, PublicOrg};
 use session::AppPaths;
+
+fn restore_main_window(app: &tauri::AppHandle) {
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.show();
+        let _ = window.unminimize();
+        let _ = window.set_focus();
+    }
+}
 
 const SESSION_SECONDS: i64 = 60 * 60 * 24 * 30;
 const RESET_SECONDS: i64 = 60 * 15;
@@ -224,7 +234,7 @@ fn register(
     };
     db.users.push(user);
     save_db(&paths.auth_path, &db)?;
-    paths.set_active(&user_id, &org.id)?;
+    paths.set_active(&user_id, &org.id, &org.slug)?;
     Ok(session)
 }
 
@@ -328,6 +338,25 @@ fn reset_password(
 }
 
 #[tauri::command]
+fn update_profile(paths: State<'_, AppPaths>, token: String, name: String) -> Result<PublicUser, String> {
+    let name = name.trim().to_string();
+    if name.is_empty() {
+        return Err("Informe o seu nome.".into());
+    }
+    let user_id = user_id_from_token(&paths, &token)?;
+    let mut db = load_db(&paths.auth_path);
+    let user = db
+        .users
+        .iter_mut()
+        .find(|user| user.id == user_id)
+        .ok_or_else(|| "Utilizador não encontrado.".to_string())?;
+    user.name = name;
+    let public = public_user(user);
+    save_db(&paths.auth_path, &db)?;
+    Ok(public)
+}
+
+#[tauri::command]
 fn list_orgs(paths: State<'_, AppPaths>, token: String) -> Result<Vec<PublicOrg>, String> {
     let user_id = user_id_from_token(&paths, &token)?;
     let db = orgs::load(&paths.orgs_path);
@@ -348,7 +377,7 @@ fn create_org(paths: State<'_, AppPaths>, token: String, name: String) -> Result
     let mut db = orgs::load(&paths.orgs_path);
     let org = orgs::create_org_for_owner(&mut db, &paths.global_root, &user_id, &name)?;
     orgs::save(&paths.orgs_path, &db)?;
-    paths.set_active(&user_id, &org.id)?;
+    paths.set_active(&user_id, &org.id, &org.slug)?;
     let mut auth = load_db(&paths.auth_path);
     if let Some(user) = auth.users.iter_mut().find(|user| user.id == user_id) {
         user.active_org_id = Some(org.id.clone());
@@ -361,8 +390,8 @@ fn create_org(paths: State<'_, AppPaths>, token: String, name: String) -> Result
 fn set_active_org(paths: State<'_, AppPaths>, token: String, org_id: String) -> Result<PublicOrg, String> {
     let user_id = user_id_from_token(&paths, &token)?;
     let db = orgs::load(&paths.orgs_path);
-    orgs::require_member(&db, &org_id, &user_id)?;
-    paths.set_active(&user_id, &org_id)?;
+    let org = orgs::require_member(&db, &org_id, &user_id)?;
+    paths.set_active(&user_id, &org_id, &org.slug)?;
     let mut auth = load_db(&paths.auth_path);
     if let Some(user) = auth.users.iter_mut().find(|user| user.id == user_id) {
         user.active_org_id = Some(org_id.clone());
@@ -423,7 +452,7 @@ fn accept_invite(paths: State<'_, AppPaths>, token: String, code: String) -> Res
     let mut db = orgs::load(&paths.orgs_path);
     let org = orgs::accept_invite(&mut db, &user_id, &user.email, &code)?;
     orgs::save(&paths.orgs_path, &db)?;
-    paths.set_active(&user_id, &org.id)?;
+    paths.set_active(&user_id, &org.id, &org.slug)?;
     let mut auth = load_db(&paths.auth_path);
     if let Some(record) = auth.users.iter_mut().find(|item| item.id == user_id) {
         record.active_org_id = Some(org.id.clone());
@@ -476,13 +505,80 @@ fn update_member_role(
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
-            let root = launcher::resolve_root();
-            fs::create_dir_all(&root).map_err(std::io::Error::other)?;
-            fs::create_dir_all(root.join("orgs")).map_err(std::io::Error::other)?;
-            let paths = AppPaths::new(root);
+            let meta = launcher::store::resolve_meta_root();
+            let apps = launcher::store::resolve_apps_root();
+            fs::create_dir_all(&meta).map_err(std::io::Error::other)?;
+            fs::create_dir_all(&apps).map_err(std::io::Error::other)?;
+            launcher::store::ensure_system_data(&meta).map_err(std::io::Error::other)?;
+            let data = launcher::store::system_data_dir(&meta);
+            // Migrar auth/orgs da raiz antiga (AppData) para data/ se existirem
+            for name in ["auth.json", "orgs.json"] {
+                let from = meta.join(name);
+                let to = data.join(name);
+                if from.is_file() && !to.exists() {
+                    let _ = fs::rename(&from, &to).or_else(|_| fs::copy(&from, &to).map(|_| ()));
+                }
+            }
+            // Recuperar conta se a pasta das apps ficou com auth por engano
+            if apps != meta {
+                let apps_data = launcher::store::system_data_dir(&apps);
+                for name in ["auth.json", "orgs.json"] {
+                    let to = data.join(name);
+                    if to.exists() {
+                        continue;
+                    }
+                    for from in [apps_data.join(name), apps.join(name)] {
+                        if from.is_file() {
+                            let _ = fs::copy(&from, &to);
+                            break;
+                        }
+                    }
+                }
+            }
+            let paths = AppPaths::new(meta, apps);
             app.manage(paths);
+
+            let open_item = MenuItem::with_id(app, "open", "Abrir", true, None::<&str>)?;
+            let quit_item = MenuItem::with_id(app, "quit", "Sair", true, None::<&str>)?;
+            let tray_menu = Menu::with_items(app, &[&open_item, &quit_item])?;
+            let tray_icon = app
+                .default_window_icon()
+                .cloned()
+                .ok_or_else(|| std::io::Error::other("Ícone da janela em falta para a bandeja."))?;
+            let _tray = TrayIconBuilder::with_id("painel-tray")
+                .icon(tray_icon)
+                .tooltip("Painel")
+                .menu(&tray_menu)
+                .show_menu_on_left_click(false)
+                .on_menu_event(|app, event| match event.id().as_ref() {
+                    "open" => restore_main_window(app),
+                    "quit" => app.exit(0),
+                    _ => {}
+                })
+                .on_tray_icon_event(|tray, event| {
+                    if let TrayIconEvent::Click {
+                        button: MouseButton::Left,
+                        button_state: MouseButtonState::Up,
+                        ..
+                    } = event
+                    {
+                        restore_main_window(tray.app_handle());
+                    }
+                })
+                .build(app)?;
+
             Ok(())
+        })
+        .on_window_event(|window, event| {
+            if window.label() != "main" {
+                return;
+            }
+            if let WindowEvent::CloseRequested { api, .. } = event {
+                api.prevent_close();
+                let _ = window.hide();
+            }
         })
         .invoke_handler(tauri::generate_handler![
             register,
@@ -491,6 +587,7 @@ pub fn run() {
             current_user,
             forgot_password,
             reset_password,
+            update_profile,
             list_orgs,
             current_org,
             create_org,
@@ -502,6 +599,8 @@ pub fn run() {
             revoke_invite,
             remove_member,
             update_member_role,
+            launcher::commands::get_data_location,
+            launcher::commands::set_data_location,
             launcher::commands::launcher_boot,
             launcher::commands::library_list,
             launcher::commands::library_refresh,
@@ -520,6 +619,9 @@ pub fn run() {
             launcher::commands::app_open_folder,
             launcher::commands::app_executables,
             launcher::commands::app_set_executable,
+            launcher::commands::app_launch_config_get,
+            launcher::commands::app_launch_config_save,
+            launcher::commands::app_generate_launchfile,
             launcher::commands::app_skip_update,
             launcher::commands::app_delete_install,
             launcher::commands::app_locate,
@@ -537,6 +639,9 @@ pub fn run() {
             launcher::commands::catalog_add,
             launcher::commands::launcher_check_update,
             launcher::commands::launcher_apply_update,
+            launcher::commands::log_write,
+            launcher::commands::log_path,
+            launcher::commands::log_open_folder,
             launcher::commands::window_close
         ])
         .run(tauri::generate_context!())

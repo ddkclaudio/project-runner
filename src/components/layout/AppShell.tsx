@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { Fragment, useEffect, useRef } from 'react';
 import { useLocation } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { convertFileSrc } from '@tauri-apps/api/core';
@@ -10,23 +10,62 @@ import { BranchSwitcher } from './BranchSwitcher';
 import { ActionSwitcher } from './ActionSwitcher';
 import { SidebarCatalog, SidebarSettings } from './SectionNav';
 import { SidebarComponents } from './SidebarComponents';
+import { ForcePortModal } from '@/components/launcher/ForcePortModal';
 import { Topbar, TopbarBrand, TopbarMenuButton, TopbarRightControls, TopbarSeparator } from '@/components/ui/Topbar';
 import { launcherBoot, settingsGet } from '@/lib/launcher-api';
-import { parseAppRoute } from '@/lib/launcher-nav';
+import { logInfo } from '@/lib/activity-log';
+import { parseContextStack, type SwitcherId } from '@/lib/contextSwitchers';
 import { useOrg } from '@/contexts/OrgContext';
 import styles from './shell.module.css';
+
+function SwitcherTrail({
+  layers,
+  repository,
+  pathname,
+}: {
+  layers: SwitcherId[];
+  repository?: string;
+  pathname: string;
+}) {
+  const nodes: React.ReactNode[] = [];
+  for (const layer of layers) {
+    let piece: React.ReactNode = null;
+    if (layer === 'org') piece = <OrgSwitcher key="org" />;
+    if (layer === 'app' && repository) piece = <AppSwitcher key="app" pathname={pathname} />;
+    if (layer === 'branch' && repository) piece = <BranchSwitcher key="branch" repository={repository} />;
+    if (layer === 'action' && repository) piece = <ActionSwitcher key="action" repository={repository} />;
+    if (!piece) continue;
+    nodes.push(
+      <Fragment key={`sep-${layer}`}>
+        <TopbarSeparator />
+        {piece}
+      </Fragment>,
+    );
+  }
+  return <>{nodes}</>;
+}
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const { pathname } = useLocation();
   const { navOpen, toggleNav, closeNav } = useLayoutNav();
   const { activeOrg, loading: orgLoading } = useOrg();
-  const appRoute = parseAppRoute(pathname);
+  const stack = parseContextStack(pathname);
   const settings = useQuery({
     queryKey: ['launcher', 'settings', activeOrg?.id],
     queryFn: settingsGet,
     enabled: Boolean(activeOrg),
   });
   const audioRef = useRef<HTMLAudioElement>(null);
+  const prevPath = useRef<string | null>(null);
+
+  useEffect(() => {
+    const from = prevPath.current;
+    if (from !== pathname) {
+      if (from != null) logInfo('nav', `${from} → ${pathname}`);
+      else logInfo('nav', pathname);
+      prevPath.current = pathname;
+    }
+  }, [pathname]);
 
   useEffect(() => {
     if (!activeOrg) return;
@@ -59,6 +98,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
   const image = settings.data?.backgroundImagePath;
   const opacity = settings.data?.backgroundOpacity ?? 0.15;
+  const onAppRoute = stack.mode === 'app';
 
   return (
     <div className={styles.shell}>
@@ -77,25 +117,14 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             <>
               <TopbarMenuButton open={navOpen} onClick={toggleNav} />
               <TopbarBrand />
-              <TopbarSeparator />
-              <OrgSwitcher />
-              {appRoute ? (
-                <>
-                  <TopbarSeparator />
-                  <AppSwitcher pathname={pathname} />
-                  <TopbarSeparator />
-                  <BranchSwitcher repository={appRoute.repository} />
-                  <TopbarSeparator />
-                  <ActionSwitcher repository={appRoute.repository} />
-                </>
-              ) : null}
+              <SwitcherTrail layers={stack.layers} repository={stack.repository} pathname={pathname} />
             </>
           }
           right={<TopbarRightControls />}
         />
       </div>
       <div className={styles.body}>
-        {appRoute ? <AppMenuSidebar repository={appRoute.repository} /> : <LibrarySidebar />}
+        {onAppRoute && stack.repository ? <AppMenuSidebar repository={stack.repository} /> : <LibrarySidebar />}
         {pathname.startsWith('/components') ? <SidebarComponents /> : null}
         {pathname.startsWith('/catalog') ? <SidebarCatalog /> : null}
         {pathname.startsWith('/settings') ? <SidebarSettings /> : null}
@@ -103,15 +132,14 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           <button type="button" className={styles.backdrop} aria-label="Fechar menu de navegação" onClick={closeNav} />
         ) : null}
         <main className={styles.main} id="main-content" tabIndex={-1}>
-          {orgLoading ? (
-            <div className={styles.mainMessage}>A carregar organização…</div>
-          ) : null}
+          {orgLoading ? <p style={{ color: 'var(--text-muted)', padding: 24 }}>A carregar organização…</p> : null}
           {!orgLoading && !activeOrg ? (
-            <div className={styles.mainMessage}>Crie ou escolha uma organização para continuar.</div>
+            <p style={{ color: 'var(--text-muted)', padding: 24 }}>Crie ou escolha uma organização para continuar.</p>
           ) : null}
           {!orgLoading && activeOrg ? children : null}
         </main>
       </div>
+      <ForcePortModal />
     </div>
   );
 }

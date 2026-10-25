@@ -1,7 +1,8 @@
-use crate::launcher::install::read_executables;
+use crate::launcher::runners;
 use crate::launcher::store::{self, find_app, install_dir, load_apps};
 use chrono::Local;
 use serde::Serialize;
+use serde_json::Value;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -11,9 +12,16 @@ use std::process::Command;
 pub struct LaunchResult {
     pub started: bool,
     pub needs_choice: bool,
+    /// Porta ocupada por outro processo — UI deve pedir confirmação para forçar.
+    pub needs_force: bool,
     pub executables: Vec<String>,
     pub close_after_launch: bool,
     pub message: String,
+    /// URL local (ex. http://localhost:3000) quando a app é web/Node.
+    pub open_url: Option<String>,
+    pub force_port: Option<u16>,
+    pub force_pid: Option<u32>,
+    pub force_process_name: Option<String>,
 }
 
 fn no_window(command: &mut Command) {
@@ -25,73 +33,234 @@ fn no_window(command: &mut Command) {
     let _ = command;
 }
 
-pub fn executables_for(root: &Path, repository: &str) -> Result<Vec<String>, String> {
-    let apps = load_apps(root);
+pub fn executables_for(meta: &Path, workspace: &Path, repository: &str) -> Result<Vec<String>, String> {
+    let apps = load_apps(meta);
     let app = find_app(&apps, repository)?;
-    let dir = install_dir(root, app);
-    if !dir.is_dir() {
+    let info = store::ensure_launch_info(workspace, app)?;
+    let project = install_dir(workspace, app);
+    if !project.is_dir() {
         return Err("Esta app não está instalada.".into());
     }
-    Ok(read_executables(&dir))
+    let (_, candidates) = runners::resolve_candidates(&info)?;
+    Ok(candidates.into_iter().map(|item| item.label).collect())
 }
 
-pub fn set_executable(root: &Path, repository: &str, executable: &str) -> Result<(), String> {
-    let apps = load_apps(root);
+pub fn set_executable(meta: &Path, workspace: &Path, repository: &str, executable: &str) -> Result<(), String> {
+    let apps = load_apps(meta);
     let app = find_app(&apps, repository)?;
-    let dir = install_dir(root, app);
-    fs::create_dir_all(&dir).map_err(|err| err.to_string())?;
-    fs::write(dir.join("selected_executable.txt"), executable.trim()).map_err(|err| err.to_string())
-}
-
-pub fn launch(root: &Path, repository: &str, executable: Option<String>) -> Result<LaunchResult, String> {
-    let apps = load_apps(root);
-    let app = find_app(&apps, repository)?.clone();
-    let dir = install_dir(root, &app);
-    if !dir.is_dir() {
-        return Err("Esta app não está instalada.".into());
-    }
-    let found = read_executables(&dir);
-    let selected = executable
-        .filter(|value| !value.trim().is_empty())
-        .or_else(|| fs::read_to_string(dir.join("selected_executable.txt")).ok().map(|text| text.trim().to_string()))
-        .filter(|value| !value.is_empty());
-    let exe = if let Some(selected) = selected {
-        let path = PathBuf::from(&selected);
-        let path = if path.is_absolute() { path } else { dir.join(path) };
-        if !path.exists() {
-            return Err("O executável escolhido já não existe.".into());
-        }
-        path
-    } else if found.len() == 1 {
-        PathBuf::from(&found[0])
-    } else if found.is_empty() {
-        return Err("Não há um executável nesta pasta.".into());
-    } else {
-        return Ok(LaunchResult {
-            started: false,
-            needs_choice: true,
-            executables: found,
-            close_after_launch: false,
-            message: "Há vários executáveis. Escolha qual arranca.".into(),
-        });
+    let info = store::ensure_launch_info(workspace, app)?;
+    let id = match runners::resolve_candidates(&info) {
+        Ok((_, candidates)) => candidates
+            .iter()
+            .find(|item| item.label == executable.trim() || item.id == executable.trim())
+            .map(|item| item.id.clone())
+            .unwrap_or_else(|| executable.trim().to_string()),
+        Err(_) => executable.trim().to_string(),
     };
-    let spawned = spawn_process(&exe, &dir, &store::load_settings(root))?;
-    if let Some((pid, process_name)) = spawned {
-        let _ = crate::launcher::runtime::record(root, repository, pid, &process_name);
+    fs::write(info.join("selected_executable.txt"), id).map_err(|err| err.to_string())
+}
+
+pub async fn launch(
+    meta: &Path,
+    workspace: &Path,
+    repository: &str,
+    _executable: Option<String>,
+    force: bool,
+) -> Result<LaunchResult, String> {
+    let apps = load_apps(meta);
+    let app = find_app(&apps, repository)?.clone();
+    let runtime_key = app.folder_name.clone();
+    let _ = store::migrate_legacy_install(workspace, &app);
+    let project = install_dir(workspace, &app);
+    if !project.is_dir() {
+        return Err("Esta app não está instalada.".into());
     }
+    let info = store::ensure_launch_info(workspace, &app)?;
+
+    if !crate::launcher::launchfile::exists(&info) {
+        let token = store::deepseek_token_of(meta);
+        crate::launcher::deepseek::ensure_launchfile(&project, &info, &token).await?;
+    }
+
+    let doc = crate::launcher::launchfile::read(&info)?;
+    let port = crate::launcher::launchfile::effective_port(&doc);
+
+    crate::launcher::activity_log::info(
+        "launch",
+        &format!(
+            "start folder={} repo={} force={} port={:?}",
+            runtime_key, app.repository, force, port
+        ),
+    );
+
+    // Sempre: se a porta do Launchfile já está em uso → modal (Start e Lançar).
+    if let Some(port) = port {
+        if let Some((pid, process_name)) = crate::launcher::runtime::port_occupant(port) {
+            if !force {
+                crate::launcher::activity_log::warn(
+                    "launch",
+                    &format!("needs_force port={port} pid={pid} name={process_name}"),
+                );
+                return Ok(LaunchResult {
+                    started: false,
+                    needs_choice: false,
+                    needs_force: true,
+                    executables: vec![doc.start.clone()],
+                    close_after_launch: false,
+                    message: format!(
+                        "A porta {port} está em uso por {process_name} (PID {pid}). Quer forçar a inicialização e libertar a porta?"
+                    ),
+                    open_url: None,
+                    force_port: Some(port),
+                    force_pid: Some(pid),
+                    force_process_name: Some(process_name),
+                });
+            }
+            crate::launcher::activity_log::info(
+                "launch",
+                &format!("force: a libertar porta {port} (occupant {process_name}/{pid})"),
+            );
+            crate::launcher::runtime::free_port(port)?;
+            let _ = crate::launcher::runtime::clear_running_for_port(meta, port);
+            let _ = crate::launcher::runtime::clear(meta, &runtime_key);
+            // Garantir que a porta está livre antes do spawn (evita hang do CRA).
+            if crate::launcher::runtime::port_occupant(port).is_some() {
+                let err = format!(
+                    "A porta {port} continua ocupada após forçar. Feche o processo manualmente e tente de novo."
+                );
+                crate::launcher::activity_log::error("launch", &err, None);
+                return Err(err);
+            }
+        }
+    }
+
+    if crate::launcher::runtime::is_running(meta, &runtime_key) {
+        let _ = crate::launcher::runtime::stop(meta, &runtime_key);
+    }
+
+    if crate::launcher::launchfile::needs_install(&project, &doc) {
+        if let Some(install) = doc.install.as_ref().map(|item| item.trim()).filter(|item| !item.is_empty()) {
+            crate::launcher::activity_log::info("launch", &format!("install: {install}"));
+            runners::run_command_wait(&project, install)?;
+        }
+    }
+
+    let work = doc
+        .cwd
+        .as_ref()
+        .map(|item| project.join(item))
+        .filter(|path| path.is_dir())
+        .unwrap_or_else(|| project.clone());
+    let settings = store::load_settings(meta);
+    let open_url = crate::launcher::launchfile::open_url_of(&doc);
+
+    // Marca para só ler conteúdo novo nos logs da app.
+    let out_mark = fs::metadata(info.join("launch.out.log"))
+        .map(|m| m.len())
+        .unwrap_or(0);
+
+    let spawned =
+        runners::spawn_command_line_with_env(&project, &doc.start, Some(&work), &doc.env, Some(&info))?;
+    let Some((wrapper_pid, wrapper_name)) = spawned else {
+        return Err("O comando de arranque não devolveu um processo.".into());
+    };
+    crate::launcher::activity_log::info(
+        "launch",
+        &format!("spawned wrapper pid={wrapper_pid} name={wrapper_name}"),
+    );
+
+    if let Some(port) = port {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(45);
+        let mut ready = false;
+        while std::time::Instant::now() < deadline {
+            if runners::wait_for_port(port, 1_000) {
+                ready = true;
+                break;
+            }
+            // CRA: «Something is already running on port» com stdin fechado → hang.
+            if launch_out_grew_with_port_busy(&info, out_mark) {
+                let _ = crate::launcher::runtime::kill_pid_tree(wrapper_pid);
+                let tail = runners::tail_launch_logs(&info, 20);
+                let err = format!(
+                    "A porta {port} ainda estava ocupada ao arrancar (o servidor não fez bind). Veja o log:\n{tail}"
+                );
+                crate::launcher::activity_log::error("launch", "port still busy after spawn", Some(&tail));
+                return Err(err);
+            }
+        }
+        if !ready {
+            let tail = runners::tail_launch_logs(&info, 25);
+            let err = format!(
+                "O processo arrancou (PID {wrapper_pid}) mas a porta {port} não ficou à escuta.\n{tail}"
+            );
+            crate::launcher::activity_log::error("launch", "wait_for_port timeout", Some(&tail));
+            return Err(err);
+        }
+    }
+
+    let cwd = work.to_string_lossy();
+    crate::launcher::runtime::record_spawn(
+        meta,
+        &runtime_key,
+        wrapper_pid,
+        &wrapper_name,
+        open_url.as_deref(),
+        Some(doc.start.as_str()),
+        Some(cwd.as_ref()),
+        &format!("cmd:{}", doc.start),
+        port,
+    )?;
+    crate::launcher::activity_log::info(
+        "launch",
+        &format!("{} a correr (folder={runtime_key})", app.name),
+    );
     let stamp = Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
-    let _ = fs::write(dir.join("LastPlayed.txt"), stamp);
-    let close = store::load_settings(root)
+    let _ = fs::write(info.join("LastPlayed.txt"), stamp);
+    if let Some(url) = &open_url {
+        let _ = fs::write(info.join("open_url.txt"), url);
+    }
+    let close = settings
         .get("CloseAfterLaunch")
         .and_then(|value| value.as_bool())
         .unwrap_or(false);
     Ok(LaunchResult {
         started: true,
         needs_choice: false,
-        executables: vec![exe.display().to_string()],
+        needs_force: false,
+        executables: vec![doc.start.clone()],
         close_after_launch: close,
         message: format!("{} a correr.", app.name),
+        open_url,
+        force_port: None,
+        force_pid: None,
+        force_process_name: None,
     })
+}
+
+fn launch_out_grew_with_port_busy(info: &Path, mark: u64) -> bool {
+    let path = info.join("launch.out.log");
+    let Ok(raw) = fs::read_to_string(&path) else {
+        return false;
+    };
+    let bytes = raw.as_bytes();
+    let start = (mark as usize).min(bytes.len());
+    let fresh = String::from_utf8_lossy(&bytes[start..]).to_lowercase();
+    fresh.contains("something is already running on port")
+        || fresh.contains("eaddrinuse")
+        || fresh.contains("address already in use")
+}
+
+pub async fn generate_launchfile(meta: &Path, workspace: &Path, repository: &str) -> Result<(), String> {
+    let apps = load_apps(meta);
+    let app = find_app(&apps, repository)?;
+    let _ = store::migrate_legacy_install(workspace, app);
+    let project = install_dir(workspace, app);
+    if !project.is_dir() {
+        return Err("Esta app não está instalada.".into());
+    }
+    let info = store::ensure_launch_info(workspace, app)?;
+    let token = store::deepseek_token_of(meta);
+    crate::launcher::deepseek::generate_launchfile(&project, &info, &token).await
 }
 
 fn process_image_name(exe: &Path) -> String {
@@ -101,11 +270,18 @@ fn process_image_name(exe: &Path) -> String {
         .to_string()
 }
 
-fn spawn_process(exe: &Path, dir: &Path, settings: &serde_json::Value) -> Result<Option<(u32, String)>, String> {
+pub(crate) fn spawn_process_public(exe: &Path, dir: &Path, settings: &Value) -> Result<Option<(u32, String)>, String> {
+    spawn_process(exe, dir, settings)
+}
+
+fn spawn_process(exe: &Path, dir: &Path, settings: &Value) -> Result<Option<(u32, String)>, String> {
     let ext = exe.extension().and_then(|ext| ext.to_str()).unwrap_or("").to_lowercase();
     let image = process_image_name(exe);
     if cfg!(target_os = "macos") && ext == "app" {
-        let child = Command::new("open").arg(exe).spawn().map_err(|err| err.to_string())?;
+        let mut command = Command::new("open");
+        command.arg(exe);
+        runners::apply_detached(&mut command);
+        let child = command.spawn().map_err(|err| err.to_string())?;
         return Ok(Some((child.id(), image)));
     }
     if cfg!(target_os = "linux") && ext == "exe" {
@@ -124,6 +300,7 @@ fn spawn_process(exe: &Path, dir: &Path, settings: &serde_json::Value) -> Result
     if let Some(parent) = exe.parent() {
         command.current_dir(parent);
     }
+    runners::apply_detached(&mut command);
     let child = command.spawn().map_err(|err| err.to_string())?;
     Ok(Some((child.id(), image)))
 }
@@ -149,11 +326,15 @@ fn spawn_linux_windows(exe: &Path, dir: &Path, settings: &serde_json::Value) -> 
         }
         let mut command = Command::new("sh");
         command.arg("-c").arg(rendered);
+        runners::apply_detached(&mut command);
         let child = command.spawn().map_err(|err| err.to_string())?;
         return Ok(Some(child.id()));
     }
     for binary in ["wine64", "wine"] {
-        if let Ok(child) = Command::new(binary).arg(exe).current_dir(dir).spawn() {
+        let mut command = Command::new(binary);
+        command.arg(exe).current_dir(dir);
+        runners::apply_detached(&mut command);
+        if let Ok(child) = command.spawn() {
             return Ok(Some(child.id()));
         }
     }
@@ -164,6 +345,7 @@ fn spawn_linux_windows(exe: &Path, dir: &Path, settings: &serde_json::Value) -> 
         command.arg("run").arg(exe).current_dir(dir);
         command.env("STEAM_COMPAT_DATA_PATH", &compat);
         command.env("STEAM_COMPAT_CLIENT_INSTALL_PATH", dir);
+        runners::apply_detached(&mut command);
         let child = command.spawn().map_err(|err| err.to_string())?;
         return Ok(Some(child.id()));
     }
@@ -196,10 +378,10 @@ fn find_proton() -> Option<PathBuf> {
     None
 }
 
-pub fn open_folder(root: &Path, repository: &str) -> Result<(), String> {
-    let apps = load_apps(root);
+pub fn open_folder(meta: &Path, workspace: &Path, repository: &str) -> Result<(), String> {
+    let apps = load_apps(meta);
     let app = find_app(&apps, repository)?;
-    let dir = install_dir(root, app);
+    let dir = store::app_dir(workspace, app);
     if !dir.is_dir() {
         return Err("A pasta ainda não existe.".into());
     }

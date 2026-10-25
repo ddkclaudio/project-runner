@@ -1,5 +1,5 @@
 use crate::launcher::store::{
-    cache_age_ok, ensure_root, install_dir, installed_version, load_apps, load_settings,
+    cache_age_ok, ensure_root, installed_version, load_apps, load_settings,
     load_version_cache, save_version_cache, token_of,
 };
 use serde_json::{json, Value};
@@ -144,25 +144,25 @@ pub fn touch_cache(cache: &mut Value, repository: &str) {
     }
 }
 
-pub async fn refresh_cache(root: &Path, force: bool) -> Result<(), String> {
-    ensure_root(root)?;
-    let apps = load_apps(root);
-    let mut cache = load_version_cache(root);
+pub async fn refresh_cache(meta: &Path, workspace: &Path, force: bool) -> Result<(), String> {
+    ensure_root(meta)?;
+    let apps = load_apps(meta);
+    let mut cache = load_version_cache(meta);
     let now = now_secs();
     for app in apps {
-        let installed = installed_version(&install_dir(root, &app)).is_some();
+        let installed = installed_version(workspace, &app).is_some();
         let checked = cache.get(&app.repository).and_then(|item| item.get("checkedAt")).and_then(|item| item.as_i64()).unwrap_or(0);
         if cache_age_ok(checked, installed, now, force) && cache.get(&app.repository).is_some() {
             continue;
         }
         let etag = cache.get(&app.repository).and_then(|item| item.get("etag")).and_then(|item| item.as_str()).map(|item| item.to_string());
         let tag = app.preferred_version.as_deref();
-        match fetch_release(root, &app.repository, tag, etag.as_deref()).await {
+        match fetch_release(meta, &app.repository, tag, etag.as_deref()).await {
             Ok(Some(release)) => cache_release(&mut cache, &app.repository, &release),
             Ok(None) => touch_cache(&mut cache, &app.repository),
             Err(_err) => {}
         }
-        save_version_cache(root, &cache)?;
+        save_version_cache(meta, &cache)?;
     }
     Ok(())
 }

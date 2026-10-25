@@ -28,30 +28,83 @@ fn result_message(message: impl Into<String>) -> InstallResult {
     }
 }
 
+fn git_clone(repository: &str, dir: &Path, on_progress: &impl Fn(u32, &str)) -> Result<(), String> {
+    use std::process::Command;
+    if dir.join(".git").is_dir() {
+        on_progress(40, "A actualizar o clone");
+        let status = Command::new("git")
+            .args(["-C", &dir.display().to_string(), "pull", "--ff-only"])
+            .status()
+            .map_err(|err| format!("git pull falhou: {err}"))?;
+        if !status.success() {
+            return Err("git pull não concluiu com sucesso.".into());
+        }
+        return Ok(());
+    }
+    if dir.exists() {
+        let empty = fs::read_dir(dir).map(|mut entries| entries.next().is_none()).unwrap_or(false);
+        if !empty {
+            return Err("A pasta de destino já existe e não está vazia.".into());
+        }
+        let _ = fs::remove_dir_all(dir);
+    }
+    if let Some(parent) = dir.parent() {
+        fs::create_dir_all(parent).map_err(|err| err.to_string())?;
+    }
+    on_progress(20, "A clonar o repositório");
+    let url = format!("https://github.com/{repository}.git");
+    let status = Command::new("git")
+        .args(["clone", "--depth", "1", &url, &dir.display().to_string()])
+        .status()
+        .map_err(|err| format!("git clone falhou (está o git instalado?): {err}"))?;
+    if !status.success() {
+        return Err("git clone não concluiu com sucesso.".into());
+    }
+    Ok(())
+}
+
 pub async fn install(
-    root: &Path,
+    meta: &Path,
+    workspace: &Path,
     repository: &str,
     asset_name: Option<String>,
     tag: Option<String>,
     confirm_wine: bool,
     on_progress: impl Fn(u32, &str),
 ) -> Result<InstallResult, String> {
-    let apps = load_apps(root);
+    let apps = load_apps(meta);
     let app = find_app(&apps, repository)?.clone();
+    crate::launcher::activity_log::info(
+        "install",
+        &format!("start folder={} repo={}", app.folder_name, app.repository),
+    );
     let tag = tag.filter(|value| !value.trim().is_empty()).or(app.preferred_version.clone());
+    let _ = store::migrate_legacy_install(workspace, &app);
+    let dir = install_dir(workspace, &app);
     on_progress(2, "A procurar a release");
-    let release = match github::fetch_release(root, &app.repository, tag.as_deref(), None).await? {
-        Some(release) => release,
-        None => return Err("A release não foi encontrada.".into()),
+    let release = match github::fetch_release(meta, &app.repository, tag.as_deref(), None).await {
+        Ok(Some(release)) => release,
+        Ok(None) | Err(_) => {
+            on_progress(10, "Sem release — a clonar via git");
+            git_clone(&app.repository, &dir, &on_progress)?;
+            let _ = store::write_version(workspace, &app, "git");
+            if dir.join("package.json").is_file() {
+                on_progress(85, "A instalar dependências Node");
+                crate::launcher::runners::node::ensure_dependencies(&dir)?;
+            }
+            on_progress(100, "Concluído");
+            let mut done = result_message(format!("{} clonada de {}.", app.name, app.repository));
+            done.installed_version = Some("git".into());
+            return Ok(done);
+        }
     };
-    let dir = install_dir(root, &app);
-    if installed_version(&dir).as_deref() == Some(release.tag.as_str()) {
+    if installed_version(workspace, &app).as_deref() == Some(release.tag.as_str()) {
         let mut done = result_message(format!("{} já está na versão {}.", app.name, release.tag));
         done.installed_version = Some(release.tag);
         return Ok(done);
     }
     let names: Vec<String> = release.assets.iter().map(|asset| asset.name.clone()).collect();
-    let platform = store::platform_of(&store::load_settings(root));
+    let platform = store::platform_of(&store::load_settings(meta));
     let matches = matching_assets(&names, &platform);
     let chosen = if let Some(name) = asset_name.filter(|value| !value.trim().is_empty()) {
         release
@@ -91,20 +144,20 @@ pub async fn install(
             });
         }
     }
-    let temp = root.join("Cache").join(format!("download-{}", store::icon_stem(&app)));
+    let temp = meta.join("Cache").join(format!("download-{}", store::icon_stem(&app)));
     let _ = fs::remove_dir_all(&temp);
     fs::create_dir_all(&temp).map_err(|err| err.to_string())?;
     let file_path = temp.join(&chosen.name);
     on_progress(10, "A transferir");
-    github::download_file(root, &chosen.url, &file_path, |percent| on_progress(percent, "A transferir")).await?;
+    github::download_file(meta, &chosen.url, &file_path, |percent| on_progress(percent, "A transferir")).await?;
     on_progress(95, "A instalar");
     fs::create_dir_all(&dir).map_err(|err| err.to_string())?;
     place_asset(&file_path, &dir, &chosen)?;
-    fs::write(dir.join("version.txt"), &release.tag).map_err(|err| err.to_string())?;
+    store::write_version(workspace, &app, &release.tag)?;
     let _ = fs::remove_dir_all(&temp);
-    let mut cache = store::load_version_cache(root);
+    let mut cache = store::load_version_cache(meta);
     github::cache_release(&mut cache, &app.repository, &release);
-    store::save_version_cache(root, &cache)?;
+    store::save_version_cache(meta, &cache)?;
     on_progress(100, "Concluído");
     Ok(InstallResult {
         needs_choice: false,
@@ -172,48 +225,8 @@ fn extract_tar_gz(file: &Path, dir: &Path) -> Result<(), String> {
     Ok(())
 }
 
-pub fn read_executables(dir: &Path) -> Vec<String> {
-    fn is_launchable(path: &Path) -> bool {
-        if !path.is_file() && !path.extension().is_some_and(|ext| ext.eq_ignore_ascii_case("app")) {
-            return false;
-        }
-        let ext = path.extension().and_then(|ext| ext.to_str()).unwrap_or("").to_lowercase();
-        if cfg!(windows) {
-            matches!(ext.as_str(), "exe" | "bat" | "cmd")
-        } else if cfg!(target_os = "macos") {
-            matches!(ext.as_str(), "app" | "sh" | "command" | "")
-        } else {
-            matches!(ext.as_str(), "" | "appimage" | "sh" | "bin" | "exe" | "x86_64" | "app")
-        }
-    }
-    fn collect(dir: &Path, recursive: bool, into: &mut Vec<PathBuf>, depth: usize) {
-        if depth > 4 || into.len() > 200 {
-            return;
-        }
-        let Ok(entries) = fs::read_dir(dir) else { return };
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.is_dir() {
-                if path.extension().is_some_and(|ext| ext.eq_ignore_ascii_case("app")) {
-                    into.push(path);
-                } else if recursive {
-                    collect(&path, true, into, depth + 1);
-                }
-            } else if is_launchable(&path) {
-                into.push(path);
-            }
-        }
-    }
-    let mut found = Vec::new();
-    collect(dir, false, &mut found, 0);
-    if found.is_empty() {
-        collect(dir, true, &mut found, 0);
-    }
-    found.sort();
-    found.into_iter().map(|path| path.display().to_string()).collect()
-}
 
-pub fn remember_icon(root: &Path, repository: &str, source: &Path) -> Result<String, String> {
+pub fn remember_icon(meta: &Path, workspace: &Path, repository: &str, source: &Path) -> Result<String, String> {
     if !source.is_file() {
         return Err("O ficheiro de imagem não existe.".into());
     }
@@ -224,11 +237,25 @@ pub fn remember_icon(root: &Path, repository: &str, source: &Path) -> Result<Str
     if bytes.len() > 4_000_000 {
         return Err("A imagem passa de 4 MB.".into());
     }
-    let apps = load_apps(root);
+    let apps = load_apps(meta);
     let app = find_app(&apps, repository)?;
-    let ext = source.extension().and_then(|ext| ext.to_str()).unwrap_or("img");
-    let dest = root.join("Cache").join("CustomIcons").join(format!("{}.{ext}", store::icon_stem(app)));
-    if let Ok(entries) = fs::read_dir(root.join("Cache").join("CustomIcons")) {
+    let ext = source
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .map(|ext| ext.to_ascii_lowercase())
+        .filter(|ext| matches!(ext.as_str(), "png" | "jpg" | "jpeg" | "webp" | "gif" | "ico" | "svg" | "bmp"))
+        .unwrap_or_else(|| "png".into());
+    let images = store::images_dir(workspace, app);
+    fs::create_dir_all(&images).map_err(|err| err.to_string())?;
+    if let Ok(entries) = fs::read_dir(&images) {
+        for entry in entries.flatten() {
+            if entry.path().is_file() {
+                let _ = fs::remove_file(entry.path());
+            }
+        }
+    }
+    // Limpar ícone legado em Cache/CustomIcons.
+    if let Ok(entries) = fs::read_dir(meta.join("Cache").join("CustomIcons")) {
         for entry in entries.flatten() {
             let name = entry.file_name().to_string_lossy().to_string();
             if name.starts_with(&store::icon_stem(app)) {
@@ -236,15 +263,23 @@ pub fn remember_icon(root: &Path, repository: &str, source: &Path) -> Result<Str
             }
         }
     }
+    let dest = images.join(format!("icon.{ext}"));
     fs::write(&dest, bytes).map_err(|err| err.to_string())?;
     Ok(dest.display().to_string())
 }
 
-pub fn clear_icon(root: &Path, repository: &str) -> Result<(), String> {
-    let apps = load_apps(root);
+pub fn clear_icon(meta: &Path, workspace: &Path, repository: &str) -> Result<(), String> {
+    let apps = load_apps(meta);
     let app = find_app(&apps, repository)?;
-    let dir = root.join("Cache").join("CustomIcons");
-    if let Ok(entries) = fs::read_dir(dir) {
+    let images = store::images_dir(workspace, app);
+    if let Ok(entries) = fs::read_dir(&images) {
+        for entry in entries.flatten() {
+            if entry.path().is_file() {
+                let _ = fs::remove_file(entry.path());
+            }
+        }
+    }
+    if let Ok(entries) = fs::read_dir(meta.join("Cache").join("CustomIcons")) {
         for entry in entries.flatten() {
             if entry.file_name().to_string_lossy().starts_with(&store::icon_stem(app)) {
                 let _ = fs::remove_file(entry.path());

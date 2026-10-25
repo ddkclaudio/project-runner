@@ -19,7 +19,7 @@ function formatPlayed(value?: string | null) {
 
 function AppCell({ app }: { app: AppView }) {
   return (
-    <Link to={appHref(app.repository)} className={styles.appLink}>
+    <Link to={appHref(app)} className={styles.appLink}>
       <span className={styles.appName}>{app.name}</span>
       <span className={styles.appRef}>{app.repository}</span>
     </Link>
@@ -93,7 +93,7 @@ export function LibraryListView({
       loadingRows={6}
       columns={columns}
       rows={apps}
-      keyField="repository"
+      keyField="folderName"
       onRowClick={onOpen}
       rowClassName={(row) => (row.running ? styles.running : undefined)}
       rowActions={(row) => <ActionsCell app={row} onPrimary={onPrimary} />}

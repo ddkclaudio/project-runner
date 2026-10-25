@@ -12,7 +12,7 @@ import { InlineAlert } from '@/components/ui/InlineAlert';
 import { listen } from '@tauri-apps/api/event';
 import { libraryList, libraryRefresh, librarySetFilter, librarySetSort, settingsGet, settingsSave, type AppView } from '@/lib/launcher-api';
 import { isEditableTarget } from '@/lib/hotkeys';
-import { ChoiceList, LibraryCard, useLibraryMutations } from '@/components/launcher/LibraryCard';
+import { appId, ChoiceList, LibraryCard, useLibraryMutations } from '@/components/launcher/LibraryCard';
 import { LibraryListView } from '@/components/launcher/LibraryListView';
 import { useToast } from '@/components/ui/Toast';
 import { launcherError } from '@/lib/launcher-api';
@@ -59,6 +59,7 @@ export function HomePage() {
         if (!cancelled) toast.error(launcherError(err));
       });
     const unlisten = listen<{ repository: string; percent: number; phase: string }>('launcher-progress', (event) => {
+      // `repository` no evento é a chave de progresso (pasta da app).
       setProgress((current) => ({ ...current, [event.payload.repository]: event.payload }));
     });
     return () => {
@@ -90,7 +91,11 @@ export function HomePage() {
         return false;
       }
       if (!q) return true;
-      return app.name.toLowerCase().includes(q) || app.repository.toLowerCase().includes(q);
+      return (
+        app.name.toLowerCase().includes(q) ||
+        app.repository.toLowerCase().includes(q) ||
+        app.folderName.toLowerCase().includes(q)
+      );
     });
   }, [library.data, query, statusFilter]);
 
@@ -166,7 +171,7 @@ export function HomePage() {
     } else {
       setProgress((current) => {
         const next = { ...current };
-        delete next[app.repository];
+        delete next[appId(app)];
         return next;
       });
     }
@@ -272,14 +277,14 @@ export function HomePage() {
       {view === 'grid' ? (
         <GridView
           items={apps}
-          keyField="repository"
+          keyField="folderName"
           loading={listLoading}
           emptyMessage={emptyMessage}
           renderItem={(app) => (
             <LibraryCard
               app={app}
-              focused={focus >= 0 && apps[focus]?.repository === app.repository}
-              progress={progress[app.repository]}
+              focused={focus >= 0 && apps[focus] != null && appId(apps[focus]) === appId(app)}
+              progress={progress[appId(app)]}
               onPrimary={(item) => void primary(item)}
             />
           )}

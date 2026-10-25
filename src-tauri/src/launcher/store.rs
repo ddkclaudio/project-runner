@@ -43,6 +43,12 @@ pub struct AppView {
     pub selected_executable: Option<String>,
     pub running: bool,
     pub selected_branch: Option<String>,
+    /// URL para abrir no browser enquanto a app corre (ex. localhost).
+    pub open_url: Option<String>,
+    /// PID do processo em execução (Task Manager), se `running`.
+    pub running_pid: Option<u32>,
+    /// Nome do processo (ex. node.exe), se `running`.
+    pub running_process_name: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -61,6 +67,7 @@ pub struct LibrarySnapshot {
 pub struct SettingsInput {
     pub apps_path: String,
     pub github_api_token: String,
+    pub deepseek_api_token: String,
     pub platform: String,
     pub sort_by: String,
     pub use_grid_view: bool,
@@ -81,6 +88,7 @@ pub struct SettingsInput {
 pub struct PublicSettings {
     pub apps_path: String,
     pub github_api_token: String,
+    pub deepseek_api_token: String,
     pub platform: String,
     pub sort_by: String,
     pub use_grid_view: bool,
@@ -103,8 +111,49 @@ fn read_string(path: &Path) -> Result<String, std::io::Error> {
     Ok(raw.trim_start_matches('\u{feff}').to_string())
 }
 
-pub fn resolve_root() -> PathBuf {
-    if let Ok(dir) = std::env::var("PAINEL_DATA_DIR") {
+/// Ponteiro fixo em AppData: só a pasta das apps (clones), nunca auth/orgs.
+pub fn bootstrap_path() -> PathBuf {
+    user_data_dir().join("data-location.json")
+}
+
+pub fn read_bootstrap_apps_root() -> Option<PathBuf> {
+    let raw = fs::read_to_string(bootstrap_path()).ok()?;
+    let value: Value = serde_json::from_str(raw.trim_start_matches('\u{feff}')).ok()?;
+    let path = value
+        .get("appsRoot")
+        .or_else(|| value.get("dataRoot"))
+        .and_then(|item| item.as_str())?
+        .trim();
+    if path.is_empty() {
+        None
+    } else {
+        Some(PathBuf::from(path))
+    }
+}
+
+pub fn write_bootstrap_apps_root(path: Option<&str>) -> Result<(), String> {
+    let bootstrap = bootstrap_path();
+    if let Some(parent) = bootstrap.parent() {
+        fs::create_dir_all(parent).map_err(|err| err.to_string())?;
+    }
+    match path.map(str::trim).filter(|item| !item.is_empty()) {
+        None => {
+            if bootstrap.is_file() {
+                fs::remove_file(&bootstrap).map_err(|err| err.to_string())?;
+            }
+            Ok(())
+        }
+        Some(custom) => {
+            let payload = json!({ "appsRoot": custom });
+            let raw = serde_json::to_string_pretty(&payload).map_err(|err| err.to_string())?;
+            fs::write(&bootstrap, raw).map_err(|err| err.to_string())
+        }
+    }
+}
+
+/// Conta, orgs, biblioteca e settings — sempre AppData (não segue a pasta das apps).
+pub fn resolve_meta_root() -> PathBuf {
+    if let Ok(dir) = std::env::var("PAINEL_META_DIR") {
         let dir = dir.trim();
         if !dir.is_empty() {
             return PathBuf::from(dir);
@@ -113,7 +162,46 @@ pub fn resolve_root() -> PathBuf {
     user_data_dir()
 }
 
-/// `%APPDATA%\com.local.painel` no Windows. Cadastro, sessão e biblioteca ficam aqui.
+/// Pasta custom de apps tem de estar vazia (ou ainda não existir).
+pub fn require_empty_apps_dir(path: &Path) -> Result<(), String> {
+    if !path.exists() {
+        return Ok(());
+    }
+    if !path.is_dir() {
+        return Err("O caminho indicado não é uma pasta.".into());
+    }
+    let mut entries = fs::read_dir(path).map_err(|err| err.to_string())?;
+    if entries.next().is_some() {
+        return Err(
+            "A pasta escolhida precisa estar vazia. Escolha outra pasta ou esvazie-a antes de continuar."
+                .into(),
+        );
+    }
+    Ok(())
+}
+
+pub fn same_path(a: &Path, b: &Path) -> bool {
+    match (fs::canonicalize(a), fs::canonicalize(b)) {
+        (Ok(left), Ok(right)) => left == right,
+        _ => a == b,
+    }
+}
+
+/// Onde ficam as apps: `{appsRoot}/{orgSlug}/{appFolder}/` (clones em `repositories/`).
+pub fn resolve_apps_root() -> PathBuf {
+    if let Some(custom) = read_bootstrap_apps_root() {
+        return custom;
+    }
+    if let Ok(dir) = std::env::var("PAINEL_APPS_DIR").or_else(|_| std::env::var("PAINEL_DATA_DIR")) {
+        let dir = dir.trim();
+        if !dir.is_empty() {
+            return PathBuf::from(dir);
+        }
+    }
+    user_data_dir()
+}
+
+/// `%APPDATA%\com.local.painel` no Windows. Conta, orgs e bootstrap.
 pub fn user_data_dir() -> PathBuf {
     if let Some(appdata) = std::env::var_os("APPDATA") {
         return PathBuf::from(appdata).join("com.local.painel");
@@ -125,6 +213,17 @@ pub fn user_data_dir() -> PathBuf {
             .join("com.local.painel");
     }
     PathBuf::from(".").join("com.local.painel")
+}
+
+/// Metadados do sistema: `{metaRoot}/data` (auth, orgs, por-org).
+pub fn system_data_dir(meta_root: &Path) -> PathBuf {
+    meta_root.join("data")
+}
+
+pub fn ensure_system_data(global_root: &Path) -> Result<PathBuf, String> {
+    let data = system_data_dir(global_root);
+    fs::create_dir_all(&data).map_err(|err| err.to_string())?;
+    Ok(data)
 }
 
 pub fn ensure_root(root: &Path) -> Result<(), String> {
@@ -215,6 +314,7 @@ fn default_settings() -> Value {
         "ManuallyHiddenApps": [],
         "AppsPath": "",
         "GitHubApiToken": "",
+        "DeepSeekApiToken": "",
         "SortBy": "LastPlayed",
         "StartFullscreen": false,
         "CloseAfterLaunch": false,
@@ -296,6 +396,7 @@ pub fn public_settings(root: &Path) -> PublicSettings {
     PublicSettings {
         apps_path: setting_str(&settings, "AppsPath"),
         github_api_token: setting_str(&settings, "GitHubApiToken"),
+        deepseek_api_token: setting_str(&settings, "DeepSeekApiToken"),
         platform: platform_of(&settings),
         sort_by: {
             let value = setting_str(&settings, "SortBy");
@@ -329,6 +430,7 @@ pub fn apply_settings(root: &Path, input: SettingsInput) -> Result<PublicSetting
     let opacity = input.background_opacity.clamp(0.0, 1.0);
     map.insert("AppsPath".into(), json!(input.apps_path.trim()));
     map.insert("GitHubApiToken".into(), json!(input.github_api_token.trim()));
+    map.insert("DeepSeekApiToken".into(), json!(input.deepseek_api_token.trim()));
     map.insert("Platform".into(), json!(input.platform.trim()));
     map.insert("SortBy".into(), json!(input.sort_by.trim()));
     map.insert("UseGridView".into(), json!(input.use_grid_view));
@@ -356,10 +458,21 @@ pub fn token_of(root: &Path) -> String {
     setting_str(&load_settings(root), "GitHubApiToken")
 }
 
+pub fn deepseek_token_of(root: &Path) -> String {
+    setting_str(&load_settings(root), "DeepSeekApiToken")
+}
+
+/// Pasta workspace da org: `{appsRoot}/{orgSlug}` (clones ficam aqui).
+pub fn org_workspace(apps_root: &Path, org_slug: &str) -> PathBuf {
+    apps_root.join(org_slug)
+}
+
+#[allow(dead_code)]
 pub fn apps_root(root: &Path) -> PathBuf {
     let settings = load_settings(root);
     let custom = setting_str(&settings, "AppsPath");
     if custom.trim().is_empty() {
+        // Compat: se root for meta (`data/{orgId}`), Apps fica ao lado; preferir workspace via install_dir.
         root.join("Apps")
     } else {
         PathBuf::from(custom)
@@ -441,17 +554,23 @@ pub fn parse_apps_value(root_value: &Value) -> Vec<AppEntry> {
             }
         }
     }
+    // Unicidade pela pasta (nome). O mesmo repositório GitHub pode repetir-se.
     let mut seen = Vec::new();
-    apps.retain(|app| {
-        let key = app.repository.to_lowercase();
-        if seen.iter().any(|item: &String| item == &key) {
-            false
+    let mut out = Vec::new();
+    for mut app in apps {
+        if app.folder_name.trim().is_empty() {
+            app.folder_name = sanitize_folder(&app.name);
         } else {
-            seen.push(key);
-            true
+            app.folder_name = sanitize_folder(&app.folder_name);
         }
-    });
-    apps
+        let key = app.folder_name.to_lowercase();
+        if seen.iter().any(|item: &String| item == &key) {
+            continue;
+        }
+        seen.push(key);
+        out.push(app);
+    }
+    out
 }
 
 pub fn load_apps(root: &Path) -> Vec<AppEntry> {
@@ -522,7 +641,8 @@ pub fn normalize_entry(mut entry: AppEntry) -> Result<AppEntry, String> {
         return Err("O repositório deve estar no formato dono/nome.".into());
     }
     if entry.folder_name.trim().is_empty() {
-        entry.folder_name = sanitize_folder(repo);
+        // Pasta da app = nome dado; o clone fica em repositories/{repo}/.
+        entry.folder_name = sanitize_folder(&entry.name);
     } else {
         entry.folder_name = sanitize_folder(&entry.folder_name);
     }
@@ -537,16 +657,27 @@ pub fn upsert_app(root: &Path, entry: AppEntry, previous: Option<String>) -> Res
     let entry = normalize_entry(entry)?;
     let mut apps = load_apps(root);
     let previous = previous.unwrap_or_default();
-    if apps.iter().any(|app| {
-        app.repository.eq_ignore_ascii_case(&entry.repository)
-            && !app.repository.eq_ignore_ascii_case(&previous)
-    }) {
-        return Err("Esta app já está na biblioteca.".into());
+
+    // `previous` pode ser pasta ou repositório da entrada em edição.
+    let edit_index = if previous.is_empty() {
+        None
+    } else {
+        apps.iter().position(|app| {
+            app.folder_name.eq_ignore_ascii_case(&previous)
+                || app.repository.eq_ignore_ascii_case(&previous)
+        })
+    };
+
+    // Unicidade pela pasta no disco (do nome). O mesmo repositório pode repetir-se
+    // com nomes/pastas diferentes.
+    let folder_taken = apps.iter().enumerate().any(|(index, app)| {
+        Some(index) != edit_index && app.folder_name.eq_ignore_ascii_case(&entry.folder_name)
+    });
+    if folder_taken {
+        return Err("Já existe uma app com este nome/pasta na biblioteca.".into());
     }
-    if let Some(index) = apps
-        .iter()
-        .position(|app| app.repository.eq_ignore_ascii_case(&previous) || app.repository.eq_ignore_ascii_case(&entry.repository))
-    {
+
+    if let Some(index) = edit_index {
         apps[index] = entry.clone();
     } else {
         apps.push(entry.clone());
@@ -555,10 +686,11 @@ pub fn upsert_app(root: &Path, entry: AppEntry, previous: Option<String>) -> Res
     Ok(entry)
 }
 
-pub fn remove_app(root: &Path, repository: &str) -> Result<(), String> {
+pub fn remove_app(root: &Path, key: &str) -> Result<(), String> {
     let mut apps = load_apps(root);
     let before = apps.len();
-    apps.retain(|app| !app.repository.eq_ignore_ascii_case(repository));
+    let target = find_app(&apps, key)?.folder_name.clone();
+    apps.retain(|app| !app.folder_name.eq_ignore_ascii_case(&target));
     if apps.len() == before {
         return Err("App não encontrada.".into());
     }
@@ -602,32 +734,157 @@ fn listed(list: &[String], app: &AppEntry) -> bool {
     list.iter().any(|item| item == &key || item == &app.name)
 }
 
-pub fn install_dir(root: &Path, app: &AppEntry) -> PathBuf {
-    if let Some(path) = app.install_path.as_ref().filter(|path| !path.trim().is_empty()) {
-        return PathBuf::from(path);
-    }
+/// Nome da pasta do repositório (`dono/nome` → `nome`).
+pub fn repo_folder_name(repository: &str) -> String {
+    let base = repository
+        .rsplit('/')
+        .next()
+        .unwrap_or(repository)
+        .trim();
+    sanitize_folder(base)
+}
+
+/// Pasta da app: `{workspace}/{appFolder}/` (nome da app).
+pub fn app_dir(workspace: &Path, app: &AppEntry) -> PathBuf {
     let folder = if app.folder_name.trim().is_empty() {
         sanitize_folder(&app.name)
     } else {
         app.folder_name.clone()
     };
-    apps_root(root).join(folder)
+    workspace.join(folder)
+}
+
+/// Ícones locais da app: `{workspace}/{appFolder}/images/`.
+pub fn images_dir(workspace: &Path, app: &AppEntry) -> PathBuf {
+    app_dir(workspace, app).join("images")
+}
+
+/// Nome da pasta que contém os clones dentro da app.
+pub const REPOSITORIES_DIR: &str = "repositories";
+
+/// Destino do clone/instalação: `{workspace}/{appFolder}/repositories/{repo}/`.
+pub fn install_dir(workspace: &Path, app: &AppEntry) -> PathBuf {
+    if let Some(path) = app.install_path.as_ref().filter(|path| !path.trim().is_empty()) {
+        return PathBuf::from(path);
+    }
+    app_dir(workspace, app)
+        .join(REPOSITORIES_DIR)
+        .join(repo_folder_name(&app.repository))
+}
+
+/// Layout legado: `{workspace}/{appFolder}/{repo}/` (antes de `repositories/`).
+fn legacy_install_dir(workspace: &Path, app: &AppEntry) -> PathBuf {
+    app_dir(workspace, app).join(repo_folder_name(&app.repository))
+}
+
+/// Move o clone antigo para `repositories/{repo}` se ainda estiver no caminho legado.
+pub fn migrate_legacy_install(workspace: &Path, app: &AppEntry) -> Result<PathBuf, String> {
+    let target = install_dir(workspace, app);
+    if target.is_dir() {
+        return Ok(target);
+    }
+    if app.install_path.as_ref().is_some_and(|path| !path.trim().is_empty()) {
+        return Ok(target);
+    }
+    let legacy = legacy_install_dir(workspace, app);
+    if legacy.is_dir()
+        && legacy != target
+        && legacy
+            .file_name()
+            .is_some_and(|name| name != REPOSITORIES_DIR && name != "launch-info")
+    {
+        if let Some(parent) = target.parent() {
+            fs::create_dir_all(parent).map_err(|err| err.to_string())?;
+        }
+        fs::rename(&legacy, &target).map_err(|err| {
+            format!(
+                "Não foi possível mover o clone para repositories/: {err}"
+            )
+        })?;
+    }
+    Ok(target)
+}
+
+/// Metadados do Painel (fora do git): `{workspace}/{appFolder}/launch-info/`.
+/// Contém version.txt, LastPlayed.txt, open_url.txt, selected_executable.txt, Launchfile.
+pub fn launch_info_dir(workspace: &Path, app: &AppEntry) -> PathBuf {
+    if let Some(path) = app.install_path.as_ref().filter(|path| !path.trim().is_empty()) {
+        let project = PathBuf::from(path);
+        // Preferir irmão de `repositories/` (avô do repo) quando o path custom já inclui repositories/.
+        if project
+            .parent()
+            .and_then(|parent| parent.file_name())
+            .is_some_and(|name| name == REPOSITORIES_DIR)
+        {
+            return project
+                .parent()
+                .and_then(|repos| repos.parent())
+                .map(|app| app.join("launch-info"))
+                .unwrap_or_else(|| project.join("launch-info"));
+        }
+        return project
+            .parent()
+            .map(|parent| parent.join("launch-info"))
+            .unwrap_or_else(|| project.join("launch-info"));
+    }
+    app_dir(workspace, app).join("launch-info")
+}
+
+const LAUNCH_INFO_FILES: &[&str] = &[
+    "version.txt",
+    "LastPlayed.txt",
+    "open_url.txt",
+    "selected_executable.txt",
+    "Launchfile",
+];
+
+/// Garante `launch-info/` e migra ficheiros antigos que estavam dentro do clone.
+pub fn ensure_launch_info(workspace: &Path, app: &AppEntry) -> Result<PathBuf, String> {
+    let _ = migrate_legacy_install(workspace, app)?;
+    let info = launch_info_dir(workspace, app);
+    fs::create_dir_all(&info).map_err(|err| err.to_string())?;
+    let project = install_dir(workspace, app);
+    if project.is_dir() {
+        for name in LAUNCH_INFO_FILES {
+            let src = project.join(name);
+            let dst = info.join(name);
+            if src.is_file() && !dst.is_file() {
+                if fs::rename(&src, &dst).is_err() {
+                    if fs::copy(&src, &dst).is_ok() {
+                        let _ = fs::remove_file(&src);
+                    }
+                }
+            }
+        }
+    }
+    Ok(info)
 }
 
 fn read_text(path: &Path) -> Option<String> {
     fs::read_to_string(path).ok().map(|text| text.trim().to_string()).filter(|text| !text.is_empty())
 }
 
-pub fn installed_version(dir: &Path) -> Option<String> {
-    if !dir.is_dir() {
+/// Versão instalada: o clone tem de existir; `version.txt` vive em `launch-info/`.
+pub fn installed_version(workspace: &Path, app: &AppEntry) -> Option<String> {
+    let project = install_dir(workspace, app);
+    if !project.is_dir() {
         return None;
     }
-    let version_file = dir.join("version.txt");
-    if let Some(version) = read_text(&version_file) {
+    let info = launch_info_dir(workspace, app);
+    if let Some(version) = read_text(&info.join("version.txt")) {
         return Some(version);
     }
-    let _ = fs::write(&version_file, "v0.0.0");
+    if let Some(version) = read_text(&project.join("version.txt")) {
+        return Some(version);
+    }
+    let _ = fs::create_dir_all(&info);
+    let _ = fs::write(info.join("version.txt"), "v0.0.0");
     Some("v0.0.0".into())
+}
+
+pub fn write_version(workspace: &Path, app: &AppEntry, version: &str) -> Result<(), String> {
+    let info = ensure_launch_info(workspace, app)?;
+    fs::write(info.join("version.txt"), version).map_err(|err| err.to_string())
 }
 
 fn cache_path(root: &Path) -> PathBuf {
@@ -648,8 +905,24 @@ pub fn save_version_cache(root: &Path, cache: &Value) -> Result<(), String> {
     fs::write(cache_path(root), raw).map_err(|err| err.to_string())
 }
 
-fn icon_file(root: &Path, app: &AppEntry) -> Option<PathBuf> {
-    let custom = root.join("Cache").join("CustomIcons");
+fn first_image_in(dir: &Path) -> Option<PathBuf> {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return None;
+    };
+    let mut files: Vec<PathBuf> = entries
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| path.is_file())
+        .collect();
+    files.sort();
+    files.into_iter().next()
+}
+
+fn icon_file(meta: &Path, workspace: &Path, app: &AppEntry) -> Option<PathBuf> {
+    if let Some(path) = first_image_in(&images_dir(workspace, app)) {
+        return Some(path);
+    }
+    let custom = meta.join("Cache").join("CustomIcons");
     if let Ok(entries) = fs::read_dir(&custom) {
         for entry in entries.flatten() {
             let name = entry.file_name().to_string_lossy().to_string();
@@ -658,21 +931,27 @@ fn icon_file(root: &Path, app: &AppEntry) -> Option<PathBuf> {
             }
         }
     }
-    let cached = root.join("Cache").join("Icons").join(format!("{}.img", icon_stem(app)));
-    if cached.is_file() { Some(cached) } else { None }
+    let cached = meta.join("Cache").join("Icons").join(format!("{}.img", icon_stem(app)));
+    if cached.is_file() {
+        Some(cached)
+    } else {
+        None
+    }
 }
 
 pub fn icon_stem(app: &AppEntry) -> String {
     sanitize_folder(&app.repository.replace('/', "__"))
 }
 
-fn last_played_of(dir: &Path) -> Option<String> {
-    read_text(&dir.join("LastPlayed.txt"))
+fn last_played_of(info: &Path) -> Option<String> {
+    read_text(&info.join("LastPlayed.txt"))
 }
 
-pub fn view_app(root: &Path, app: &AppEntry, settings: &Value, cache: &Value) -> AppView {
-    let dir = install_dir(root, app);
-    let installed = installed_version(&dir);
+pub fn view_app(meta: &Path, workspace: &Path, app: &AppEntry, settings: &Value, cache: &Value) -> AppView {
+    let home = app_dir(workspace, app);
+    let dir = install_dir(workspace, app);
+    let info = launch_info_dir(workspace, app);
+    let installed = installed_version(workspace, app);
     let remote = cache
         .get(&app.repository)
         .and_then(|item| item.get("tag"))
@@ -695,33 +974,72 @@ pub fn view_app(root: &Path, app: &AppEntry, settings: &Value, cache: &Value) ->
     };
     let manual = setting_list(settings, "ManuallyHiddenApps");
     let filter = setting_list(settings, "HiddenApps");
+    let runtime_key = &app.folder_name;
+    let running = crate::launcher::runtime::is_running(meta, runtime_key);
+    let running_entry = if running {
+        crate::launcher::runtime::entry(meta, runtime_key)
+    } else {
+        None
+    };
     AppView {
         name: app.name.clone(),
         repository: app.repository.clone(),
         folder_name: app.folder_name.clone(),
-        install_path: dir.display().to_string(),
+        // Pasta da app no disco (ex.: …/claudio-fernandes/hello), não o clone em repositories/.
+        install_path: home.display().to_string(),
         configured_install_path: app.install_path.clone(),
         app_icon_url: app.app_icon_url.clone(),
-        icon_path: icon_file(root, app).map(|path| path.display().to_string()),
+        icon_path: icon_file(meta, workspace, app).map(|path| path.display().to_string()),
         preferred_version: app.preferred_version.clone(),
         skipped_update_version: app.skipped_update_version.clone(),
         installed_version: installed,
         remote_version: remote,
         changelog,
         status,
-        last_played: last_played_of(&dir),
+        last_played: last_played_of(&info),
         manually_hidden: listed(&manual, app),
         filter_hidden: listed(&filter, app),
-        selected_executable: read_text(&dir.join("selected_executable.txt")),
-        running: crate::launcher::runtime::is_running(root, &app.repository),
-        selected_branch: crate::launcher::runtime::selected_branch(root, &app.repository),
+        selected_executable: read_text(&info.join("selected_executable.txt"))
+            .or_else(|| read_text(&dir.join("selected_executable.txt"))),
+        running,
+        selected_branch: crate::launcher::runtime::selected_branch(meta, runtime_key),
+        open_url: if running {
+            running_entry
+                .as_ref()
+                .and_then(|item| item.open_url.clone())
+                .or_else(|| read_text(&info.join("open_url.txt")))
+                .or_else(|| read_text(&dir.join("open_url.txt")))
+        } else {
+            None
+        },
+        running_pid: running_entry.as_ref().map(|item| item.pid),
+        running_process_name: running_entry.map(|item| item.process_name),
     }
 }
 
-pub fn find_app<'a>(apps: &'a [AppEntry], repository: &str) -> Result<&'a AppEntry, String> {
-    apps.iter()
-        .find(|app| app.repository.eq_ignore_ascii_case(repository))
-        .ok_or_else(|| "App não encontrada.".to_string())
+/// Resolve por pasta (preferido) ou por repositório (se for único).
+pub fn find_app<'a>(apps: &'a [AppEntry], key: &str) -> Result<&'a AppEntry, String> {
+    let key = key.trim();
+    if key.is_empty() {
+        return Err("App não encontrada.".into());
+    }
+    if let Some(app) = apps
+        .iter()
+        .find(|app| app.folder_name.eq_ignore_ascii_case(key))
+    {
+        return Ok(app);
+    }
+    let matches: Vec<_> = apps
+        .iter()
+        .filter(|app| app.repository.eq_ignore_ascii_case(key))
+        .collect();
+    match matches.as_slice() {
+        [app] => Ok(*app),
+        [] => Err("App não encontrada.".into()),
+        _ => Err(
+            "Existem várias apps com este repositório. Abra pela pasta/nome da app.".into(),
+        ),
+    }
 }
 
 pub fn find_app_by_name<'a>(apps: &'a [AppEntry], name: &str) -> Result<&'a AppEntry, String> {
@@ -734,12 +1052,12 @@ fn sort_key_played(app: &AppView) -> String {
     app.last_played.clone().unwrap_or_default()
 }
 
-pub fn snapshot(root: &Path) -> Result<LibrarySnapshot, String> {
-    let settings = load_settings(root);
-    let cache = load_version_cache(root);
-    let mut apps: Vec<AppView> = load_apps(root)
+pub fn snapshot(meta: &Path, workspace: &Path) -> Result<LibrarySnapshot, String> {
+    let settings = load_settings(meta);
+    let cache = load_version_cache(meta);
+    let mut apps: Vec<AppView> = load_apps(meta)
         .iter()
-        .map(|app| view_app(root, app, &settings, &cache))
+        .map(|app| view_app(meta, workspace, app, &settings, &cache))
         .collect();
     let sort_by = {
         let value = setting_str(&settings, "SortBy");
@@ -765,7 +1083,7 @@ pub fn snapshot(root: &Path) -> Result<LibrarySnapshot, String> {
     Ok(LibrarySnapshot {
         installed_only: !setting_list(&settings, "HiddenApps").is_empty(),
         use_grid: setting_bool(&settings, "UseGridView", true),
-        data_dir: root.display().to_string(),
+        data_dir: meta.display().to_string(),
         sort_by,
         continue_repository,
         apps,
@@ -780,12 +1098,12 @@ pub fn set_sort(root: &Path, sort_by: &str) -> Result<(), String> {
     save_settings(root, &settings)
 }
 
-pub fn set_installed_filter(root: &Path, installed_only: bool) -> Result<(), String> {
-    let mut settings = load_settings(root);
-    let apps = load_apps(root);
+pub fn set_installed_filter(meta: &Path, workspace: &Path, installed_only: bool) -> Result<(), String> {
+    let mut settings = load_settings(meta);
+    let apps = load_apps(meta);
     let hidden = if installed_only {
         apps.iter()
-            .filter(|app| installed_version(&install_dir(root, app)).is_none())
+            .filter(|app| installed_version(workspace, app).is_none())
             .map(hidden_key)
             .collect::<Vec<_>>()
     } else {
@@ -794,7 +1112,7 @@ pub fn set_installed_filter(root: &Path, installed_only: bool) -> Result<(), Str
     if let Some(map) = settings.as_object_mut() {
         map.insert("HiddenApps".into(), json!(hidden));
     }
-    save_settings(root, &settings)
+    save_settings(meta, &settings)
 }
 
 pub fn set_manual_hide(root: &Path, repository: &str, hidden: bool) -> Result<(), String> {
@@ -834,25 +1152,44 @@ pub fn locate_install(root: &Path, repository: &str, path: &str) -> Result<(), S
         .find(|app| app.repository.eq_ignore_ascii_case(repository))
         .ok_or_else(|| "App não encontrada.".to_string())?;
     app.install_path = Some(path.to_string());
-    let dir = PathBuf::from(path);
-    if !dir.join("version.txt").is_file() {
-        fs::write(dir.join("version.txt"), "v0.0.0").map_err(|err| err.to_string())?;
+    let info = PathBuf::from(path)
+        .parent()
+        .map(|parent| parent.join("launch-info"))
+        .unwrap_or_else(|| PathBuf::from(path).join("launch-info"));
+    fs::create_dir_all(&info).map_err(|err| err.to_string())?;
+    if !info.join("version.txt").is_file() {
+        fs::write(info.join("version.txt"), "v0.0.0").map_err(|err| err.to_string())?;
     }
     save_apps(root, &apps)
 }
 
-pub fn delete_install(root: &Path, repository: &str) -> Result<(), String> {
-    let apps = load_apps(root);
+pub fn delete_install(meta: &Path, workspace: &Path, repository: &str) -> Result<(), String> {
+    let apps = load_apps(meta);
     let app = find_app(&apps, repository)?;
-    let dir = install_dir(root, app);
+    let dir = install_dir(workspace, app);
     if !dir.is_dir() {
         return Err("Esta app não está instalada.".into());
     }
-    let root_apps = apps_root(root);
-    if dir == root || dir == root_apps {
+    if dir == workspace || dir == meta {
         return Err("Essa pasta não pode ser apagada.".into());
     }
-    fs::remove_dir_all(&dir).map_err(|err| err.to_string())
+    fs::remove_dir_all(&dir).map_err(|err| err.to_string())?;
+    let info = launch_info_dir(workspace, app);
+    if info.is_dir() {
+        let _ = fs::remove_dir_all(&info);
+    }
+    // Remove `{appFolder}/` se ficou vazia após apagar o clone.
+    let home = app_dir(workspace, app);
+    if home != workspace
+        && home != meta
+        && home.is_dir()
+        && fs::read_dir(&home)
+            .map(|mut entries| entries.next().is_none())
+            .unwrap_or(false)
+    {
+        let _ = fs::remove_dir(&home);
+    }
+    Ok(())
 }
 
 pub fn cache_age_ok(checked_at: i64, installed: bool, now: i64, force: bool) -> bool {
@@ -869,7 +1206,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn merges_legacy_sections_and_dedupes() {
+    fn merges_legacy_sections_and_dedupes_by_folder() {
         let raw = r#"{
             "standard": [{"name": "Um", "repository": "acme/um", "folderName": "um"}],
             "custom": [
@@ -878,8 +1215,52 @@ mod tests {
             ]
         }"#;
         let apps = parse_apps_value(&serde_json::from_str(raw).unwrap());
+        // Mesmo repo (acme/um) duas vezes — pastas distintas — ambas ficam.
+        assert_eq!(apps.len(), 3);
+        assert_eq!(apps[2].app_icon_url.as_deref(), Some("https://example.com/a.png"));
+    }
+
+    #[test]
+    fn same_repository_two_folders_find_by_folder() {
+        let root = std::env::temp_dir().join(format!("painel-same-repo-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        ensure_root(&root).unwrap();
+        upsert_app(
+            &root,
+            AppEntry {
+                name: "hello".into(),
+                repository: "gitname/react-gh-pages".into(),
+                folder_name: "hello".into(),
+                install_path: None,
+                app_icon_url: None,
+                preferred_version: None,
+                skipped_update_version: None,
+            },
+            None,
+        )
+        .unwrap();
+        upsert_app(
+            &root,
+            AppEntry {
+                name: "hello002".into(),
+                repository: "gitname/react-gh-pages".into(),
+                folder_name: "hello002".into(),
+                install_path: None,
+                app_icon_url: None,
+                preferred_version: None,
+                skipped_update_version: None,
+            },
+            None,
+        )
+        .unwrap();
+        let apps = load_apps(&root);
         assert_eq!(apps.len(), 2);
-        assert_eq!(apps[1].app_icon_url.as_deref(), Some("https://example.com/a.png"));
+        assert_eq!(find_app(&apps, "hello").unwrap().folder_name, "hello");
+        assert_eq!(find_app(&apps, "hello002").unwrap().folder_name, "hello002");
+        assert!(find_app(&apps, "gitname/react-gh-pages")
+            .unwrap_err()
+            .contains("várias apps"));
+        let _ = fs::remove_dir_all(&root);
     }
 
     #[test]
@@ -898,9 +1279,13 @@ mod tests {
         }).unwrap();
         upsert_app(&root, entry, None).unwrap();
         let loaded = load_apps(&root);
-        assert_eq!(loaded[0].folder_name, "demo");
-        set_installed_filter(&root, true).unwrap();
-        let snap = snapshot(&root).unwrap();
+        assert_eq!(loaded[0].folder_name, "Demo");
+        assert_eq!(
+            install_dir(&root, &loaded[0]),
+            root.join("Demo").join(REPOSITORIES_DIR).join("demo")
+        );
+        set_installed_filter(&root, &root, true).unwrap();
+        let snap = snapshot(&root, &root).unwrap();
         assert!(snap.apps[0].filter_hidden);
         let _ = fs::remove_dir_all(&root);
     }

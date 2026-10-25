@@ -6,11 +6,13 @@ import { AuthProvider } from '@/contexts/AuthContext';
 import { ToastProvider } from '@/components/ui/Toast';
 import { applyTheme, readStoredTheme } from '@/lib/theme';
 import { appName } from '@/lib/brand';
+import { installActivityLogHandlers } from '@/lib/activity-log';
 import { routes } from '@/routes';
 import '@/styles/globals.css';
 
 applyTheme(readStoredTheme());
 document.title = appName();
+installActivityLogHandlers();
 
 const queryClient = new QueryClient();
 const router = createBrowserRouter(routes);

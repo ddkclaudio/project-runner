@@ -1,10 +1,12 @@
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { IconAffiliate, IconArrowRight, IconPlus, IconUsers, IconTicket } from '@tabler/icons-react';
 import { SwitcherDropdown } from '@/components/ui/SwitcherDropdown';
 import { useOrg } from '@/contexts/OrgContext';
+import { resolveSwitcherNavigation } from '@/lib/contextSwitchers';
 
 export function OrgSwitcher() {
   const navigate = useNavigate();
+  const { pathname } = useLocation();
   const { orgs, activeOrg, loading, switchOrg } = useOrg();
 
   return (
@@ -16,7 +18,12 @@ export function OrgSwitcher() {
       items={orgs.map((org) => ({ id: org.id, label: org.name, searchText: `${org.name} ${org.slug}` }))}
       selectedId={activeOrg?.id ?? ''}
       loading={loading}
-      onSelect={(id) => void switchOrg(id)}
+      onSelect={(id) => {
+        void switchOrg(id).then(() => {
+          const href = resolveSwitcherNavigation('org', id, pathname);
+          if (href) navigate(href);
+        });
+      }}
       getEmptyMessage={(query) => (query ? `Nenhum resultado para "${query}"` : 'Nenhuma organização ainda.')}
       actions={[
         { label: 'Nova organização', icon: <IconPlus size={14} />, onClick: () => navigate('/orgs/new') },

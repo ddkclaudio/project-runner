@@ -133,34 +133,51 @@ pub fn unique_slug(db: &OrgsDb, base: &str) -> String {
 }
 
 pub fn org_data_root(global_root: &Path, org_id: &str) -> PathBuf {
-    global_root.join("orgs").join(org_id)
+    crate::launcher::store::system_data_dir(global_root).join(org_id)
 }
 
 pub fn ensure_org_root(global_root: &Path, org_id: &str) -> Result<PathBuf, String> {
+    let _ = crate::launcher::store::ensure_system_data(global_root)?;
     let root = org_data_root(global_root, org_id);
     crate::launcher::store::ensure_root(&root)?;
     Ok(root)
 }
 
-/// Move apps.json / settings / Cache / Apps from global root into the first org once.
+/// Move apps.json / settings / Cache from layouts antigos para `data/{orgId}` uma vez.
 pub fn migrate_legacy_into_org(global_root: &Path, org_id: &str) -> Result<(), String> {
     let dest = ensure_org_root(global_root, org_id)?;
-    let marker = global_root.join(".org-migrated");
+    let data = crate::launcher::store::system_data_dir(global_root);
+    let marker = data.join(".org-migrated");
     if marker.is_file() {
         return Ok(());
     }
-    for name in ["apps.json", "settings.json", "running.json", "app-state.json"] {
-        let from = global_root.join(name);
-        let to = dest.join(name);
-        if from.is_file() && !to.exists() {
-            let _ = fs::rename(&from, &to).or_else(|_| fs::copy(&from, &to).map(|_| ()));
+    let candidates = [
+        global_root.to_path_buf(),
+        global_root.join("orgs").join(org_id),
+        data.clone(),
+    ];
+    for base in candidates {
+        for name in ["apps.json", "settings.json", "running.json", "app-state.json"] {
+            let from = base.join(name);
+            let to = dest.join(name);
+            if from.is_file() && !to.exists() && from != to {
+                let _ = fs::rename(&from, &to).or_else(|_| fs::copy(&from, &to).map(|_| ()));
+            }
+        }
+        for name in ["Cache"] {
+            let from = base.join(name);
+            let to = dest.join(name);
+            if from.is_dir() && !to.exists() && from != to {
+                let _ = fs::rename(&from, &to);
+            }
         }
     }
-    for name in ["Cache", "Apps"] {
+    // auth/orgs.json na raiz antiga → data/
+    for name in ["auth.json", "orgs.json"] {
         let from = global_root.join(name);
-        let to = dest.join(name);
-        if from.is_dir() && !to.exists() {
-            let _ = fs::rename(&from, &to);
+        let to = data.join(name);
+        if from.is_file() && !to.exists() {
+            let _ = fs::rename(&from, &to).or_else(|_| fs::copy(&from, &to).map(|_| ()));
         }
     }
     let _ = fs::write(marker, org_id);

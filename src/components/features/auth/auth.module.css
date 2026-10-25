@@ -8,6 +8,22 @@
   margin-top: 8px;
 }
 
+@media (max-height: 720px) {
+  .field {
+    margin-bottom: 12px;
+  }
+
+  .submitWrapper {
+    margin-top: 4px;
+  }
+}
+
+@media (max-height: 620px) {
+  .field {
+    margin-bottom: 8px;
+  }
+}
+
 .backLink {
   display: inline-flex;
   align-items: center;

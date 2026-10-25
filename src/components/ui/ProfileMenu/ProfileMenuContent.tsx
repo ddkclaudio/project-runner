@@ -1,6 +1,7 @@
 'use client';
 
 import { useNavigate } from 'react-router-dom';
+import { IconUser } from '@tabler/icons-react';
 import { DropdownMenuSeparator, DropdownMenuHeader } from '@/components/ui/DropdownMenu';
 import { UserAvatar } from '@/components/ui/UserAvatar';
 import { NavMenuItem } from '@/components/ui/NavMenuItem';
@@ -35,6 +36,17 @@ export function ProfileMenuContent({
         avatar={<UserAvatar key={user?.photoURL ?? 'none'} src={user?.photoURL} alt={displayName} size="md" />}
         name={displayName}
         email={user?.email ?? ''}
+      />
+
+      <DropdownMenuSeparator />
+
+      <NavMenuItem
+        label="Configurações do perfil"
+        icon={<IconUser size={15} aria-hidden="true" />}
+        onClick={() => {
+          onNavigate?.();
+          navigate('/settings/profile');
+        }}
       />
 
       <DropdownMenuSeparator />

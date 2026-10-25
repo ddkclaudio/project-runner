@@ -1,4 +1,4 @@
-import { invoke } from '@tauri-apps/api/core';
+import { loggedInvoke as invoke } from '@/lib/activity-log';
 
 export type AuthUser = {
   uid: string;
@@ -36,6 +36,10 @@ export function logoutAccount(token: string) {
 
 export function currentAccount(token: string) {
   return invoke<AuthUser | null>('current_user', { token });
+}
+
+export function updateProfile(token: string, name: string) {
+  return invoke<AuthUser>('update_profile', { token, name });
 }
 
 export function requestPasswordReset(email: string) {

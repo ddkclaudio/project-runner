@@ -1,4 +1,4 @@
-import { invoke } from '@tauri-apps/api/core';
+import { loggedInvoke as invoke } from '@/lib/activity-log';
 
 export type AppEntry = {
   name: string;
@@ -23,6 +23,12 @@ export type AppView = AppEntry & {
   selectedExecutable?: string | null;
   running?: boolean;
   selectedBranch?: string | null;
+  /** URL local enquanto corre (ex. http://localhost:3000/react-gh-pages). */
+  openUrl?: string | null;
+  /** PID do processo (Task Manager) enquanto corre. */
+  runningPid?: number | null;
+  /** Nome do processo (ex. node.exe) enquanto corre. */
+  runningProcessName?: string | null;
 };
 
 export type LibrarySnapshot = {
@@ -37,6 +43,7 @@ export type LibrarySnapshot = {
 export type PublicSettings = {
   appsPath: string;
   githubApiToken: string;
+  deepseekApiToken: string;
   platform: string;
   sortBy: string;
   useGridView: boolean;
@@ -66,9 +73,15 @@ export type InstallResult = {
 export type LaunchResult = {
   started: boolean;
   needsChoice: boolean;
+  /** Porta ocupada — pedir confirmação para matar o processo e relançar. */
+  needsForce?: boolean;
   executables: string[];
   closeAfterLaunch: boolean;
   message: string;
+  openUrl?: string | null;
+  forcePort?: number | null;
+  forcePid?: number | null;
+  forceProcessName?: string | null;
 };
 
 export type ReleaseInfo = {
@@ -150,8 +163,12 @@ export function appInstall(repository: string, options?: { assetName?: string; t
   });
 }
 
-export function appLaunch(repository: string, executable?: string) {
-  return invoke<LaunchResult>('app_launch', { repository, executable: executable ?? null });
+export function appLaunch(repository: string, executable?: string, force = false) {
+  return invoke<LaunchResult>('app_launch', {
+    repository,
+    executable: executable ?? null,
+    force,
+  });
 }
 
 export function appStop(repository: string) {
@@ -176,6 +193,46 @@ export function appExecutables(repository: string) {
 
 export function appSetExecutable(repository: string, executable: string) {
   return invoke<void>('app_set_executable', { repository, executable });
+}
+
+export type LaunchFieldType = 'text' | 'number' | 'boolean' | 'url' | 'multiline';
+
+export type LaunchField = {
+  key: string;
+  label: string;
+  value: string;
+  /** Tipo de input no formulário Executável. */
+  fieldType?: LaunchFieldType | string;
+};
+
+export type LaunchConfigView = {
+  runnerId: string;
+  runnerLabel: string;
+  configPath: string | null;
+  relativePath: string | null;
+  editable: boolean;
+  fields: LaunchField[];
+  raw: string;
+  rawLanguage: string;
+  canCreateManifest: boolean;
+};
+
+export type LaunchConfigSave = {
+  fields?: LaunchField[];
+  raw?: string;
+  createManifest?: boolean;
+};
+
+export function appLaunchConfigGet(repository: string) {
+  return invoke<LaunchConfigView>('app_launch_config_get', { repository });
+}
+
+export function appLaunchConfigSave(repository: string, input: LaunchConfigSave) {
+  return invoke<LaunchConfigView>('app_launch_config_save', { repository, input });
+}
+
+export function appGenerateLaunchfile(repository: string) {
+  return invoke<string>('app_generate_launchfile', { repository });
 }
 
 export function appSkipUpdate(repository: string, version?: string | null) {
@@ -242,14 +299,49 @@ export function windowClose() {
   return invoke<void>('window_close');
 }
 
+export type DataLocation = {
+  current: string;
+  default: string;
+  customConfigured: boolean;
+};
+
+export type SetDataLocationResult = {
+  current: string;
+  restartRequired: boolean;
+};
+
+export function getDataLocation() {
+  return invoke<DataLocation>('get_data_location');
+}
+
+export function setDataLocation(path: string) {
+  return invoke<SetDataLocationResult>('set_data_location', { path });
+}
+
 export function launcherError(err: unknown): string {
   if (typeof err === 'string' && err.trim()) return err;
   if (err instanceof Error && err.message.trim()) return err.message;
   return 'Não foi possível concluir.';
 }
 
-export function appHref(repository: string, section = '') {
-  const [owner, name] = repository.split('/');
+/** Link da app: pasta (única). String sem `/` = pasta; com `/` = legado dono/nome. */
+export function appHref(
+  appOrRepo: string | { repository: string; folderName?: string | null },
+  section = '',
+) {
+  if (typeof appOrRepo !== 'string') {
+    const folder = appOrRepo.folderName?.trim();
+    if (folder) {
+      const base = `/app/${encodeURIComponent(folder)}`;
+      return section ? `${base}/${section}` : base;
+    }
+    return appHref(appOrRepo.repository, section);
+  }
+  if (!appOrRepo.includes('/')) {
+    const base = `/app/${encodeURIComponent(appOrRepo)}`;
+    return section ? `${base}/${section}` : base;
+  }
+  const [owner, name] = appOrRepo.split('/');
   const base = `/apps/${encodeURIComponent(owner)}/${encodeURIComponent(name)}`;
   return section ? `${base}/${section}` : base;
 }

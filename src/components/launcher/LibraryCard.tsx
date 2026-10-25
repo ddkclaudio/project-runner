@@ -1,5 +1,6 @@
 import { convertFileSrc } from '@tauri-apps/api/core';
-import { IconPlayerPlay, IconDownload, IconRefresh, IconFolder, IconEyeOff, IconEye } from '@tabler/icons-react';
+import { openUrl } from '@tauri-apps/plugin-opener';
+import { IconPlayerPlay, IconDownload, IconRefresh, IconFolder, IconEyeOff, IconEye, IconExternalLink } from '@tabler/icons-react';
 import { useNavigate } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import { ItemCard, gridCardStyles as gc } from '@/components/ui/ItemCard';
@@ -27,6 +28,11 @@ export function appIconSrc(app: { iconPath?: string | null; appIconUrl?: string 
   return app.appIconUrl || '';
 }
 
+/** Identidade estável da app (pasta no disco); permite o mesmo repositório várias vezes. */
+export function appId(app: { folderName?: string | null; repository: string }) {
+  return app.folderName?.trim() || app.repository;
+}
+
 export function useLibraryMutations() {
   const toast = useToast();
   const queryClient = useQueryClient();
@@ -37,9 +43,16 @@ export function useLibraryMutations() {
   }
 
   async function afterLaunch(result: LaunchResult) {
-    toast.success(result.message);
+    const url = result.openUrl?.trim();
+    toast.success(result.message, url ? { description: `Acesso: ${url}`, durationMs: 8000 } : undefined);
     if (result.started) {
       window.dispatchEvent(new CustomEvent('painel-fade-music'));
+      if (url) {
+        // Pequena pausa para o servidor Node subir antes de abrir o browser.
+        window.setTimeout(() => {
+          void import('@tauri-apps/plugin-opener').then(({ openUrl }) => openUrl(url)).catch(() => undefined);
+        }, 2500);
+      }
       if (result.closeAfterLaunch) {
         try {
           await windowClose();
@@ -55,7 +68,7 @@ export function useLibraryMutations() {
   return {
     async install(app: AppView, options?: { assetName?: string; tag?: string; confirmWine?: boolean }) {
       try {
-        const result = await appInstall(app.repository, options);
+        const result = await appInstall(appId(app), options);
         if (!result.needsChoice && !result.needsConfirm) toast.success(result.message);
         await refresh();
         return result;
@@ -64,9 +77,29 @@ export function useLibraryMutations() {
         return null;
       }
     },
-    async launch(app: AppView, executable?: string): Promise<LaunchResult | null> {
+    async launch(
+      app: AppView,
+      executable?: string,
+      options?: { force?: boolean },
+    ): Promise<LaunchResult | null> {
       try {
-        return await afterLaunch(await appLaunch(app.repository, executable));
+        const result = await appLaunch(appId(app), executable, options?.force ?? false);
+        if (result.needsForce && !options?.force) {
+          window.dispatchEvent(
+            new CustomEvent('painel-port-busy', {
+              detail: {
+                app,
+                executable,
+                port: result.forcePort,
+                pid: result.forcePid,
+                processName: result.forceProcessName,
+                message: result.message,
+              },
+            }),
+          );
+          return result;
+        }
+        return await afterLaunch(result);
       } catch (err) {
         toast.error(launcherError(err));
         return null;
@@ -74,7 +107,7 @@ export function useLibraryMutations() {
     },
     async hide(app: AppView) {
       try {
-        await appHide(app.repository, !app.manuallyHidden);
+        await appHide(appId(app), !app.manuallyHidden);
         await refresh();
       } catch (err) {
         toast.error(launcherError(err));
@@ -82,13 +115,13 @@ export function useLibraryMutations() {
     },
     async openFolder(app: AppView) {
       try {
-        await appOpenFolder(app.repository);
+        await appOpenFolder(appId(app));
       } catch (err) {
         toast.error(launcherError(err));
       }
     },
     open(app: AppView) {
-      navigate(appHref(app.repository));
+      navigate(appHref(app));
     },
     primaryLabel(app: AppView) {
       if (app.status === 'update') return 'Atualizar';
@@ -116,16 +149,26 @@ export function libraryMenu(
 ): ContextMenuItem[] {
   const primary = actions.primaryLabel(app);
   const PrimaryIcon = app.status === 'update' ? IconRefresh : app.status === 'installed' ? IconPlayerPlay : IconDownload;
-  return [
+  const items: ContextMenuItem[] = [
     { label: 'Abrir', icon: <IconEye size={15} />, onClick: () => actions.open(app) },
     { label: primary, icon: <PrimaryIcon size={15} />, onClick: () => onPrimary(app) },
+  ];
+  if (app.running && app.openUrl) {
+    items.push({
+      label: 'Abrir no browser',
+      icon: <IconExternalLink size={15} />,
+      onClick: () => void openUrl(app.openUrl!).catch(() => undefined),
+    });
+  }
+  items.push(
     { label: 'Pasta', icon: <IconFolder size={15} />, onClick: () => void actions.openFolder(app) },
     {
       label: app.manuallyHidden ? 'Mostrar' : 'Ocultar',
       icon: <IconEyeOff size={15} />,
       onClick: () => void actions.hide(app),
     },
-  ];
+  );
+  return items;
 }
 
 export function LibraryCard({

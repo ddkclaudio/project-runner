@@ -5,9 +5,27 @@ use crate::launcher::store::{self, find_app_by_name};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
-fn cli_org_root(global: &Path) -> PathBuf {
-    let orgs = global.join("orgs");
-    if let Ok(entries) = std::fs::read_dir(&orgs) {
+fn cli_org_root(meta: &Path) -> PathBuf {
+    let data = store::system_data_dir(meta);
+    if let Ok(entries) = std::fs::read_dir(&data) {
+        let mut dirs: Vec<_> = entries
+            .flatten()
+            .map(|entry| entry.path())
+            .filter(|path| {
+                path.is_dir()
+                    && path
+                        .file_name()
+                        .and_then(|name| name.to_str())
+                        .is_some_and(|name| name != "Cache" && !name.starts_with('.'))
+            })
+            .collect();
+        dirs.sort();
+        if let Some(first) = dirs.into_iter().next() {
+            return first;
+        }
+    }
+    let legacy = meta.join("orgs");
+    if let Ok(entries) = std::fs::read_dir(&legacy) {
         let mut dirs: Vec<_> = entries
             .flatten()
             .map(|entry| entry.path())
@@ -18,7 +36,27 @@ fn cli_org_root(global: &Path) -> PathBuf {
             return first;
         }
     }
-    global.to_path_buf()
+    meta.to_path_buf()
+}
+
+fn cli_workspace(meta: &Path, apps: &Path) -> PathBuf {
+    let orgs_path = store::system_data_dir(meta).join("orgs.json");
+    if let Ok(raw) = std::fs::read_to_string(&orgs_path) {
+        if let Ok(value) = serde_json::from_str::<serde_json::Value>(&raw) {
+            if let Some(orgs) = value.get("orgs").and_then(|item| item.as_array()) {
+                if let Some(slug) = orgs
+                    .first()
+                    .and_then(|org| org.get("slug"))
+                    .and_then(|item| item.as_str())
+                    .map(str::trim)
+                    .filter(|item| !item.is_empty())
+                {
+                    return store::org_workspace(apps, slug);
+                }
+            }
+        }
+    }
+    apps.to_path_buf()
 }
 
 pub fn cli_requested() -> bool {
@@ -54,9 +92,12 @@ async fn execute() -> Result<(), String> {
     args.retain(|arg| arg != "--");
     let command = args.first().map(|arg| arg.as_str()).unwrap_or("--help");
     let name = args.iter().skip(1).cloned().collect::<Vec<_>>().join(" ");
-    let global = store::resolve_root();
-    let root = cli_org_root(&global);
+    let meta = store::resolve_meta_root();
+    let apps = store::resolve_apps_root();
+    let root = cli_org_root(&meta);
+    let workspace = cli_workspace(&meta, &apps);
     store::ensure_root(&root)?;
+    let _ = std::fs::create_dir_all(&workspace);
     match command {
         "--help" | "-h" => {
             println!(
@@ -65,7 +106,7 @@ async fn execute() -> Result<(), String> {
             Ok(())
         }
         "--list" | "-l" => {
-            let snap = store::snapshot(&root)?;
+            let snap = store::snapshot(&root, &workspace)?;
             if snap.apps.is_empty() {
                 println!("A biblioteca está vazia.");
                 return Ok(());
@@ -82,7 +123,7 @@ async fn execute() -> Result<(), String> {
         }
         "--run" | "-r" => {
             let app = named(&root, &name)?;
-            let result = launch::launch(&root, &app.repository, None)?;
+            let result = launch::launch(&root, &workspace, &app.repository, None, false).await?;
             println!("{}", result.message);
             if result.needs_choice {
                 for exe in result.executables {
@@ -93,7 +134,7 @@ async fn execute() -> Result<(), String> {
         }
         "--download" | "-d" => {
             let app = named(&root, &name)?;
-            let result = install::install(&root, &app.repository, None, None, true, |percent, phase| {
+            let result = install::install(&root, &workspace, &app.repository, None, None, true, |percent, phase| {
                 print!("\r{phase} {percent}%");
                 let _ = io::stdout().flush();
             })
@@ -103,26 +144,26 @@ async fn execute() -> Result<(), String> {
         }
         "--update" | "-u" => {
             if name.trim().is_empty() {
-                let snap = store::snapshot(&root)?;
+                let snap = store::snapshot(&root, &workspace)?;
                 let targets: Vec<String> = snap.apps.into_iter().filter(|app| app.status == "update").map(|app| app.repository).collect();
                 if targets.is_empty() {
                     println!("Nenhuma app tem atualização.");
                     return Ok(());
                 }
                 for repository in targets {
-                    let result = install::install(&root, &repository, None, None, true, |_, _| {}).await?;
+                    let result = install::install(&root, &workspace, &repository, None, None, true, |_, _| {}).await?;
                     println!("{}", result.message);
                 }
             } else {
                 let app = named(&root, &name)?;
-                let result = install::install(&root, &app.repository, None, None, true, |_, _| {}).await?;
+                let result = install::install(&root, &workspace, &app.repository, None, None, true, |_, _| {}).await?;
                 println!("{}", result.message);
             }
             Ok(())
         }
         "--uninstall" | "-x" => {
             let app = named(&root, &name)?;
-            store::delete_install(&root, &app.repository)?;
+            store::delete_install(&root, &workspace, &app.repository)?;
             println!("A instalação de {} foi apagada. A entrada continua na biblioteca.", app.name);
             Ok(())
         }

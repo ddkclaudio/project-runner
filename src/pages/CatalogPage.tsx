@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { openUrl } from '@tauri-apps/plugin-opener';
@@ -202,13 +202,38 @@ function RemoteCatalog() {
     }
   }
 
-  function openApp(repository: string) {
-    navigate(appHref(repository));
+  /** Abrir só se houver exactamente uma app com este repo na biblioteca. */
+  function openByRepo(repository: string) {
+    const matches = (library.data?.apps ?? []).filter(
+      (app) => app.repository.toLowerCase() === repository.toLowerCase(),
+    );
+    if (matches.length === 1) navigate(appHref(matches[0]));
+    else navigate('/');
   }
 
   function primary(row: CatalogRow) {
-    if (owned.has(row.repository.toLowerCase())) openApp(row.repository);
-    else void add(row);
+    void add(row);
+  }
+
+  function catalogActions(row: CatalogRow) {
+    const matches = (library.data?.apps ?? []).filter(
+      (app) => app.repository.toLowerCase() === row.repository.toLowerCase(),
+    );
+    const items = [
+      {
+        label: 'Adicionar',
+        icon: <IconPlus size={15} />,
+        onClick: () => void add(row),
+      },
+    ];
+    if (matches.length === 1) {
+      items.push({
+        label: 'Abrir',
+        icon: <IconEye size={15} />,
+        onClick: () => openByRepo(row.repository),
+      });
+    }
+    return items;
   }
 
   async function openGitHub() {
@@ -307,11 +332,23 @@ function RemoteCatalog() {
               loading={listLoading}
               emptyMessage={emptyMessage}
               renderItem={(row) => (
-                <CatalogCard row={row} inLibrary={owned.has(row.repository.toLowerCase())} onPrimary={() => primary(row)} />
+                <CatalogCard
+                  row={row}
+                  inLibrary={owned.has(row.repository.toLowerCase())}
+                  onPrimary={() => primary(row)}
+                  actions={catalogActions(row)}
+                />
               )}
             />
           ) : (
-            <CatalogList rows={rows} loading={listLoading} emptyMessage={emptyMessage} owned={owned} onPrimary={primary} />
+            <CatalogList
+              rows={rows}
+              loading={listLoading}
+              emptyMessage={emptyMessage}
+              owned={owned}
+              onPrimary={primary}
+              actionsFor={catalogActions}
+            />
           )}
         </>
       ) : null}
@@ -323,26 +360,21 @@ function CatalogCard({
   row,
   inLibrary,
   onPrimary,
+  actions,
 }: {
   row: CatalogRow;
   inLibrary: boolean;
   onPrimary: () => void;
+  actions: { label: string; icon: ReactNode; onClick: () => void }[];
 }) {
-  const label = inLibrary ? 'Abrir' : 'Adicionar';
   return (
     <div className={styles.cardHost}>
       <ItemCard
-        aria-label={`${label} ${row.name}`}
+        aria-label={`Adicionar ${row.name}`}
         onClick={onPrimary}
         actions={{
           label: `Ações para ${row.name}`,
-          items: [
-            {
-              label,
-              icon: inLibrary ? <IconEye size={15} /> : <IconPlus size={15} />,
-              onClick: onPrimary,
-            },
-          ],
+          items: actions,
         }}
       >
         <div className={gc.body}>
@@ -366,12 +398,14 @@ function CatalogList({
   emptyMessage,
   owned,
   onPrimary,
+  actionsFor,
 }: {
   rows: CatalogRow[];
   loading: boolean;
   emptyMessage: string;
   owned: Set<string>;
   onPrimary: (row: CatalogRow) => void;
+  actionsFor: (row: CatalogRow) => { label: string; icon: ReactNode; onClick: () => void }[];
 }) {
   const columns: TableColumn<CatalogRow>[] = [
     {
@@ -402,21 +436,9 @@ function CatalogList({
       keyField="id"
       onRowClick={onPrimary}
       emptyMessage={emptyMessage}
-      rowActions={(row) => {
-        const inLibrary = owned.has(row.repository.toLowerCase());
-        return (
-          <RowActions
-            label={`Ações para ${row.name}`}
-            items={[
-              {
-                label: inLibrary ? 'Abrir' : 'Adicionar',
-                icon: inLibrary ? <IconEye size={15} /> : <IconPlus size={15} />,
-                onClick: () => onPrimary(row),
-              },
-            ]}
-          />
-        );
-      }}
+      rowActions={(row) => (
+        <RowActions label={`Ações para ${row.name}`} items={actionsFor(row)} />
+      )}
     />
   );
 }

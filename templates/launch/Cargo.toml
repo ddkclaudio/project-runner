@@ -1,0 +1,10 @@
+# Crate binário. O Painel corre `cargo run` na pasta do clone.
+# Para args extra, crie painel.launch.json com start = "cargo run -- --porta 8080".
+[package]
+name = "my-app"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "my-app"
+path = "src/main.rs"

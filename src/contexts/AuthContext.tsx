@@ -15,6 +15,7 @@ import {
   logoutAccount,
   registerAccount,
   requestPasswordReset,
+  updateProfile,
   type AuthUser,
 } from '@/lib/auth-api';
 
@@ -26,6 +27,8 @@ type AuthContextValue = {
   signOut: () => Promise<void>;
   requestReset: (email: string) => Promise<string | null>;
   resetPassword: (email: string, code: string, password: string) => Promise<void>;
+  refreshUser: () => Promise<void>;
+  updateDisplayName: (name: string) => Promise<void>;
 };
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -112,9 +115,27 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     await confirmPasswordReset(email, code, password);
   }, []);
 
+  const refreshUser = useCallback(async () => {
+    const token = readToken();
+    if (!token) {
+      setUser(null);
+      return;
+    }
+    const next = await currentAccount(token);
+    if (!next) writeToken(null);
+    setUser(next);
+  }, []);
+
+  const updateDisplayName = useCallback(async (name: string) => {
+    const token = readToken();
+    if (!token) throw new Error('Sessão inválida.');
+    const next = await updateProfile(token, name);
+    setUser(next);
+  }, []);
+
   const value = useMemo(
-    () => ({ user, loading, signIn, signUp, signOut, requestReset, resetPassword }),
-    [user, loading, signIn, signUp, signOut, requestReset, resetPassword],
+    () => ({ user, loading, signIn, signUp, signOut, requestReset, resetPassword, refreshUser, updateDisplayName }),
+    [user, loading, signIn, signUp, signOut, requestReset, resetPassword, refreshUser, updateDisplayName],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

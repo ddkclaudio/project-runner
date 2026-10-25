@@ -12,7 +12,6 @@ export function NewAppPage() {
   const queryClient = useQueryClient();
   const [name, setName] = useState('');
   const [repository, setRepository] = useState('');
-  const [folderName, setFolderName] = useState('');
   const [appIconUrl, setAppIconUrl] = useState('');
   const [error, setError] = useState('');
   const [pending, setPending] = useState(false);
@@ -25,11 +24,11 @@ export function NewAppPage() {
       const saved = await librarySave({
         name,
         repository,
-        folderName,
+        folderName: '',
         appIconUrl: appIconUrl || null,
       });
       await queryClient.invalidateQueries({ queryKey: ['launcher'] });
-      navigate(appHref(saved.repository));
+      navigate(appHref(saved));
     } catch (err) {
       setError(launcherError(err));
     } finally {
@@ -43,17 +42,24 @@ export function NewAppPage() {
         {error ? <FormCard.Alert>{error}</FormCard.Alert> : null}
         <FormCard.Header
           title="Nova app"
-          subtitle="A entrada fica em apps.json, ao lado do executável do Painel."
+          subtitle="Disco: {pasta}/{orgSlug}/{app}/repositories/{repo}/. Exemplo: gitname/react-gh-pages."
         />
+        <div style={{ marginBottom: 12 }}>
+          <Button
+            type="button"
+            onClick={() => {
+              setName('React GH Pages');
+              setRepository('gitname/react-gh-pages');
+            }}
+          >
+            Preencher exemplo React Hello World
+          </Button>
+        </div>
         <FormRow label="Nome">
           <Input value={name} onChange={(event) => setName(event.target.value)} required />
         </FormRow>
         <FormRow label="Repositório">
           <Input placeholder="dono/nome" value={repository} onChange={(event) => setRepository(event.target.value)} required />
-        </FormRow>
-        <FormRow label="Pasta" optionalLabel="(opcional)">
-          <Input value={folderName} onChange={(event) => setFolderName(event.target.value)} />
-          <FormCard.Hint>Se ficar vazio, usa o nome do repositório.</FormCard.Hint>
         </FormRow>
         <FormRow label="Ícone" optionalLabel="(opcional)">
           <Input placeholder="https://..." value={appIconUrl} onChange={(event) => setAppIconUrl(event.target.value)} />

@@ -1,4 +1,4 @@
-import { invoke } from '@tauri-apps/api/core';
+import { loggedInvoke as invoke } from '@/lib/activity-log';
 import { SESSION_STORAGE_KEY } from '@/lib/auth-api';
 
 export type PublicOrg = {

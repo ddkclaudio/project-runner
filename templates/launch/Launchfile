@@ -1,0 +1,14 @@
+# Launchfile — manifesto de arranque do Painel (único ficheiro usado).
+# Coloque na raiz do repositório com o nome exacto: Launchfile
+version: launch/v1
+name: my-app
+runtime: node
+kind: site
+port: 3000
+url: http://localhost:3000
+cwd: .
+commands:
+  install: "npm install"
+  start: "npm start"
+env:
+  PORT: "3000"

@@ -1,4 +1,4 @@
-import { IconHome, IconBooks, IconSettings, IconComponents, IconLayoutSidebarLeftCollapse, IconLayoutSidebarLeftExpand, IconLayoutDashboard, IconVersions, IconTerminal2, IconLink, IconNotes } from '@tabler/icons-react';
+import { IconHome, IconBooks, IconSettings, IconComponents, IconLayoutSidebarLeftCollapse, IconLayoutSidebarLeftExpand, IconLayoutDashboard, IconVersions, IconTerminal2, IconLink, IconNotes, IconAdjustments } from '@tabler/icons-react';
 import { useLocation } from 'react-router-dom';
 import { NavMenuItem } from '@/components/ui/NavMenuItem';
 import { useLayoutNav } from '@/hooks/useLayoutNav';
@@ -59,7 +59,7 @@ function ShellSidebar({ label, items }: { label: string; items: NavItem[] }) {
 const LIBRARY: NavItem[] = [
   { label: 'Biblioteca', href: '/', Icon: IconHome, exact: true },
   { label: 'Catálogo', href: '/catalog', Icon: IconBooks, exact: false },
-  { label: 'Definições', href: '/settings', Icon: IconSettings, exact: false },
+  { label: 'Definições', href: '/settings/profile', Icon: IconSettings, exact: false },
   { label: 'Componentes', href: '/components', Icon: IconComponents, exact: false },
 ];
 
@@ -67,13 +67,15 @@ export function LibrarySidebar() {
   return <ShellSidebar label="Navegação da biblioteca" items={LIBRARY} />;
 }
 
-export function AppMenuSidebar({ repository }: { repository: string }) {
+/** `folder` = pasta da app (identidade); `appHref` trata string sem `/` como pasta. */
+export function AppMenuSidebar({ repository: folder }: { repository: string }) {
   const items: NavItem[] = [
-    { label: 'Visão geral', href: appHref(repository), Icon: IconLayoutDashboard, exact: true },
-    { label: 'Versões', href: appHref(repository, 'versions'), Icon: IconVersions, exact: true },
-    { label: 'Executável', href: appHref(repository, 'executable'), Icon: IconTerminal2, exact: true },
-    { label: 'Atalhos', href: appHref(repository, 'shortcuts'), Icon: IconLink, exact: true },
-    { label: 'Changelog', href: appHref(repository, 'changelog'), Icon: IconNotes, exact: true },
+    { label: 'Visão geral', href: appHref(folder), Icon: IconLayoutDashboard, exact: true },
+    { label: 'Versões', href: appHref(folder, 'versions'), Icon: IconVersions, exact: true },
+    { label: 'Executável', href: appHref(folder, 'executable'), Icon: IconTerminal2, exact: true },
+    { label: 'Atalhos', href: appHref(folder, 'shortcuts'), Icon: IconLink, exact: true },
+    { label: 'Changelog', href: appHref(folder, 'changelog'), Icon: IconNotes, exact: true },
+    { label: 'Configuração', href: appHref(folder, 'settings'), Icon: IconAdjustments, exact: true },
   ];
   return <ShellSidebar label="Navegação da app" items={items} />;
 }

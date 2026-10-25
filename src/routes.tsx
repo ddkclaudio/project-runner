@@ -10,7 +10,8 @@ import { ComponentsPage } from '@/pages/ComponentsPage';
 import { NewAppPage } from '@/pages/NewAppPage';
 import { AppPage } from '@/pages/AppPage';
 import { CatalogPage } from '@/pages/CatalogPage';
-import { SettingsPage } from '@/pages/SettingsPage';
+import { ProfileSettingsPage } from '@/pages/ProfileSettingsPage';
+import { LegacyAppRedirect, LegacyFolderRedirect } from '@/pages/LegacyAppRedirect';
 import { NewOrgPage } from '@/pages/NewOrgPage';
 import { OrgsPage } from '@/pages/OrgsPage';
 import { OrgMembersPage } from '@/pages/OrgMembersPage';
@@ -58,13 +59,18 @@ export const routes = [
       { path: '/', element: <HomePage /> },
       { path: '/catalog', element: <CatalogPage mode="remote" /> },
       { path: '/catalog/files', element: <CatalogPage mode="files" /> },
-      { path: '/settings', element: <SettingsPage section="general" /> },
-      { path: '/settings/github', element: <SettingsPage section="github" /> },
-      { path: '/settings/appearance', element: <SettingsPage section="appearance" /> },
-      { path: '/settings/launch', element: <SettingsPage section="launch" /> },
+      { path: '/settings', element: <Navigate to="/settings/profile" replace /> },
+      { path: '/settings/profile', element: <ProfileSettingsPage /> },
+      { path: '/settings/github', element: <Navigate to="/settings/profile" replace /> },
+      { path: '/settings/appearance', element: <Navigate to="/settings/profile" replace /> },
+      { path: '/settings/launch', element: <Navigate to="/settings/profile" replace /> },
       { path: '/apps/new', element: <NewAppPage /> },
-      { path: '/apps/:owner/:repo', element: <AppPage /> },
-      { path: '/apps/:owner/:repo/:section', element: <AppPage /> },
+      { path: '/app/:folder', element: <AppPage /> },
+      { path: '/app/:folder/:section', element: <AppPage /> },
+      { path: '/apps/f/:folder', element: <LegacyFolderRedirect /> },
+      { path: '/apps/f/:folder/:section', element: <LegacyFolderRedirect /> },
+      { path: '/apps/:owner/:repo', element: <LegacyAppRedirect /> },
+      { path: '/apps/:owner/:repo/:section', element: <LegacyAppRedirect /> },
       { path: '/orgs', element: <OrgsPage /> },
       { path: '/orgs/new', element: <NewOrgPage /> },
       { path: '/orgs/invite', element: <AcceptInvitePage /> },

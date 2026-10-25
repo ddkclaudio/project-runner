@@ -1,24 +1,27 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import ReactMarkdown from 'react-markdown';
 import { openUrl } from '@tauri-apps/plugin-opener';
-import { IconDownload, IconCheck } from '@tabler/icons-react';
+import { open as openDialog } from '@tauri-apps/plugin-dialog';
+import { IconCopy, IconDownload, IconExternalLink, IconFolder, IconPhoto, IconX } from '@tabler/icons-react';
 import { PageShell } from '@/components/ui/PageShell';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
+import { Checkbox } from '@/components/ui/Checkbox';
 import { StatusBadge, type StatusTone } from '@/components/ui/StatusBadge';
 import { InlineAlert } from '@/components/ui/InlineAlert';
 import { Modal } from '@/components/ui/Modal';
 import { DangerZone } from '@/components/ui/DangerZone';
 import { FormCard, FormRow } from '@/components/ui/FormCard';
+import { Textarea } from '@/components/ui/Textarea';
 import { GridView } from '@/components/ui/GridView';
 import { ViewToolbar } from '@/components/ui/ViewToolbar';
 import { DataTable, type TableColumn } from '@/components/ui/DataTable';
 import { RowActions } from '@/components/ui/RowActions';
 import { ItemCard, gridCardStyles as gc } from '@/components/ui/ItemCard';
 import { useToast } from '@/components/ui/Toast';
-import { ChoiceList, useLibraryMutations } from '@/components/launcher/LibraryCard';
+import { appIconSrc, appId, ChoiceList, useLibraryMutations } from '@/components/launcher/LibraryCard';
 import { useListingView } from '@/components/launcher/useListingView';
 import { formatDate } from '@/utils';
 import {
@@ -26,10 +29,10 @@ import {
   appClearIcon,
   appDeleteInstall,
   appDetail,
-  appExecutables,
-  appLocate,
+  appGenerateLaunchfile,
+  appLaunchConfigGet,
+  appLaunchConfigSave,
   appReleases,
-  appSetExecutable,
   appSetIcon,
   appShortcutDesktop,
   appShortcutSteam,
@@ -39,6 +42,7 @@ import {
   librarySave,
   statusLabel,
   type AppView,
+  type LaunchField,
   type ReleaseInfo,
 } from '@/lib/launcher-api';
 import styles from './library.module.css';
@@ -55,16 +59,13 @@ function releaseState(app: AppView, tag: string): { label: string; tone: StatusT
   return { label: 'Disponível', tone: 'muted' };
 }
 
-function fileName(path: string) {
-  const parts = path.split(/[/\\]/);
-  return parts[parts.length - 1] || path;
-}
-
 export function AppPage() {
   const params = useParams();
   const section = params.section ?? '';
-  const repository = `${params.owner}/${params.repo}`;
-  const detail = useQuery({ queryKey: ['launcher', 'app', repository], queryFn: () => appDetail(repository) });
+  const appKey = params.folder
+    ? decodeURIComponent(params.folder)
+    : `${params.owner}/${params.repo}`;
+  const detail = useQuery({ queryKey: ['launcher', 'app', appKey], queryFn: () => appDetail(appKey) });
   const app = detail.data;
   if (detail.isLoading) return <PageShell><p className={styles.meta}>A carregar…</p></PageShell>;
   if (!app) return <PageShell><InlineAlert>{launcherError(detail.error) || 'App não encontrada.'}</InlineAlert></PageShell>;
@@ -72,22 +73,19 @@ export function AppPage() {
   if (section === 'executable') return <Executable app={app} />;
   if (section === 'shortcuts') return <Shortcuts app={app} />;
   if (section === 'changelog') return <Changelog app={app} />;
+  if (section === 'settings') return <AppSettings app={app} />;
   return <Overview app={app} />;
 }
 
 function Overview({ app }: { app: AppView }) {
   const actions = useLibraryMutations();
   const toast = useToast();
-  const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [choice, setChoice] = useState<string[] | null>(null);
   const [confirmWine, setConfirmWine] = useState(false);
   const [warning, setWarning] = useState<string | null>(null);
-  const [name, setName] = useState(app.name);
-  const [folderName, setFolderName] = useState(app.folderName);
-  const [iconUrl, setIconUrl] = useState(app.appIconUrl || '');
-  const [locate, setLocate] = useState('');
-  const [iconFile, setIconFile] = useState('');
+  const iconSrc = appIconSrc(app);
+  const initial = (app.name.trim().charAt(0) || '?').toUpperCase();
 
   async function primary(assetName?: string, wine = false) {
     if (app.status === 'installed' && !assetName) {
@@ -100,98 +98,107 @@ function Overview({ app }: { app: AppView }) {
     setWarning(result.warning ?? null);
     setConfirmWine(result.needsConfirm);
     setChoice(result.needsChoice || result.needsConfirm ? result.assets : null);
-    await queryClient.invalidateQueries({ queryKey: ['launcher', 'app', app.repository] });
+    await queryClient.invalidateQueries({ queryKey: ['launcher', 'app', appId(app)] });
   }
 
-  async function saveEntry() {
-    try {
-      await librarySave({ ...app, name, folderName, appIconUrl: iconUrl || null }, app.repository);
-      await queryClient.invalidateQueries({ queryKey: ['launcher'] });
-      toast.success('Entrada atualizada.');
-    } catch (err) {
-      toast.error(launcherError(err));
-    }
-  }
+  const stats: { label: string; value: string; mono?: boolean }[] = [
+    { label: 'Versão instalada', value: app.installedVersion || '—' },
+    { label: 'Versão remota', value: app.remoteVersion || '—' },
+    { label: 'Último uso', value: app.lastPlayed || 'Nunca' },
+    { label: 'Executável', value: app.selectedExecutable || 'Launchfile', mono: true },
+  ];
 
   return (
     <PageShell>
-      <PageShell.Heading
-        subtitle={
-          <>
-            {app.repository}
-            <span className={styles.meta} style={{ display: 'block', marginTop: 4 }}>
-              {app.installedVersion ? `Instalada ${app.installedVersion}` : 'Por instalar'}
-              {app.remoteVersion ? ` · remota ${app.remoteVersion}` : ''}
-              {app.lastPlayed ? ` · último uso ${app.lastPlayed}` : ''}
-            </span>
-          </>
-        }
-        actions={<StatusBadge label={statusLabel(app.status)} tone={app.status === 'update' ? 'warning' : app.status === 'installed' ? 'success' : 'muted'} />}
-      >
-        {app.name}
-      </PageShell.Heading>
+      <header className={styles.overviewHero}>
+        {iconSrc ? (
+          <img className={styles.overviewIcon} src={iconSrc} alt="" />
+        ) : (
+          <div className={styles.overviewIconFallback} aria-hidden="true">
+            {initial}
+          </div>
+        )}
+        <div className={styles.overviewHeroText}>
+          <h1 className={styles.overviewTitle}>{app.name}</h1>
+          <p className={styles.overviewRepo}>{app.repository}</p>
+          <div className={styles.overviewBadges}>
+            <StatusBadge
+              label={statusLabel(app.status)}
+              tone={app.status === 'update' ? 'warning' : app.status === 'installed' ? 'success' : 'muted'}
+            />
+            {app.running ? <StatusBadge label="Em execução" tone="success" /> : <StatusBadge label="Parada" tone="muted" />}
+            {app.manuallyHidden ? <StatusBadge label="Oculta" tone="warning" /> : null}
+          </div>
+        </div>
+      </header>
 
       <div className={styles.actions}>
-        <Button variant="secondary" onClick={() => void primary()}>{actions.primaryLabel(app)}</Button>
+        <Button variant="secondary" onClick={() => void primary()}>
+          {actions.primaryLabel(app)}
+        </Button>
         <Button onClick={() => void actions.openFolder(app)}>Abrir pasta</Button>
-        <Button onClick={() => void actions.hide(app)}>{app.manuallyHidden ? 'Mostrar' : 'Ocultar'}</Button>
         <Button onClick={() => void openUrl(`https://github.com/${app.repository}`)}>GitHub</Button>
-        {app.remoteVersion ? (
-          <Button onClick={() => void appSkipUpdate(app.repository, app.remoteVersion).then(() => queryClient.invalidateQueries({ queryKey: ['launcher'] })).catch((err) => toast.error(launcherError(err)))}>
+        {app.running && app.openUrl ? (
+          <Button onClick={() => void openUrl(app.openUrl!).catch((err) => toast.error(launcherError(err)))}>
+            Abrir no browser
+          </Button>
+        ) : null}
+        {app.remoteVersion && app.status === 'update' ? (
+          <Button
+            onClick={() =>
+              void appSkipUpdate(appId(app), app.remoteVersion)
+                .then(() => queryClient.invalidateQueries({ queryKey: ['launcher'] }))
+                .catch((err) => toast.error(launcherError(err)))
+            }
+          >
             Saltar {app.remoteVersion}
           </Button>
         ) : null}
       </div>
 
-      <FormCard
-        onSubmit={(event) => {
-          event.preventDefault();
-          void saveEntry();
-        }}
-        aria-label="Entrada da app"
-      >
-        <FormCard.Header title="Entrada" subtitle="Nome, pasta e ícone em apps.json." />
-        <FormRow label="Nome">
-          <Input value={name} onChange={(event) => setName(event.target.value)} />
-        </FormRow>
-        <FormRow label="Pasta">
-          <Input value={folderName} onChange={(event) => setFolderName(event.target.value)} />
-        </FormRow>
-        <FormRow label="Ícone remoto">
-          <Input value={iconUrl} onChange={(event) => setIconUrl(event.target.value)} />
-        </FormRow>
-        <FormRow label="Imagem local">
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-            <Input value={iconFile} onChange={(event) => setIconFile(event.target.value)} />
-            <div className={styles.actions} style={{ marginBottom: 0 }}>
-              <Button type="button" onClick={() => void appSetIcon(app.repository, iconFile).then(() => queryClient.invalidateQueries({ queryKey: ['launcher'] })).then(() => toast.success('Imagem guardada.')).catch((err) => toast.error(launcherError(err)))}>Usar imagem</Button>
-              <Button type="button" onClick={() => void appClearIcon(app.repository).then(() => queryClient.invalidateQueries({ queryKey: ['launcher'] })).catch((err) => toast.error(launcherError(err)))}>Remover imagem</Button>
-            </div>
+      <div className={styles.overviewStats} role="list" aria-label="Indicadores">
+        {stats.map((stat) => (
+          <div key={stat.label} className={styles.overviewStat} role="listitem">
+            <p className={styles.overviewStatLabel}>{stat.label}</p>
+            <p className={stat.mono ? `${styles.overviewStatValue} ${styles.overviewStatValueMono}` : styles.overviewStatValue}>
+              {stat.value}
+            </p>
           </div>
-        </FormRow>
-        <FormRow label="Pasta instalada">
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-            <Input value={locate} onChange={(event) => setLocate(event.target.value)} />
-            <Button type="button" onClick={() => void appLocate(app.repository, locate).then(() => queryClient.invalidateQueries({ queryKey: ['launcher'] })).then(() => toast.success('Instalação localizada.')).catch((err) => toast.error(launcherError(err)))}>Localizar</Button>
-          </div>
-        </FormRow>
-        <FormCard.Footer right={<Button type="submit" variant="secondary">Guardar entrada</Button>} />
-      </FormCard>
+        ))}
+      </div>
 
-      <PageShell.Section className={styles.blockGap}>
-        {app.status !== 'not_installed' ? (
-          <DangerZone
-            title="Apagar a instalação"
-            description="Remove a pasta instalada e mantém a entrada na biblioteca."
-            action={<Button variant="danger" onClick={() => void appDeleteInstall(app.repository).then(() => queryClient.invalidateQueries({ queryKey: ['launcher'] })).then(() => toast.success('Instalação apagada.')).catch((err) => toast.error(launcherError(err)))}>Apagar pasta</Button>}
-          />
-        ) : null}
-        <DangerZone
-          title="Remover da biblioteca"
-          description="Tira a entrada de apps.json. A pasta instalada fica no disco."
-          action={<Button variant="danger" onClick={() => void libraryRemove(app.repository).then(() => navigate('/')).catch((err) => toast.error(launcherError(err)))}>Remover</Button>}
-        />
-      </PageShell.Section>
+      {app.running ? (
+        <section className={styles.overviewPanel} aria-label="Processo em execução">
+          <h2 className={styles.overviewPanelTitle}>Agora a correr</h2>
+          <div className={styles.overviewRunning}>
+            <p className={styles.overviewRunningLine}>
+              <strong>Gestor de tarefas</strong>
+              {' · '}
+              <span className={styles.overviewStatValueMono}>{app.runningProcessName || '—'}</span>
+            </p>
+            <p className={styles.overviewRunningLine}>
+              <strong>PID</strong>
+              {' · '}
+              {app.runningPid != null ? app.runningPid : '—'}
+            </p>
+            {app.openUrl ? (
+              <p className={styles.overviewRunningLine}>
+                <strong>URL</strong>
+                {' · '}
+                {app.openUrl}
+              </p>
+            ) : null}
+          </div>
+        </section>
+      ) : null}
+
+      {app.installPath ? (
+        <section className={styles.overviewPanel} aria-label="Localização">
+          <h2 className={styles.overviewPanelTitle}>No disco</h2>
+          <p className={`${styles.overviewRunningLine} ${styles.overviewStatValueMono}`}>{app.installPath}</p>
+        </section>
+      ) : null}
+
       <Modal isOpen={Boolean(choice)} onClose={() => setChoice(null)} title={confirmWine ? 'Confirmar instalação' : 'Escolher ficheiro'}>
         <Modal.Content>
           {warning ? <InlineAlert variant="warning">{warning}</InlineAlert> : null}
@@ -208,11 +215,159 @@ function Overview({ app }: { app: AppView }) {
   );
 }
 
+function iconFileName(path: string | null | undefined) {
+  if (!path) return '';
+  const parts = path.split(/[/\\]/);
+  return parts[parts.length - 1] || path;
+}
+
+function AppSettings({ app }: { app: AppView }) {
+  const toast = useToast();
+  const navigate = useNavigate();
+  const queryClient = useQueryClient();
+  const actions = useLibraryMutations();
+  const [name, setName] = useState(app.name);
+  const hasIcon = Boolean(app.iconPath);
+
+  useEffect(() => {
+    setName(app.name);
+  }, [app.name]);
+
+  async function saveEntry() {
+    try {
+      await librarySave({ ...app, name, folderName: app.folderName, appIconUrl: null }, appId(app));
+      await queryClient.invalidateQueries({ queryKey: ['launcher'] });
+      toast.success('Entrada actualizada.');
+    } catch (err) {
+      toast.error(launcherError(err));
+    }
+  }
+
+  async function pickIcon() {
+    try {
+      const selected = await openDialog({
+        multiple: false,
+        title: 'Escolher ícone',
+        filters: [{ name: 'Imagens', extensions: ['png', 'jpg', 'jpeg', 'webp', 'gif', 'ico', 'svg', 'bmp'] }],
+      });
+      if (typeof selected !== 'string' || !selected) return;
+      await appSetIcon(appId(app), selected);
+      await queryClient.invalidateQueries({ queryKey: ['launcher'] });
+      toast.success('Ícone guardado.');
+    } catch (err) {
+      toast.error(launcherError(err));
+    }
+  }
+
+  async function removeIcon() {
+    try {
+      await appClearIcon(appId(app));
+      await queryClient.invalidateQueries({ queryKey: ['launcher'] });
+      toast.success('Ícone removido.');
+    } catch (err) {
+      toast.error(launcherError(err));
+    }
+  }
+
+  return (
+    <PageShell>
+      <PageShell.Heading subtitle="Nome, pasta, ícone e gestão da entrada na biblioteca.">Configuração</PageShell.Heading>
+
+      <div className={styles.actions}>
+        <Button onClick={() => void actions.hide(app)}>{app.manuallyHidden ? 'Mostrar na biblioteca' : 'Ocultar na biblioteca'}</Button>
+      </div>
+
+      <FormCard
+        onSubmit={(event) => {
+          event.preventDefault();
+          void saveEntry();
+        }}
+        aria-label="Entrada da app"
+      >
+        <FormCard.Header title="Entrada" subtitle="Dados gravados em apps.json." />
+        <FormRow label="Nome">
+          <Input value={name} onChange={(event) => setName(event.target.value)} />
+        </FormRow>
+        <FormRow label="Repositório">
+          <Input
+            value={app.repository}
+            readOnly
+            disabled
+            rightIcon={<IconCopy size={16} aria-hidden="true" />}
+            rightIconLabel="Copiar repositório"
+            onRightIconClick={() => {
+              void navigator.clipboard
+                .writeText(app.repository)
+                .then(() => toast.success('Repositório copiado.'))
+                .catch(() => toast.error('Não foi possível copiar.'));
+            }}
+          />
+        </FormRow>
+        <FormRow label="Ícone">
+          <Input
+            value={hasIcon ? iconFileName(app.iconPath) : ''}
+            readOnly
+            placeholder="Nenhum ícone"
+            rightIcon={hasIcon ? <IconX size={16} aria-hidden="true" /> : <IconPhoto size={16} aria-hidden="true" />}
+            rightIconLabel={hasIcon ? 'Remover ícone' : 'Escolher ficheiro'}
+            onRightIconClick={() => void (hasIcon ? removeIcon() : pickIcon())}
+          />
+        </FormRow>
+        <FormRow label="Pasta instalada">
+          <Input
+            value={app.installPath || ''}
+            readOnly
+            placeholder="Ainda sem pasta no disco"
+            rightIcon={<IconFolder size={16} aria-hidden="true" />}
+            rightIconLabel="Abrir pasta"
+            onRightIconClick={() => void actions.openFolder(app)}
+          />
+        </FormRow>
+        <FormCard.Footer right={<Button type="submit" variant="secondary">Guardar entrada</Button>} />
+      </FormCard>
+
+      <PageShell.Section className={styles.blockGap}>
+        {app.status !== 'not_installed' ? (
+          <DangerZone
+            title="Apagar a instalação"
+            description="Remove a pasta instalada e mantém a entrada na biblioteca."
+            action={
+              <Button
+                variant="danger"
+                onClick={() =>
+                  void appDeleteInstall(appId(app))
+                    .then(() => queryClient.invalidateQueries({ queryKey: ['launcher'] }))
+                    .then(() => toast.success('Instalação apagada.'))
+                    .catch((err) => toast.error(launcherError(err)))
+                }
+              >
+                Apagar pasta
+              </Button>
+            }
+          />
+        ) : null}
+        <DangerZone
+          title="Remover da biblioteca"
+          description="Tira a entrada de apps.json. A pasta instalada fica no disco."
+          action={
+            <Button
+              variant="danger"
+              onClick={() => void libraryRemove(appId(app)).then(() => navigate('/')).catch((err) => toast.error(launcherError(err)))}
+            >
+              Remover
+            </Button>
+          }
+        />
+      </PageShell.Section>
+    </PageShell>
+  );
+}
+
 function Versions({ app }: { app: AppView }) {
   const actions = useLibraryMutations();
   const { view, changeView } = useListingView();
   const [query, setQuery] = useState('');
-  const releases = useQuery({ queryKey: ['launcher', 'releases', app.repository], queryFn: () => appReleases(app.repository) });
+  const releases = useQuery({ queryKey: ['launcher', 'releases', appId(app)], queryFn: () => appReleases(appId(app)) });
   const rows = useMemo(() => {
     const q = query.trim().toLowerCase();
     return (releases.data ?? []).filter((release) => !q || release.tag.toLowerCase().includes(q) || release.name.toLowerCase().includes(q));
@@ -336,137 +491,201 @@ function ReleaseList({
 function Executable({ app }: { app: AppView }) {
   const toast = useToast();
   const queryClient = useQueryClient();
-  const { view, changeView } = useListingView();
-  const [query, setQuery] = useState('');
-  const executables = useQuery({ queryKey: ['launcher', 'exe', app.repository], queryFn: () => appExecutables(app.repository) });
-  const rows = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    return (executables.data ?? [])
-      .filter((path) => !q || path.toLowerCase().includes(q))
-      .map((path) => ({ id: path, path, name: fileName(path) }));
-  }, [executables.data, query]);
-  const listLoading = executables.isLoading && !executables.data;
-  const emptyMessage = query ? 'Nenhum executável corresponde à busca.' : 'Nenhum executável encontrado.';
+  const [fields, setFields] = useState<LaunchField[]>([]);
+  const [configBusy, setConfigBusy] = useState(false);
+  const config = useQuery({
+    queryKey: ['launcher', 'launch-config', appId(app)],
+    queryFn: () => appLaunchConfigGet(appId(app)),
+  });
 
-  async function select(path: string) {
+  useEffect(() => {
+    if (!config.data) return;
+    setFields(config.data.fields.map((item) => ({ ...item })));
+  }, [config.data]);
+
+  async function saveFields() {
+    setConfigBusy(true);
     try {
-      await appSetExecutable(app.repository, path);
+      await appLaunchConfigSave(appId(app), { fields });
       await queryClient.invalidateQueries({ queryKey: ['launcher'] });
-      toast.success('Executável gravado.');
+      await queryClient.invalidateQueries({ queryKey: ['launcher', 'launch-config', appId(app)] });
+      await queryClient.invalidateQueries({ queryKey: ['launcher', 'exe', appId(app)] });
+      toast.success('Configuração guardada.');
     } catch (err) {
       toast.error(launcherError(err));
+    } finally {
+      setConfigBusy(false);
+    }
+  }
+
+  async function generateWithDeepseek() {
+    setConfigBusy(true);
+    try {
+      await appGenerateLaunchfile(appId(app));
+      await queryClient.invalidateQueries({ queryKey: ['launcher'] });
+      await queryClient.invalidateQueries({ queryKey: ['launcher', 'launch-config', appId(app)] });
+      await queryClient.invalidateQueries({ queryKey: ['launcher', 'exe', appId(app)] });
+      toast.success('Launchfile gerado com DeepSeek.');
+    } catch (err) {
+      toast.error(launcherError(err));
+    } finally {
+      setConfigBusy(false);
     }
   }
 
   return (
     <PageShell>
-      <PageShell.Heading subtitle={app.selectedExecutable || 'Sem executável gravado.'}>Executável</PageShell.Heading>
-      {executables.error ? <InlineAlert>{launcherError(executables.error)}</InlineAlert> : null}
-      <ViewToolbar
-        query={query}
-        onQueryChange={setQuery}
-        searchPlaceholder="Buscar executável"
-        searchAriaLabel="Buscar executáveis"
-        view={view}
-        onViewChange={(mode) => void changeView(mode)}
-        ariaLabel="Barra de executáveis"
+      <PageShell.Heading subtitle="Manifesto Launchfile — install, start, porta e URL.">
+        Executável{' '}
+        {config.data ? <StatusBadge label={config.data.runnerLabel} tone="info" /> : null}
+      </PageShell.Heading>
+      {config.error ? <InlineAlert>{launcherError(config.error)}</InlineAlert> : null}
+
+      <LaunchConfigForm
+        loaded={config.data}
+        fields={fields}
+        busy={configBusy}
+        onFieldsChange={setFields}
+        onSaveFields={() => void saveFields()}
+        onGenerateDeepseek={() => void generateWithDeepseek()}
       />
-      {view === 'grid' ? (
-        <GridView
-          items={rows}
-          keyField="id"
-          loading={listLoading}
-          emptyMessage={emptyMessage}
-          renderItem={(row) => {
-            const current = row.path === app.selectedExecutable;
-            return (
-              <div className={styles.cardHost}>
-                <ItemCard
-                  aria-label={`Usar ${row.name}`}
-                  highlight={current}
-                  onClick={() => void select(row.path)}
-                  actions={{
-                    label: `Ações para ${row.name}`,
-                    items: [{ label: 'Usar', icon: <IconCheck size={15} />, onClick: () => void select(row.path) }],
-                  }}
-                >
-                  <div className={gc.body}>
-                    <div className={gc.title}>{row.name}</div>
-                    <div className={gc.sub} title={row.path}>
-                      {row.path}
-                    </div>
-                    {current ? (
-                      <div className={gc.meta}>
-                        <StatusBadge label="Em uso" tone="success" />
-                      </div>
-                    ) : null}
-                  </div>
-                </ItemCard>
-              </div>
-            );
-          }}
-        />
-      ) : (
-        <ExecutableList
-          rows={rows}
-          selected={app.selectedExecutable}
-          loading={listLoading}
-          emptyMessage={emptyMessage}
-          onSelect={(row) => void select(row.path)}
-        />
-      )}
     </PageShell>
   );
 }
 
-function ExecutableList({
-  rows,
-  selected,
-  loading,
-  emptyMessage,
-  onSelect,
+function isTruthyLaunchValue(value: string) {
+  return ['true', 'yes', 'on', '1'].includes(value.trim().toLowerCase());
+}
+
+function LaunchFieldControl({
+  field,
+  onChange,
+  onError,
 }: {
-  rows: { id: string; path: string; name: string }[];
-  selected?: string | null;
-  loading: boolean;
-  emptyMessage: string;
-  onSelect: (row: { id: string; path: string; name: string }) => void;
+  field: LaunchField;
+  onChange: (value: string) => void;
+  onError: (message: string) => void;
 }) {
-  const columns: TableColumn<{ id: string; path: string; name: string }>[] = [
-    {
-      key: 'name',
-      label: 'FICHEIRO',
-      width: '32%',
-      render: (row) => <span className={styles.appName}>{row.name}</span>,
-    },
-    {
-      key: 'path',
-      label: 'CAMINHO',
-      render: (row) => <span className={styles.date}>{row.path}</span>,
-    },
-    {
-      key: 'state',
-      label: 'ESTADO',
-      render: (row) => (row.path === selected ? <StatusBadge label="Em uso" tone="success" /> : <span className={styles.date}>—</span>),
-    },
-  ];
+  const type = (field.fieldType || 'text').toLowerCase();
+
+  if (type === 'boolean') {
+    return (
+      <Checkbox checked={isTruthyLaunchValue(field.value)} onChange={(checked) => onChange(checked ? 'true' : 'false')} />
+    );
+  }
+
+  if (type === 'multiline' || field.key === 'env') {
+    return <Textarea value={field.value} onChange={(event) => onChange(event.target.value)} rows={4} />;
+  }
+
+  if (type === 'url') {
+    return (
+      <Input
+        type="url"
+        value={field.value}
+        onChange={(event) => onChange(event.target.value)}
+        placeholder="https://"
+        rightIcon={<IconExternalLink size={16} aria-hidden="true" />}
+        rightIconLabel="Abrir URL"
+        onRightIconClick={() => {
+          const raw = field.value.trim();
+          if (!raw) {
+            onError('Indique uma URL para abrir.');
+            return;
+          }
+          const href = /^https?:\/\//i.test(raw) ? raw : `https://${raw}`;
+          void openUrl(href).catch((err) => onError(launcherError(err)));
+        }}
+      />
+    );
+  }
+
+  if (type === 'number') {
+    return (
+      <Input type="number" value={field.value} onChange={(event) => onChange(event.target.value)} inputMode="numeric" />
+    );
+  }
+
+  return <Input value={field.value} onChange={(event) => onChange(event.target.value)} />;
+}
+
+function LaunchConfigForm({
+  loaded,
+  fields,
+  busy,
+  onFieldsChange,
+  onSaveFields,
+  onGenerateDeepseek,
+}: {
+  loaded?: Awaited<ReturnType<typeof appLaunchConfigGet>>;
+  fields: LaunchField[];
+  busy: boolean;
+  onFieldsChange: (fields: LaunchField[]) => void;
+  onSaveFields: () => void;
+  onGenerateDeepseek: () => void;
+}) {
+  const toast = useToast();
+  if (!loaded) return null;
+
+  const working = fields.length ? fields : loaded.fields;
+  const coreFields = working.filter((field) => field.key !== 'hint' && !field.key.startsWith('env.'));
+  const envFields = working.filter((field) => field.key.startsWith('env.'));
+
+  function patchField(key: string, value: string) {
+    onFieldsChange(working.map((item) => (item.key === key ? { ...item, value } : item)));
+  }
 
   return (
-    <DataTable
-      loading={loading}
-      loadingRows={6}
-      columns={columns}
-      rows={rows}
-      keyField="id"
-      onRowClick={onSelect}
-      emptyMessage={emptyMessage}
-      rowActions={(row) => (
-        <RowActions
-          label={`Ações para ${row.name}`}
-          items={[{ label: 'Usar', icon: <IconCheck size={15} />, onClick: () => onSelect(row) }]}
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16, marginBottom: 20 }}>
+      <FormCard aria-label="Configuração de execução">
+        <FormCard.Header
+          title="Launchfile"
+          subtitle={
+            loaded.relativePath
+              ? `Ficheiro: ${loaded.relativePath}. Sem ficheiro, o Start (ou o botão abaixo) usa o DeepSeek.`
+              : 'O DeepSeek cria o Launchfile se ainda não existir (token em Perfil).'
+          }
         />
-      )}
-    />
+        {coreFields.map((field) => (
+          <FormRow key={field.key} label={field.label}>
+            <LaunchFieldControl
+              field={field}
+              onChange={(value) => patchField(field.key, value)}
+              onError={(message) => toast.error(message)}
+            />
+          </FormRow>
+        ))}
+        {envFields.length ? (
+          <>
+            <FormCard.Header title="Variáveis de ambiente" />
+            {envFields.map((field) => (
+              <FormRow key={field.key} label={field.label}>
+                <LaunchFieldControl
+                  field={field}
+                  onChange={(value) => patchField(field.key, value)}
+                  onError={(message) => toast.error(message)}
+                />
+              </FormRow>
+            ))}
+          </>
+        ) : null}
+        {working.some((field) => field.key === 'hint') ? (
+          <FormCard.Hint>{working.find((field) => field.key === 'hint')?.value}</FormCard.Hint>
+        ) : null}
+        <FormCard.Footer
+          right={
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              <Button type="button" disabled={busy} onClick={onGenerateDeepseek}>
+                Gerar com DeepSeek
+              </Button>
+              <Button type="button" variant="secondary" disabled={busy} onClick={onSaveFields}>
+                Guardar campos
+              </Button>
+            </div>
+          }
+        />
+      </FormCard>
+    </div>
   );
 }
 
@@ -476,15 +695,15 @@ function Shortcuts({ app }: { app: AppView }) {
     <PageShell>
       <PageShell.Heading subtitle="O atalho abre o Painel com o nome desta app.">Atalhos</PageShell.Heading>
       <div style={{ display: 'flex', gap: 8 }}>
-        <Button variant="secondary" onClick={() => void appShortcutDesktop(app.repository).then((path) => toast.success(path)).catch((err) => toast.error(launcherError(err)))}>Ambiente de trabalho</Button>
-        <Button onClick={() => void appShortcutSteam(app.repository).then((path) => toast.success(path)).catch((err) => toast.error(launcherError(err)))}>Steam</Button>
+        <Button variant="secondary" onClick={() => void appShortcutDesktop(appId(app)).then((path) => toast.success(path)).catch((err) => toast.error(launcherError(err)))}>Ambiente de trabalho</Button>
+        <Button onClick={() => void appShortcutSteam(appId(app)).then((path) => toast.success(path)).catch((err) => toast.error(launcherError(err)))}>Steam</Button>
       </div>
     </PageShell>
   );
 }
 
 function Changelog({ app }: { app: AppView }) {
-  const notes = useQuery({ queryKey: ['launcher', 'notes', app.repository], queryFn: () => appChangelog(app.repository) });
+  const notes = useQuery({ queryKey: ['launcher', 'notes', appId(app)], queryFn: () => appChangelog(appId(app)) });
   const text = notes.data || app.changelog || 'Ainda não há texto de release em cache. Atualize a biblioteca para o ir buscar.';
   return (
     <PageShell>
