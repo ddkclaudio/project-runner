@@ -279,14 +279,12 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
-            let dir = app.path().app_data_dir()?;
-            fs::create_dir_all(&dir)?;
-            app.manage(AuthState {
-                path: dir.join("auth.json"),
-            });
             let root = launcher::resolve_root();
             launcher::store::ensure_root(&root).map_err(std::io::Error::other)?;
             launcher::store::cleanup_backups(&root);
+            app.manage(AuthState {
+                path: root.join("auth.json"),
+            });
             app.manage(launcher::LauncherState { root });
             Ok(())
         })

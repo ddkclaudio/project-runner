@@ -108,10 +108,21 @@ pub fn resolve_root() -> PathBuf {
             return PathBuf::from(dir);
         }
     }
-    std::env::current_exe()
-        .ok()
-        .and_then(|path| path.parent().map(|parent| parent.to_path_buf()))
-        .unwrap_or_else(|| PathBuf::from("."))
+    user_data_dir()
+}
+
+/// `%APPDATA%\com.local.painel` no Windows. Cadastro, sessão e biblioteca ficam aqui.
+pub fn user_data_dir() -> PathBuf {
+    if let Some(appdata) = std::env::var_os("APPDATA") {
+        return PathBuf::from(appdata).join("com.local.painel");
+    }
+    if let Some(home) = std::env::var_os("USERPROFILE") {
+        return PathBuf::from(home)
+            .join("AppData")
+            .join("Roaming")
+            .join("com.local.painel");
+    }
+    PathBuf::from(".").join("com.local.painel")
 }
 
 pub fn ensure_root(root: &Path) -> Result<(), String> {
@@ -119,7 +130,37 @@ pub fn ensure_root(root: &Path) -> Result<(), String> {
     fs::create_dir_all(root.join("Cache")).map_err(|err| err.to_string())?;
     fs::create_dir_all(root.join("Cache").join("Icons")).map_err(|err| err.to_string())?;
     fs::create_dir_all(root.join("Cache").join("CustomIcons")).map_err(|err| err.to_string())?;
+    migrate_legacy_json(root);
     Ok(())
+}
+
+fn migrate_legacy_json(root: &Path) {
+    if root.join("apps.json").exists() || root.join("settings.json").exists() {
+        return;
+    }
+    let Some(legacy) = std::env::current_exe()
+        .ok()
+        .and_then(|path| path.parent().map(|parent| parent.to_path_buf()))
+    else {
+        return;
+    };
+    if legacy == root {
+        return;
+    }
+    for name in [
+        "apps.json",
+        "settings.json",
+        "games.json",
+        "app_catalog_cache.json",
+        "app_catalog_version.txt",
+        "version.txt",
+        "update_check.json",
+    ] {
+        let from = legacy.join(name);
+        if from.is_file() {
+            let _ = fs::copy(&from, root.join(name));
+        }
+    }
 }
 
 pub fn cleanup_backups(root: &Path) {
