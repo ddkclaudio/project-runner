@@ -1,0 +1,25 @@
+.root {
+  position: relative;
+  display: inline-flex;
+}
+
+.avatarBtn {
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  transition: opacity var(--transition-fast);
+}
+
+.avatarBtn:hover {
+  opacity: 0.85;
+}
+
+/* Painel do perfil: mais alto que o dropdown genérico (sem cortar o conteúdo). */
+.panel {
+  max-height: min(85vh, 560px);
+  padding: var(--space-2) 0;
+}

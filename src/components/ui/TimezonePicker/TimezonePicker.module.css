@@ -1,0 +1,170 @@
+.wrapper {
+  position: relative;
+}
+
+.fieldWrapper {
+  width: 100%;
+  max-width: 100%;
+}
+
+.trigger {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  width: 100%;
+  padding: var(--space-3) var(--space-4);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: var(--font-md);
+  color: var(--text-secondary);
+  text-align: left;
+  transition:
+    background var(--transition-fast),
+    color var(--transition-fast);
+}
+
+.trigger:hover,
+.triggerActive {
+  background: var(--bg-active);
+  color: var(--text-primary);
+}
+
+.fieldTrigger {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  min-height: 38px;
+  padding: 0 12px;
+  gap: 8px;
+  background: var(--bg-input);
+  border: 1px solid var(--border-input);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 13px;
+  color: var(--text-secondary);
+  text-align: left;
+  transition: border-color var(--transition-base);
+}
+
+.fieldTrigger:hover {
+  border-color: var(--border-hover);
+}
+
+.fieldTriggerOpen {
+  border-color: var(--brand-green);
+}
+
+.fieldValue {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fieldChevron {
+  flex-shrink: 0;
+  color: var(--text-placeholder);
+  transition: transform var(--transition-base);
+}
+
+.fieldChevronOpen {
+  transform: rotate(180deg);
+}
+
+.left {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.title {
+  font-size: var(--font-md);
+  color: inherit;
+}
+
+.value {
+  font-size: var(--font-base);
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chevron {
+  color: var(--text-muted);
+  flex-shrink: 0;
+  transition: transform var(--transition-fast);
+  margin-top: 2px;
+}
+
+.chevronOpen {
+  transform: rotate(90deg);
+}
+
+.subPanel {
+  position: fixed;
+  z-index: calc(var(--z-dropdown) + 1);
+}
+
+.fillPanel {
+  width: 100% !important;
+  max-width: none !important;
+}
+
+.item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: var(--space-2) var(--space-4);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  font-family: inherit;
+  text-align: left;
+  transition: background var(--transition-fast);
+}
+
+.item:hover {
+  background: var(--bg-active);
+}
+
+.itemActive {
+  background: var(--bg-hover);
+}
+
+.itemInfo {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.itemLabel {
+  font-size: var(--font-md);
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.item:hover .itemLabel {
+  color: var(--text-primary);
+}
+
+.itemOffset {
+  font-size: var(--font-base);
+  color: var(--text-placeholder);
+}
+
+.check {
+  color: var(--brand-green);
+  flex-shrink: 0;
+  margin-left: var(--space-2);
+}

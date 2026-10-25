@@ -1,0 +1,131 @@
+/* Page-level max-width container, centered */
+.shell {
+  width: 100%;
+  max-width: var(--page-max-width);
+  margin: 0 auto;
+  padding-bottom: 80px;
+  min-width: 0;
+}
+
+.fluid {
+  max-width: none;
+  margin: 0;
+  padding-bottom: 0;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.headingText {
+  min-width: 0;
+}
+
+.headingMain {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  min-width: 0;
+  flex: 1;
+}
+
+.headingIcon {
+  flex-shrink: 0;
+  width: 40px;
+  height: 40px;
+  border-radius: var(--radius-lg);
+  background: var(--bg-muted);
+  border: 1px solid var(--border-subtle);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--brand-green);
+}
+
+@media (max-width: 767px) {
+  .shell:not(.fluid) {
+    padding-bottom: 48px;
+  }
+}
+
+/* Heading row: title left, optional actions right */
+.headingRow {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-4);
+  margin-bottom: var(--space-6);
+  min-width: 0;
+}
+
+.heading {
+  font-size: var(--font-2xl);
+  font-weight: 600;
+  color: var(--text-primary);
+  overflow-wrap: anywhere;
+}
+
+.subtitle {
+  font-size: var(--font-base);
+  color: var(--text-muted);
+  margin-top: var(--space-1);
+  line-height: 1.5;
+}
+
+.headingActions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-shrink: 0;
+}
+
+@media (max-width: 767px) {
+  .headingRow {
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--space-3);
+    margin-bottom: var(--space-4);
+  }
+
+  .heading {
+    font-size: var(--font-xl, 20px);
+  }
+
+  .headingActions {
+    width: 100%;
+    justify-content: flex-start;
+    flex-wrap: wrap;
+  }
+}
+
+/* Section wrapper, adds vertical spacing between sections */
+.section {
+  margin-bottom: var(--space-6);
+}
+
+/* Generic two-slot toolbar */
+.toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  margin-bottom: var(--space-5);
+  flex-wrap: wrap;
+}
+.toolbarLeft {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+.toolbarRight {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+/* Visual separator */
+.divider {
+  border: none;
+  border-top: 1px solid var(--border-subtle);
+  margin: var(--space-6) 0;
+}

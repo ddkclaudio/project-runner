@@ -1,0 +1,69 @@
+.card {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  min-height: 100px;
+  min-width: 0;
+  overflow: hidden;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  transition:
+    border-color var(--transition-base),
+    background var(--transition-base),
+    transform 120ms ease;
+}
+
+.card:hover {
+  border-color: var(--border-hover);
+  background: var(--bg-hover);
+  transform: translateY(-2px);
+}
+
+/* Menu aberto: sem transform (evita containing block) e acima dos demais cards */
+.cardOpen {
+  z-index: var(--z-raised);
+  transform: none !important;
+}
+
+.card[role='button'] {
+  cursor: pointer;
+}
+
+.card[role='button']:focus-visible {
+  outline: 2px solid var(--brand-green);
+  outline-offset: 2px;
+}
+
+.cardHighlight {
+  border-color: color-mix(in srgb, var(--brand-green) 40%, transparent);
+  background: color-mix(in srgb, var(--brand-green) 5%, var(--bg-surface));
+}
+
+.cardHighlight:hover {
+  border-color: color-mix(in srgb, var(--brand-green) 60%, transparent);
+  background: color-mix(in srgb, var(--brand-green) 9%, var(--bg-hover));
+}
+
+.kebab {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  color: var(--text-placeholder);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  padding: 4px;
+  border-radius: var(--radius-sm);
+  display: flex;
+  align-items: center;
+  transition:
+    background var(--transition-fast),
+    color var(--transition-fast);
+  z-index: 2;
+}
+
+.kebab:hover {
+  background: var(--bg-active);
+  color: var(--text-primary);
+}

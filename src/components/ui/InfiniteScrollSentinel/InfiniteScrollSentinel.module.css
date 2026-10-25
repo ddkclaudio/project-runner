@@ -1,0 +1,13 @@
+.sentinel {
+  min-height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 12px 0 24px;
+}
+
+.text {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin: 0;
+}

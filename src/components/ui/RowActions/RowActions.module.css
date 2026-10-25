@@ -1,0 +1,22 @@
+.wrap {
+  position: relative;
+  display: inline-block;
+}
+
+.kebab {
+  background: transparent;
+  border: none;
+  color: var(--text-placeholder);
+  cursor: pointer;
+  padding: var(--space-1);
+  border-radius: var(--radius-sm);
+  display: flex;
+  align-items: center;
+  transition:
+    background var(--transition-fast),
+    color var(--transition-fast);
+}
+.kebab:hover {
+  background: var(--bg-active);
+  color: var(--text-primary);
+}

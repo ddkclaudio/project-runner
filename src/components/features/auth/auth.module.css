@@ -1,0 +1,82 @@
+/* Estilos específicos das features de auth (não fazem parte do design system). */
+
+.field {
+  margin-bottom: 18px;
+}
+
+.submitWrapper {
+  margin-top: 8px;
+}
+
+.backLink {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 13px;
+  color: var(--text-muted);
+  text-decoration: none;
+  transition: color var(--transition-fast);
+}
+.backLink:hover {
+  color: var(--text-secondary);
+}
+
+.devLinkBox {
+  margin-bottom: 16px;
+  padding: 12px 14px;
+  background: color-mix(in srgb, var(--status-amber) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--status-amber) 25%, transparent);
+  border-radius: var(--radius-md);
+  font-size: 13px;
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+
+.devLinkTitle {
+  margin: 0 0 4px;
+  font-weight: 600;
+  color: var(--status-amber);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.devLinkHint {
+  margin: 0 0 10px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.devLink {
+  display: inline-flex;
+  color: var(--brand-green, var(--brand-green));
+  font-weight: 500;
+  text-decoration: underline;
+  word-break: break-all;
+}
+
+.authErrorBody {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.authErrorMessage {
+  margin: 0;
+  font-weight: 500;
+}
+
+.authErrorHint {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.45;
+  opacity: 0.92;
+}
+
+.authErrorLink {
+  display: inline;
+  font-weight: 600;
+  text-decoration: underline;
+  color: inherit;
+}

@@ -1,0 +1,236 @@
+.root {
+  position: relative;
+  display: inline-flex;
+}
+
+.trigger {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  cursor: pointer;
+  padding: 3px 6px;
+  border-radius: var(--radius-md);
+  border: none;
+  background: transparent;
+  font-family: inherit;
+  font-size: var(--font-base);
+  color: var(--text-secondary);
+  transition: background var(--transition-base);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.trigger:hover,
+.triggerOpen {
+  background: var(--bg-active);
+}
+
+.triggerLoading {
+  cursor: default;
+  pointer-events: none;
+}
+
+.triggerLoading:hover {
+  background: transparent;
+}
+
+.triggerIconBone {
+  flex-shrink: 0;
+}
+
+.triggerLabelBone {
+  flex-shrink: 0;
+}
+
+.selectorIcon {
+  flex-shrink: 0;
+}
+.selectorIconMuted {
+  color: var(--text-placeholder);
+}
+
+.panel {
+  position: fixed;
+  z-index: var(--z-dropdown);
+  min-width: min(300px, calc(100vw - 24px));
+  width: max-content;
+  max-width: min(360px, calc(100vw - 24px));
+  max-height: min(70vh, 480px);
+  overflow: auto;
+  -webkit-overflow-scrolling: touch;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-dropdown);
+  padding: var(--space-1) 0;
+  animation: panelIn 90ms ease;
+  box-sizing: border-box;
+}
+
+.panelEmbedded {
+  width: 100%;
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+  overflow: hidden;
+  padding: 0;
+}
+
+.panelEmbedded .search {
+  margin: 0 0 8px;
+  padding: 8px 12px;
+  border: 1px solid var(--border-default);
+  border-radius: 8px;
+  background: var(--bg-muted);
+  border-bottom: 1px solid var(--border-default);
+}
+
+.panelEmbedded .list {
+  max-height: 240px;
+  overflow-y: auto;
+}
+
+.panelEmbedded .item {
+  min-height: 42px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  font-size: 14px;
+}
+
+.panelEmbedded .actionItem {
+  min-height: 42px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  font-size: 14px;
+}
+
+@keyframes panelIn {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.search {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--border-subtle);
+}
+.searchIcon {
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+.searchInput {
+  flex: 1;
+  background: transparent;
+  border: none;
+  outline: none;
+  font-size: var(--font-md);
+  color: var(--text-secondary);
+  font-family: inherit;
+}
+.searchInput::placeholder {
+  color: var(--text-placeholder);
+}
+
+.list {
+  padding: var(--space-1) 0;
+}
+
+.item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  padding: var(--space-2) var(--space-3);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: var(--font-md);
+  color: var(--text-secondary);
+  text-align: left;
+  white-space: nowrap;
+  transition: background var(--transition-fast);
+}
+.item:hover {
+  background: var(--bg-active);
+  color: var(--text-primary);
+}
+.itemSkeleton {
+  cursor: default;
+  pointer-events: none;
+}
+.itemSkeleton:hover {
+  background: transparent;
+  color: inherit;
+}
+.itemActive {
+  color: var(--text-primary);
+}
+
+.itemLeading {
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+.itemLabel {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+}
+.checkIcon {
+  color: var(--brand-green);
+  flex-shrink: 0;
+}
+
+.empty {
+  padding: var(--space-4) var(--space-3);
+  font-size: var(--font-base);
+  color: var(--text-muted);
+  text-align: center;
+}
+
+.separator {
+  height: 1px;
+  background: var(--border-subtle);
+  margin: var(--space-1) 0;
+}
+
+.actionItem {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  padding: var(--space-2) var(--space-3);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: var(--font-md);
+  color: var(--text-secondary);
+  text-align: left;
+  white-space: nowrap;
+  transition:
+    background var(--transition-fast),
+    color var(--transition-fast);
+}
+.actionItem:hover {
+  background: var(--bg-active);
+  color: var(--text-primary);
+}
+.actionIcon {
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+.actionLabel {
+  white-space: nowrap;
+}
+.actionItem:hover .actionIcon {
+  color: var(--text-secondary);
+}

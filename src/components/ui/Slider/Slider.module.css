@@ -1,0 +1,21 @@
+.sliderField {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.sliderInput {
+  flex: 1;
+  max-width: 220px;
+  accent-color: var(--brand-green);
+  cursor: pointer;
+  height: 4px;
+}
+
+.sliderValue {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  min-width: 36px;
+  text-align: right;
+}

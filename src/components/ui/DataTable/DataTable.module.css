@@ -1,0 +1,132 @@
+.container {
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.table {
+  width: 100%;
+  table-layout: fixed;
+  border-collapse: collapse;
+}
+
+.headerRow {
+  background: var(--bg-elevated);
+}
+
+.th {
+  padding: var(--space-2) var(--space-4);
+  text-align: left;
+  font-size: var(--font-xs);
+  font-weight: 600;
+  letter-spacing: 0.6px;
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--border-subtle);
+  white-space: nowrap;
+  vertical-align: middle;
+  user-select: none;
+}
+
+.thSortable {
+  cursor: pointer;
+}
+.thSortable:hover {
+  color: var(--text-secondary);
+}
+
+.sortIcon {
+  display: inline-block;
+  vertical-align: middle;
+  margin-left: var(--space-1);
+}
+.sortIconIdle {
+  opacity: 0.35;
+}
+
+/* wrapper interno do header, ancora o tooltip */
+.thInner {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+/* tooltip de explicação (design de /projects/new) */
+.tooltip {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  width: max-content;
+  max-width: 280px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-xl);
+  padding: 10px 12px;
+  z-index: var(--z-sticky);
+  box-shadow: var(--shadow-tooltip);
+  font-size: 12px;
+  font-weight: 400;
+  letter-spacing: normal;
+  text-transform: none;
+  line-height: 1.55;
+  color: var(--text-secondary);
+  white-space: normal;
+  pointer-events: none;
+  animation: tooltipIn 120ms ease;
+}
+
+@keyframes tooltipIn {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.row {
+  transition: background var(--transition-base);
+}
+.row:not(:last-child) td {
+  border-bottom: 1px solid var(--border-subtle);
+}
+.row:hover {
+  background: var(--bg-hover);
+}
+
+.rowClickable {
+  cursor: pointer;
+}
+
+.cell {
+  padding: var(--space-3) var(--space-4);
+  vertical-align: middle;
+  font-size: var(--font-md);
+  color: var(--text-secondary);
+  min-width: 0;
+  overflow: hidden;
+}
+
+.actionsCell {
+  text-align: right;
+  padding: var(--space-2) var(--space-3);
+}
+
+.empty {
+  padding: var(--space-10) var(--space-4);
+  text-align: center;
+  font-size: var(--font-base);
+  color: var(--text-muted);
+}
+
+.skeletonBone {
+  max-width: 100%;
+  margin-inline: inherit;
+}
+
+.cell:has(.skeletonBone) {
+  pointer-events: none;
+}

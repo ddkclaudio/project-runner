@@ -1,0 +1,23 @@
+.divider {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 24px 0 20px;
+  width: 100%;
+  min-width: 0;
+}
+
+.divider::before,
+.divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--border-subtle);
+  min-width: 0;
+}
+
+.label {
+  font-size: 11px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}

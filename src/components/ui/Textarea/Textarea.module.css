@@ -1,0 +1,165 @@
+.wrapper {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.label {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-primary);
+  margin-bottom: 6px;
+}
+
+.textareaWrap {
+  position: relative;
+  display: flex;
+}
+
+.textarea {
+  --pad-x: 12px;
+  width: 100%;
+  background: var(--bg-input);
+  border: 1px solid var(--border-input);
+  border-radius: var(--radius-md);
+  padding: 10px var(--pad-x);
+  color: var(--text-secondary);
+  outline: none;
+  resize: vertical;
+  font-family: inherit;
+  line-height: 1.5;
+  transition:
+    border-color var(--transition-base),
+    background var(--transition-base);
+}
+.textarea:focus-visible {
+  outline: none;
+}
+.textarea::placeholder {
+  color: var(--text-placeholder);
+}
+.textarea:focus {
+  border-color: var(--brand-green);
+}
+.dirty {
+  border-color: var(--status-amber);
+}
+.dirty:focus {
+  border-color: var(--status-amber);
+}
+.textarea:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  resize: none;
+  background: var(--bg-muted);
+}
+.withRightIcon {
+  padding-right: calc(var(--pad-x) + 28px);
+}
+.withRightActions {
+  padding-right: calc(var(--pad-x) + 56px);
+}
+
+/* botão de ação à direita, posicionado no topo-direito */
+.rightBtn {
+  position: absolute;
+  right: 6px;
+  top: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  padding: 3px;
+  border-radius: var(--radius-sm);
+  color: var(--text-placeholder);
+  cursor: pointer;
+  transition: color var(--transition-fast);
+}
+.rightBtn:hover {
+  color: var(--text-secondary);
+}
+.rightStatic {
+  cursor: default;
+  pointer-events: none;
+}
+
+.rightActions {
+  position: absolute;
+  right: 6px;
+  top: 8px;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+.rightActions button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  padding: 3px;
+  border-radius: var(--radius-sm);
+  color: var(--text-placeholder);
+  cursor: pointer;
+  transition: color var(--transition-fast);
+}
+.rightActions button:hover:not(:disabled) {
+  color: var(--text-secondary);
+}
+.rightActions button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.rightActions button[data-variant='primary']:not(:disabled) {
+  color: var(--brand-green);
+}
+.rightActions button[data-variant='primary']:hover:not(:disabled) {
+  color: var(--brand-green);
+  filter: brightness(1.1);
+}
+
+/* Sizes */
+.sm {
+  --pad-x: 10px;
+  min-height: 72px;
+  font-size: 12px;
+}
+.md {
+  --pad-x: 12px;
+  min-height: 96px;
+  font-size: 13px;
+}
+.lg {
+  --pad-x: 14px;
+  min-height: 120px;
+  font-size: 14px;
+}
+
+/* Variants */
+.default {
+  background: var(--bg-input);
+}
+.ghost {
+  background: transparent;
+  border-color: var(--border-default);
+}
+.ghost:focus {
+  border-color: var(--brand-green);
+}
+
+.hasError .textarea {
+  border-color: var(--status-danger);
+}
+
+.hint {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-top: 7px;
+  line-height: 1.6;
+}
+.error {
+  font-size: 12px;
+  color: var(--status-danger);
+  margin-top: 7px;
+}

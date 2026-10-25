@@ -1,0 +1,51 @@
+.panel {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  padding: 18px 20px;
+  border-radius: var(--radius-xl);
+  border: 1px solid color-mix(in srgb, var(--status-danger) 28%, transparent);
+  background: color-mix(in srgb, var(--status-danger) 7%, var(--bg-surface));
+  min-width: 0;
+}
+
+.iconWrap {
+  flex-shrink: 0;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-md);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--status-danger);
+  background: color-mix(in srgb, var(--status-danger) 12%, transparent);
+}
+
+.body {
+  flex: 1;
+  min-width: 0;
+}
+
+.title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 6px;
+}
+
+.description {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--text-muted);
+}
+
+.action {
+  margin-top: 14px;
+}
+
+@media (max-width: 767px) {
+  .panel {
+    flex-direction: column;
+  }
+}

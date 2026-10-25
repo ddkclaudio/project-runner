@@ -1,0 +1,43 @@
+.mark {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 10px 6px 8px;
+  background: color-mix(in srgb, var(--brand-green) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--brand-green) 15%, transparent);
+  border-radius: 8px;
+  max-width: 100%;
+  min-width: 0;
+}
+
+.icon {
+  color: var(--brand-green);
+  flex-shrink: 0;
+}
+
+.name {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--brand-green);
+  letter-spacing: 0.2px;
+}
+
+.badge {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-muted);
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+  padding-left: 7px;
+  margin-left: 3px;
+  border-left: 1px solid var(--border-default);
+  white-space: nowrap;
+}
+
+.md .name {
+  font-size: 14px;
+}
+
+.md {
+  padding: 8px 12px 8px 10px;
+}

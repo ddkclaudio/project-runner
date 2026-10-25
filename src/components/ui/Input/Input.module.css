@@ -1,0 +1,213 @@
+.wrapper {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.labelRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+  min-width: 0;
+}
+
+.label {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-primary);
+  margin: 0;
+}
+
+.labelSpacer {
+  flex: 1;
+  min-width: 0;
+}
+
+.labelAction {
+  flex-shrink: 0;
+  font-size: 12px;
+  line-height: 1;
+}
+
+.labelAction a {
+  font-size: 12px;
+  color: var(--text-muted);
+  text-decoration: none;
+  transition: color var(--transition-fast);
+}
+
+.labelAction a:hover {
+  color: var(--brand-green);
+}
+
+.inputWrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.icon {
+  position: absolute;
+  left: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  align-items: center;
+  color: var(--text-placeholder);
+  pointer-events: none;
+}
+
+.input {
+  --pad-x: 12px;
+  width: 100%;
+  background: var(--bg-input);
+  border: 1px solid var(--border-input);
+  border-radius: var(--radius-md);
+  padding: 0 var(--pad-x);
+  color: var(--text-secondary);
+  outline: none;
+  transition:
+    border-color var(--transition-base),
+    background var(--transition-base);
+}
+.input:focus-visible {
+  outline: none;
+}
+.input::placeholder {
+  color: var(--text-placeholder);
+}
+.input:focus {
+  border-color: var(--brand-green);
+}
+/* Campo editado pelo usuário mas ainda não salvo, borda âmbar */
+.dirty {
+  border-color: var(--status-amber);
+}
+.dirty:focus {
+  border-color: var(--status-amber);
+}
+.input:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  background: var(--bg-muted);
+}
+/* quando há ícone, abre espaço à esquerda preservando o padding horizontal da direita */
+.withIcon {
+  padding-left: calc(var(--pad-x) + 22px);
+}
+/* quando há ação à direita (limpar/ícone), abre espaço à direita */
+.withRightIcon {
+  padding-right: calc(var(--pad-x) + 22px);
+}
+.withRightActions {
+  padding-right: calc(var(--pad-x) + 56px);
+}
+
+.rightActions {
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+.rightActions button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  padding: 3px;
+  border-radius: var(--radius-sm);
+  color: var(--text-placeholder);
+  cursor: pointer;
+  transition: color var(--transition-fast);
+}
+.rightActions button:hover:not(:disabled) {
+  color: var(--text-secondary);
+}
+.rightActions button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.rightActions button[data-variant='primary']:not(:disabled) {
+  color: var(--brand-green);
+}
+.rightActions button[data-variant='primary']:hover:not(:disabled) {
+  color: var(--brand-green);
+  filter: brightness(1.1);
+}
+
+/* botão de ação à direita (limpar ou ícone custom) */
+.rightBtn {
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  padding: 3px;
+  border-radius: var(--radius-sm);
+  color: var(--text-placeholder);
+  cursor: pointer;
+  transition: color var(--transition-fast);
+}
+.rightBtn:hover {
+  color: var(--text-secondary);
+}
+/* variante não clicável (apenas decorativa) */
+.rightStatic {
+  cursor: default;
+  pointer-events: none;
+}
+
+/* Sizes */
+.sm {
+  --pad-x: 10px;
+  height: 30px;
+  font-size: 12px;
+}
+.md {
+  --pad-x: 12px;
+  height: 38px;
+  font-size: 13px;
+}
+.lg {
+  --pad-x: 14px;
+  height: 44px;
+  font-size: 14px;
+}
+
+/* Variants */
+.default {
+  background: var(--bg-input);
+}
+.ghost {
+  background: transparent;
+  border-color: var(--border-default);
+}
+.ghost:focus {
+  border-color: var(--brand-green);
+}
+
+.hasError .input {
+  border-color: var(--status-danger);
+}
+
+.hint {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-top: 7px;
+  line-height: 1.6;
+}
+.error {
+  font-size: 12px;
+  color: var(--status-danger);
+  margin-top: 7px;
+}

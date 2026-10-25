@@ -1,0 +1,77 @@
+.root {
+  position: relative;
+  display: inline-flex;
+}
+
+.panel {
+  position: fixed;
+  z-index: var(--z-dropdown);
+  max-width: calc(100vw - 16px);
+  max-height: min(70vh, 400px);
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-dropdown);
+  padding: var(--space-1) 0;
+  animation: menuIn 90ms ease;
+  box-sizing: border-box;
+}
+
+@keyframes menuIn {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+}
+
+.headerInfo {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.headerName {
+  font-size: var(--font-md);
+  font-weight: 600;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.headerEmail {
+  font-size: var(--font-base);
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.separator {
+  height: 1px;
+  background: var(--border-subtle);
+  margin: var(--space-1) 0;
+}
+
+.sectionLabel {
+  padding: var(--space-2) var(--space-4) var(--space-1);
+  font-size: var(--font-xs);
+  font-weight: 600;
+  letter-spacing: 0.6px;
+  color: var(--text-placeholder);
+  text-transform: uppercase;
+}

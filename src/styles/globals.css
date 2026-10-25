@@ -1,0 +1,331 @@
+/* ── Reset ──────────────────────────────────────────────────────────────────── */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+html {
+  font-size: 16px;
+}
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  background: var(--bg-base);
+  color: var(--text-primary);
+  -webkit-font-smoothing: antialiased;
+}
+button,
+input,
+select,
+textarea {
+  font-family: inherit;
+}
+a {
+  text-decoration: none;
+  color: inherit;
+}
+
+/* ── Design Tokens ──────────────────────────────────────────────────────────── */
+:root {
+  /* Background */
+  --bg-base: #171717;
+  --bg-elevated: #1a1a1a;
+  --bg-surface: #1e1e1e;
+  --bg-overlay: #1c1c1c;
+  --bg-muted: #252525;
+  --bg-input: #2a2a2a;
+  --bg-hover: #262626;
+  --bg-active: #252525;
+  /* Compatibility aliases used by older feature styles. */
+  --bg-primary: #171717;
+  --bg-subtle: #1e1e1e;
+
+  /* Borders */
+  --border-subtle: #242424;
+  --border-default: #2c2c2c;
+  --border-input: #3a3a3a;
+  --border-hover: #4a4a4a;
+  --border-strong: #4a4a4a;
+
+  /* Text */
+  --text-primary: #ffffff;
+  --text-secondary: #cfcfcf;
+  --text-muted: #8a8a8a;
+  --text-placeholder: #6a6a6a;
+  --text-disabled: #555555;
+
+  /* Brand */
+  --brand-green: #3ecf8e;
+  /* #29855e: contraste ≥4.5:1 com texto branco (WCAG AA / pa11y) */
+  --brand-green-dark: #29855e;
+  --brand-green-hover: #247a55;
+  --brand-green-bg: #0e3326;
+
+  /* Status */
+  --status-healthy: #3ecf8e;
+  --status-healthy-bg: #0e3326;
+  --status-healthy-border: #1f6b4c;
+  --status-healthy-hover: #104432;
+  --status-amber: #d4920a;
+  --status-amber-bg: #3d2e0a;
+  --status-amber-border: #5a4010;
+  --status-amber-hover: #4a380c;
+  --status-info: #60a5fa;
+  --status-info-bg: #102a4a;
+  --status-info-border: #1d4f83;
+  --status-info-hover: #16375f;
+  --status-danger: #f87171;
+  --status-danger-bg: #3f0e0e;
+  --status-danger-border: #6b1a1a;
+  --status-danger-hover: #4a1111;
+
+  /* Layout */
+  --page-max-width: 1168px;
+  --sidebar-width-collapsed: 44px;
+  --sidebar-width-expanded: 190px;
+  --sidebar-secondary-width: 200px;
+  --main-padding-x: 28px;
+  --main-padding-y: 32px;
+
+  /* Breakpoints (reference, use in @media)
+     mobile:  ≤767px
+     tablet:  768–1099px
+     desktop: 1100–1599px
+     ultrawide: ≥1600px */
+
+  /* Topbar */
+  --topbar-height: 40px;
+  --topbar-bg: #181818;
+
+  /* Radius */
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --radius-xl: 10px;
+
+  /* Spacing scale */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-7: 28px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+  --space-16: 64px;
+
+  /* Typography scale */
+  --font-xs: 10px;
+  --font-sm: 11px;
+  --font-base: 12px;
+  --font-md: 13px;
+  --font-lg: 15px;
+  --font-xl: 17px;
+  --font-2xl: 22px;
+  --font-3xl: 24px;
+
+  /* Z-index scale
+   * Dropdowns/menus portaled (Select, Autocomplete, ContextMenu…) precisam
+   * ficar ACIMA do modal, senão abrem atrás do overlay em formulários.
+   * Toast permanece no topo. */
+  --z-base: 0;
+  --z-raised: 1;
+  --z-sidebar: 100;
+  --z-sticky: 200;
+  --z-modal: 1000;
+  --z-dropdown: 1100;
+  --z-toast: 1500;
+
+  /* Shadows */
+  --shadow-dropdown: 0 8px 24px rgba(0, 0, 0, 0.5);
+  --shadow-tooltip: 0 12px 32px rgba(0, 0, 0, 0.6);
+  --shadow-modal: 0 16px 48px rgba(0, 0, 0, 0.6);
+  --shadow-drawer: -8px 0 32px rgba(0, 0, 0, 0.35);
+  --shadow-card:
+    0 0 0 1px rgba(255, 255, 255, 0.03), 0 20px 60px rgba(0, 0, 0, 0.45),
+    0 8px 20px rgba(0, 0, 0, 0.3);
+
+  /* Overlays / scrims */
+  --overlay-scrim: rgba(0, 0, 0, 0.65);
+  --overlay-scrim-soft: rgba(0, 0, 0, 0.45);
+
+  /* Text on brand surfaces (bright green chip/button) */
+  --text-on-brand: #0a0a0a;
+  --text-on-accent: #ffffff;
+
+  /* Transitions */
+  --transition-fast: 120ms ease;
+  --transition-base: 150ms ease;
+  --transition-slow: 200ms ease;
+
+  /* Flow canvas */
+  --bg-canvas: #161616;
+  --canvas-dot: #4a4a4a;
+  --edge-stroke: #555555;
+}
+
+/* Light theme (data-theme set by boot script + ThemeBootstrap) */
+html[data-theme='light'] {
+  /* Neutral page ground, with white cards and gentle green-tinted interaction states. */
+  --bg-base: #f6f7f7;
+  --bg-elevated: #ffffff;
+  --bg-surface: #fdfefe;
+  --bg-overlay: #fbfcfb;
+  --bg-muted: #eef1ef;
+  --bg-input: #ffffff;
+  --bg-hover: #f1f5f2;
+  --bg-active: #e5eee8;
+  --bg-primary: #f6f7f7;
+  --bg-subtle: #f8faf8;
+
+  --border-subtle: #e2e7e4;
+  --border-default: #d2dbd6;
+  --border-input: #c1cdc6;
+  --border-hover: #a4b4aa;
+  --border-strong: #8fa298;
+
+  --text-primary: #18211d;
+  --text-secondary: #3f4b45;
+  --text-muted: #637169;
+  --text-placeholder: #89948e;
+  --text-disabled: #aab5ae;
+
+  /* Brand green stays company identity (#3ecf8e). Dark/hover variants are for
+     buttons/text-on-green contrast; only the soft bg tint changes for light. */
+  --brand-green: #3ecf8e;
+  --brand-green-dark: #29855e;
+  --brand-green-hover: #247a55;
+  --brand-green-bg: #e4f5eb;
+
+  --status-healthy: #3ecf8e;
+  --status-healthy-bg: #e4f5eb;
+  --status-healthy-border: #b9ddc8;
+  --status-healthy-hover: #d4eddf;
+  --status-amber: #a66000;
+  --status-amber-bg: #fff5dc;
+  --status-amber-border: #f0d294;
+  --status-amber-hover: #ffebbd;
+  --status-info: #2563eb;
+  --status-info-bg: #eaf2ff;
+  --status-info-border: #bfd5fa;
+  --status-info-hover: #dce9ff;
+
+  --status-danger: #c62828;
+  --status-danger-bg: #fff0ef;
+  --status-danger-border: #f5c7c3;
+  --status-danger-hover: #ffe2df;
+
+  --topbar-bg: #ffffff;
+
+  --shadow-dropdown: 0 10px 28px rgba(24, 33, 29, 0.1);
+  --shadow-tooltip: 0 14px 36px rgba(24, 33, 29, 0.14);
+  --shadow-modal: 0 16px 48px rgba(24, 33, 29, 0.12);
+  --shadow-drawer: -8px 0 32px rgba(24, 33, 29, 0.1);
+  --shadow-card:
+    0 1px 2px rgba(24, 33, 29, 0.04), 0 8px 24px rgba(24, 33, 29, 0.06),
+    0 20px 48px rgba(24, 33, 29, 0.08);
+
+  --overlay-scrim: rgba(24, 33, 29, 0.4);
+  --overlay-scrim-soft: rgba(24, 33, 29, 0.28);
+
+  --text-on-brand: #0a0a0a;
+  --text-on-accent: #ffffff;
+
+  --bg-canvas: #f1f4f2;
+  --canvas-dot: #b6c2ba;
+  --edge-stroke: #95a69c;
+}
+
+/* Classic dark, slightly cooler / higher contrast than default dark */
+html[data-theme='classic-dark'] {
+  --bg-base: #0f0f0f;
+  --bg-elevated: #141414;
+  --bg-surface: #181818;
+  --bg-overlay: #161616;
+  --bg-muted: #222222;
+  --bg-input: #1f1f1f;
+  --bg-hover: #242424;
+  --bg-active: #2a2a2a;
+  --bg-primary: #0f0f0f;
+  --bg-subtle: #181818;
+
+  --border-subtle: #1f1f1f;
+  --border-default: #2a2a2a;
+  --border-input: #333333;
+  --border-hover: #444444;
+  --border-strong: #444444;
+
+  --topbar-bg: #121212;
+
+  --status-info: #60a5fa;
+  --status-info-bg: #102a4a;
+
+  --bg-canvas: #0c0c0c;
+  --canvas-dot: #3a3a3a;
+  --edge-stroke: #4a4a4a;
+}
+
+/* ── Scrollbar ────────────────────────────────────────────────────────────────*/
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--text-muted) 45%, transparent);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--text-muted) 65%, transparent);
+}
+
+/* ── Focus visible ────────────────────────────────────────────────────────────*/
+:focus-visible {
+  outline: 2px solid var(--brand-green);
+  outline-offset: 2px;
+}
+
+/*
+ * Campos de formulário já marcam foco com border-color (Input/Textarea/etc.).
+ * Sem este override, o outline global empilha com a borda → “borda dupla”
+ * (regra :focus-visible desde eeb457e; outline:none dos módulos perde na cascata).
+ */
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible {
+  outline: none;
+}
+
+/* ── Responsive layout tokens ─────────────────────────────────────────────────*/
+@media (max-width: 1099px) {
+  :root {
+    --main-padding-x: 20px;
+    --main-padding-y: 24px;
+  }
+
+  /* Bloqueia pinch-zoom da página; scroll vertical/horizontal continua ok.
+     O FlowCanvas usa touch-action: none e controla o zoom internamente. */
+  html,
+  body {
+    touch-action: pan-x pan-y;
+  }
+}
+
+@media (max-width: 767px) {
+  :root {
+    --main-padding-x: 12px;
+    --main-padding-y: 16px;
+    --sidebar-width-collapsed: 0px;
+  }
+}
+
+@media (min-width: 1600px) {
+  :root {
+    --page-max-width: 1400px;
+  }
+}

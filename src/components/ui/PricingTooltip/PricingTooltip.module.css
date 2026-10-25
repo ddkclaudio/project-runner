@@ -1,0 +1,161 @@
+.wrapper {
+  position: relative;
+  display: inline-flex;
+  flex-shrink: 0;
+}
+
+.trigger {
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  color: var(--text-disabled);
+  display: flex;
+  align-items: center;
+  padding: 0;
+  transition: color var(--transition-base);
+}
+
+.trigger:hover {
+  color: var(--text-muted);
+}
+
+.tooltip {
+  position: fixed;
+  width: min(340px, calc(100vw - 24px));
+  max-width: calc(100vw - 24px);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-xl);
+  padding: 16px;
+  z-index: var(--z-dropdown);
+  box-shadow: var(--shadow-tooltip);
+  box-sizing: border-box;
+}
+
+.description {
+  font-size: 12px;
+  color: var(--text-muted);
+  line-height: 1.6;
+  margin-bottom: 14px;
+}
+
+.link {
+  color: var(--text-secondary);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.table th {
+  font-size: 10px;
+  letter-spacing: 0.8px;
+  color: var(--text-disabled);
+  font-weight: 500;
+  text-align: left;
+  padding: 6px 0 8px;
+  border-bottom: 1px solid var(--border-default);
+}
+
+.table th:last-child {
+  text-align: right;
+}
+
+.table td {
+  font-size: 13px;
+  color: var(--text-secondary);
+  padding: 10px 0;
+  border-bottom: 1px solid var(--border-subtle);
+  vertical-align: middle;
+}
+
+.table td:last-child {
+  text-align: right;
+}
+
+.newRow td {
+  color: var(--text-primary);
+}
+
+.newBadge {
+  margin-left: 6px;
+}
+
+.creditsRow td {
+  font-size: 10px;
+  letter-spacing: 0.7px;
+  color: var(--text-disabled);
+  padding: 10px 0 8px;
+  border-bottom: 1px solid var(--border-subtle);
+  text-transform: uppercase;
+}
+
+.creditsRow td:last-child {
+  font-size: 13px;
+  color: var(--text-placeholder);
+  text-align: right;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.totalRow td {
+  padding: 12px 0 2px;
+  border-bottom: none;
+}
+
+.totalLabel {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.totalSub {
+  font-size: 11px;
+  color: var(--text-disabled);
+  margin-top: 2px;
+}
+
+.totalValue {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text-primary);
+  text-align: right;
+  vertical-align: top;
+}
+
+.featureDetail {
+  font-size: 11px;
+  color: var(--text-placeholder);
+  white-space: nowrap;
+}
+
+.featureStatus {
+  text-align: right;
+}
+
+.iconOn {
+  color: var(--brand-green);
+  display: block;
+  margin-left: auto;
+}
+
+.iconOff {
+  color: var(--border-hover);
+  display: block;
+  margin-left: auto;
+}
+
+@media (max-width: 767px) {
+  .table th,
+  .table td {
+    font-size: 11px;
+  }
+
+  .featureDetail {
+    white-space: normal;
+  }
+}

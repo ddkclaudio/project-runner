@@ -1,0 +1,98 @@
+.shell {
+  display: flex;
+  flex-direction: column;
+  height: 100dvh;
+  background: var(--bg-base);
+  overflow: hidden;
+}
+
+.body {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+  position: relative;
+  min-height: 0;
+}
+
+.main {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: var(--main-padding-y) var(--main-padding-x) 60px;
+  min-width: 0;
+}
+
+/* Inbox/conversas: sem folga vertical extra */
+.mainTight {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 0 var(--main-padding-x) 0;
+  min-width: 0;
+}
+
+/* canvas routes (agentes), sem padding, overflow hidden, altura 100% */
+.mainCanvas {
+  flex: 1;
+  overflow: hidden;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+/* viewer de asset, preenche a área sem scroll da página */
+.mainFill {
+  flex: 1;
+  overflow: hidden;
+  padding: var(--main-padding-y) var(--main-padding-x);
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.backdrop {
+  display: none;
+}
+
+/* Chip de contexto mobile, montado no shell (não desmonta ao trocar topbar) */
+.mobileContextHost {
+  display: none;
+}
+
+@media (max-width: 767px) {
+  .body {
+    flex-direction: column;
+  }
+
+  .backdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    top: var(--topbar-height);
+    background: var(--overlay-scrim-soft);
+    z-index: calc(var(--z-modal) - 1);
+    border: none;
+    padding: 0;
+    cursor: pointer;
+  }
+
+  .mobileContextHost {
+    display: flex;
+    position: fixed;
+    top: 0;
+    left: calc((100% - 58%) / 2);
+    width: 58%;
+    height: var(--topbar-height);
+    z-index: calc(var(--z-sticky) + 1);
+    align-items: center;
+    justify-content: center;
+    pointer-events: none;
+  }
+
+  /* Só o chip fica no host; o sheet abre via portal no body */
+  .mobileContextHost > button {
+    pointer-events: auto;
+    width: 100%;
+  }
+}

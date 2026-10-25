@@ -1,0 +1,132 @@
+.inner {
+  padding: 32px 32px 36px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  min-width: 0;
+}
+
+.brand {
+  align-self: flex-start;
+  margin-bottom: 20px;
+}
+
+.hero {
+  position: relative;
+  width: 100%;
+  height: 100px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 4px;
+}
+
+.codeGlow {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: clamp(72px, 18vw, 96px);
+  font-weight: 800;
+  letter-spacing: -0.06em;
+  line-height: 1;
+  user-select: none;
+  pointer-events: none;
+  opacity: 0.22;
+  animation: floatIn 0.4s ease both;
+}
+
+@keyframes floatIn {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 0.22;
+    transform: translateY(0);
+  }
+}
+
+.green .codeGlow {
+  color: var(--brand-green);
+}
+
+.amber .codeGlow {
+  color: var(--status-amber);
+}
+
+.red .codeGlow {
+  color: var(--status-danger);
+}
+
+.title {
+  margin: 8px 0 0;
+  font-size: 22px;
+  font-weight: 600;
+  color: var(--text-primary);
+  letter-spacing: -0.45px;
+  line-height: 1.25;
+}
+
+.description {
+  margin: 10px 0 0;
+  font-size: 14px;
+  color: var(--text-muted);
+  line-height: 1.55;
+  max-width: 320px;
+}
+
+.primaryCta {
+  margin-top: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 40px;
+  padding: 0 18px;
+  border: none;
+  border-radius: var(--radius-md);
+  background: var(--brand-green-dark);
+  color: var(--text-on-accent);
+  font-size: 14px;
+  font-weight: 500;
+  font-family: inherit;
+  text-decoration: none;
+  cursor: pointer;
+  transition:
+    background var(--transition-base),
+    transform 80ms ease;
+}
+
+.primaryCta:hover {
+  background: var(--brand-green-hover);
+}
+
+.primaryCta:active {
+  transform: scale(0.98);
+}
+
+.countdown {
+  margin: 14px 0 0;
+  font-size: 12px;
+  color: var(--text-muted);
+  letter-spacing: 0.02em;
+}
+
+@media (max-width: 767px) {
+  .inner {
+    padding: 24px 20px 28px;
+  }
+
+  .hero {
+    height: 84px;
+  }
+
+  .codeGlow {
+    font-size: 72px;
+  }
+
+  .title {
+    font-size: 20px;
+  }
+}

@@ -1,0 +1,58 @@
+.alert {
+  margin-bottom: 18px;
+  padding: 11px 14px;
+  border-radius: var(--radius-md);
+  font-size: 13px;
+  line-height: 1.45;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  min-width: 0;
+}
+
+.icon {
+  flex-shrink: 0;
+  display: inline-flex;
+  margin-top: 1px;
+}
+
+.content {
+  min-width: 0;
+  flex: 1;
+}
+
+.error {
+  background: color-mix(in srgb, var(--status-danger) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--status-danger) 25%, transparent);
+  color: var(--status-danger);
+}
+
+.error:not(:has(.icon))::before {
+  content: '⚠';
+  font-size: 12px;
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+.success {
+  background: color-mix(in srgb, var(--brand-green) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--brand-green) 20%, transparent);
+  color: var(--brand-green);
+}
+
+.warning {
+  background: color-mix(in srgb, var(--status-amber) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--status-amber) 25%, transparent);
+  color: var(--text-secondary);
+}
+
+.info {
+  background: color-mix(in srgb, var(--status-info) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--status-info) 25%, transparent);
+  color: var(--status-info);
+}
+
+.content code {
+  font-size: 12px;
+  opacity: 0.9;
+}

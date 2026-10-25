@@ -1,0 +1,164 @@
+.canvas {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  min-height: 280px;
+  background: var(--bg-canvas);
+  overflow: hidden;
+  /* Garante que o pinch fica no React Flow, não no browser */
+  touch-action: none;
+}
+
+.canvasFill {
+  position: absolute;
+  inset: 0;
+}
+
+.canvasLoading {
+  display: flex;
+  flex-direction: column;
+  touch-action: auto;
+}
+
+.skeleton {
+  flex: 1;
+  min-height: 0;
+  height: 100%;
+}
+
+.canvas :global(.react-flow),
+.canvas :global(.react-flow__pane),
+.canvas :global(.react-flow__viewport),
+.canvas :global(.react-flow__renderer) {
+  touch-action: none;
+}
+
+.canvas :global(.react-flow) {
+  background: var(--bg-canvas);
+}
+
+/* ── React Flow overrides ──────────────────────────────────────────────────── */
+.canvas :global(.react-flow__background) {
+  background: var(--bg-canvas);
+}
+
+.canvas :global(.react-flow__background pattern circle) {
+  fill: var(--canvas-dot);
+}
+
+.canvas :global(.react-flow__controls) {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  box-shadow: none;
+}
+
+.canvas :global(.react-flow__controls-button) {
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid var(--border-subtle);
+  color: var(--text-muted);
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition:
+    background var(--transition-fast),
+    color var(--transition-fast);
+}
+
+.canvas :global(.react-flow__controls-button):last-child {
+  border-bottom: none;
+}
+
+.canvas :global(.react-flow__controls-button):hover {
+  background: var(--bg-active);
+  color: var(--text-primary);
+}
+
+.canvas :global(.react-flow__controls-button svg) {
+  fill: currentColor;
+}
+
+.canvas :global(.react-flow__controls-button svg.tabler-icon) {
+  fill: none;
+  stroke: currentColor;
+}
+
+.canvas :global(.react-flow__edge-path) {
+  stroke: var(--edge-stroke);
+  stroke-width: 2;
+}
+
+.canvas :global(.react-flow__edge.selected .react-flow__edge-path),
+.canvas :global(.react-flow__edge:hover .react-flow__edge-path) {
+  stroke: var(--brand-green);
+  stroke-width: 2.5;
+}
+
+/* Default node types (demo / generic) */
+.canvas :global(.react-flow__node-default),
+.canvas :global(.react-flow__node-input),
+.canvas :global(.react-flow__node-output) {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-lg);
+  color: var(--text-primary);
+  font-size: 12px;
+  font-weight: 500;
+  padding: 10px 14px;
+  box-shadow: none;
+}
+
+.canvas :global(.react-flow__node-default.selected),
+.canvas :global(.react-flow__node-input.selected),
+.canvas :global(.react-flow__node-output.selected) {
+  border-color: var(--brand-green);
+  box-shadow: 0 0 0 1px var(--brand-green);
+}
+
+/* Caixa de seleção (arrastar no fundo) e retângulo em volta da seleção */
+.canvas :global(.react-flow__selection),
+.canvas :global(.react-flow__nodesselection-rect) {
+  background: color-mix(in srgb, var(--brand-green) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--brand-green) 60%, transparent);
+  border-radius: var(--radius-sm);
+}
+
+.canvas :global(.react-flow__nodesselection-rect) {
+  cursor: grab;
+}
+
+.canvas :global(.react-flow__handle) {
+  background: var(--brand-green);
+  border: none;
+  width: 8px;
+  height: 8px;
+}
+
+.zoomLabel {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  padding: 3px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+  user-select: none;
+}
+
+.empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  pointer-events: none;
+}

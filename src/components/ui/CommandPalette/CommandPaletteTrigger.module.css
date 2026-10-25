@@ -1,0 +1,55 @@
+.trigger {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  padding: 3px 8px;
+  cursor: pointer;
+  background: transparent;
+  font-family: inherit;
+  transition:
+    border-color var(--transition-base),
+    background var(--transition-base);
+}
+
+.trigger:hover {
+  border-color: var(--border-input);
+  background: var(--bg-elevated);
+}
+
+.icon {
+  color: var(--text-placeholder);
+  flex-shrink: 0;
+}
+
+.text {
+  font-size: var(--font-sm);
+  color: var(--text-placeholder);
+}
+
+.kbd {
+  font-size: var(--font-sm);
+  color: var(--text-placeholder);
+  background: var(--bg-muted);
+  border-radius: var(--radius-sm);
+  padding: 0 4px;
+  font-family: inherit;
+}
+
+@media (max-width: 1099px) {
+  .text,
+  .kbd {
+    display: none;
+  }
+
+  .trigger {
+    padding: 4px 6px;
+  }
+}
+
+@media (max-width: 767px) {
+  .trigger.hideOnMobile {
+    display: none;
+  }
+}

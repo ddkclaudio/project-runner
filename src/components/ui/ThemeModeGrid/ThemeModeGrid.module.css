@@ -1,0 +1,170 @@
+.grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  flex: 1;
+  min-width: 0;
+}
+
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px;
+  background: transparent;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  text-align: left;
+  font-family: inherit;
+  transition:
+    border-color var(--transition-fast),
+    background var(--transition-fast);
+}
+
+.card:hover {
+  border-color: var(--border-hover);
+  background: var(--bg-hover);
+}
+
+.selected {
+  border-color: var(--brand-green);
+  background: color-mix(in srgb, var(--brand-green) 6%, transparent);
+}
+
+.preview {
+  display: flex;
+  height: 72px;
+  border-radius: 6px;
+  overflow: hidden;
+  border: 1px solid var(--border-subtle);
+}
+
+.previewLight {
+  background: #f4f4f5;
+}
+
+.previewDark {
+  background: #141414;
+}
+
+.prevSidebar {
+  width: 22%;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 6px;
+  border-right: 1px solid color-mix(in srgb, currentColor 12%, transparent);
+}
+
+.previewLight .prevSidebar {
+  background: #e8e8ea;
+  color: #a1a1aa;
+}
+
+.previewDark .prevSidebar {
+  background: #0f0f0f;
+  color: #52525b;
+}
+
+.prevSidebar span {
+  display: block;
+  height: 3px;
+  border-radius: 2px;
+  background: currentColor;
+  opacity: 0.7;
+}
+
+.prevMain {
+  flex: 1;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.prevTabs {
+  display: flex;
+  gap: 4px;
+}
+
+.prevTabs i {
+  width: 14px;
+  height: 4px;
+  border-radius: 2px;
+  background: currentColor;
+  opacity: 0.35;
+}
+
+.previewLight .prevMain {
+  color: #71717a;
+}
+
+.previewDark .prevMain {
+  color: #71717a;
+}
+
+.prevLine {
+  height: 4px;
+  border-radius: 2px;
+  background: currentColor;
+  opacity: 0.45;
+  width: 80%;
+}
+
+.prevRow {
+  display: flex;
+  gap: 4px;
+}
+
+.prevRow i {
+  flex: 1;
+  height: 14px;
+  border-radius: 3px;
+  background: currentColor;
+  opacity: 0.2;
+}
+
+.option {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  padding: 0 2px 2px;
+}
+
+.radioDot {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 1.5px solid var(--border-strong, var(--border-default));
+  flex-shrink: 0;
+  position: relative;
+}
+
+.radioChecked {
+  border-color: var(--brand-green);
+}
+
+.radioChecked::after {
+  content: '';
+  position: absolute;
+  inset: 2.5px;
+  border-radius: 50%;
+  background: var(--brand-green);
+}
+
+@media (max-width: 767px) {
+  .grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (min-width: 768px) and (max-width: 1099px) {
+  .grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}

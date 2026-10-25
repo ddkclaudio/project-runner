@@ -1,0 +1,90 @@
+.overlay {
+  position: fixed;
+  inset: 0;
+  background: var(--overlay-scrim-soft);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: min(12vh, 48px) 12px 12px;
+  z-index: var(--z-modal);
+  animation: fadeIn 80ms ease;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.panel {
+  width: 100%;
+  max-width: 560px;
+  max-height: min(80vh, 640px);
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-xl);
+  overflow: hidden;
+  box-shadow: var(--shadow-tooltip);
+  animation: slideDown 100ms ease;
+}
+
+@keyframes slideDown {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.inputRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.inputIcon {
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.input {
+  flex: 1;
+  background: transparent;
+  border: none;
+  outline: none;
+  font-size: var(--font-md);
+  color: var(--text-secondary);
+  font-family: inherit;
+}
+
+.input::placeholder {
+  color: var(--text-placeholder);
+}
+
+.list {
+  flex: 1;
+  min-height: 0;
+  max-height: min(320px, 50vh);
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  padding: var(--space-1) 0;
+}
+
+.empty {
+  padding: var(--space-10) var(--space-4);
+  font-size: var(--font-base);
+  color: var(--text-muted);
+  text-align: center;
+}

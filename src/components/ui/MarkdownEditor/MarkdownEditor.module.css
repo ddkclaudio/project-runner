@@ -1,0 +1,518 @@
+.root {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid var(--border-input);
+  border-radius: var(--radius-md);
+  background: var(--bg-input);
+  overflow: visible;
+  transition:
+    border-color var(--transition-fast),
+    opacity var(--transition-base),
+    background var(--transition-base);
+}
+
+.root:focus-within {
+  border-color: var(--border-hover);
+}
+
+/* Alinha ao Input/Textarea :disabled, readOnly sem visual de campo editável */
+.readOnly {
+  opacity: 0.5;
+  cursor: not-allowed;
+  background: var(--bg-muted);
+}
+
+.readOnly:focus-within {
+  border-color: var(--border-input);
+}
+
+.readOnly :global(.mdxeditor),
+.readOnly :global([contenteditable]),
+.readOnly :global(.mdxeditor-root-contenteditable) {
+  cursor: not-allowed;
+}
+
+.loading {
+  width: 100%;
+  min-height: var(--mdx-min-height, 220px);
+  border: 1px solid var(--border-input);
+  border-radius: var(--radius-md);
+  background: var(--bg-input);
+  background-image: linear-gradient(
+    90deg,
+    transparent,
+    color-mix(in srgb, var(--bg-hover) 70%, transparent),
+    transparent
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.2s ease-in-out infinite;
+}
+
+@keyframes shimmer {
+  0% {
+    background-position: 100% 0;
+  }
+  100% {
+    background-position: -100% 0;
+  }
+}
+
+/*
+ * Tokens Radix do MDXEditor → Nexus.
+ * Importante: menus Radix portalam para o body e NÃO herdam vars deste nó:
+ * por isso dropdowns usam vars globais do html (abaixo).
+ */
+.editor {
+  --accentBase: var(--brand-green-bg);
+  --accentBgSubtle: var(--brand-green-bg);
+  --accentBg: color-mix(in srgb, var(--brand-green) 16%, var(--bg-surface));
+  --accentBgHover: color-mix(in srgb, var(--brand-green) 22%, var(--bg-hover));
+  --accentBgActive: color-mix(in srgb, var(--brand-green) 28%, var(--bg-active));
+  --accentLine: color-mix(in srgb, var(--brand-green) 35%, var(--border-default));
+  --accentBorder: color-mix(in srgb, var(--brand-green) 45%, var(--border-input));
+  --accentBorderHover: color-mix(in srgb, var(--brand-green) 60%, var(--border-hover));
+  --accentSolid: var(--brand-green-dark);
+  --accentSolidHover: var(--brand-green-hover);
+  --accentText: var(--brand-green);
+  --accentTextContrast: var(--text-secondary);
+
+  --basePageBg: var(--bg-elevated);
+  --baseBase: var(--bg-base);
+  --baseBgSubtle: var(--bg-surface);
+  --baseBg: var(--bg-hover);
+  --baseBgHover: var(--bg-hover);
+  --baseBgActive: var(--bg-active);
+  --baseLine: var(--border-subtle);
+  --baseBorder: var(--border-input);
+  --baseBorderHover: var(--border-hover);
+  --baseSolid: var(--text-muted);
+  --baseSolidHover: var(--text-secondary);
+  --baseText: var(--text-secondary);
+  --baseTextContrast: var(--text-secondary);
+
+  /* Tipografia alinhada ao Nexus (MDXEditor usa --font-body / --text-*) */
+  --font-body: inherit;
+  --font-mono:
+    ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New',
+    monospace;
+  --text-xxs: var(--font-xs);
+  --text-xs: var(--font-sm);
+  --text-sm: var(--font-base);
+  --text-base: var(--font-md);
+  --text-lg: var(--font-lg);
+
+  color: var(--text-secondary) !important;
+  font-family: inherit !important;
+  font-size: var(--font-base);
+  font-weight: 400;
+  line-height: 1.5;
+  letter-spacing: normal;
+  background: var(--bg-input) !important;
+  border-radius: var(--radius-md);
+}
+
+.editorDark {
+  color-scheme: dark;
+}
+
+.editorLight {
+  color-scheme: light;
+}
+
+.editor :global(.mdxeditor-toolbar) {
+  position: sticky !important;
+  /* Compensa o padding-top do .main para colar logo abaixo do topbar */
+  top: calc(-1 * var(--main-padding-y, 32px)) !important;
+  z-index: 30;
+  background: var(--bg-surface) !important;
+  border-bottom: 1px solid var(--border-subtle);
+  flex-wrap: wrap;
+  gap: 2px;
+  padding: 6px 8px;
+  color: var(--text-primary) !important;
+  font-family: inherit !important;
+  font-size: var(--font-base) !important;
+  font-weight: 400 !important;
+  /* Evita ver o conteúdo atravessando a toolbar ao scrollar */
+  box-shadow: 0 8px 16px color-mix(in srgb, var(--bg-base) 55%, transparent);
+}
+
+.editor :global(.mdxeditor-toolbar button),
+.editor :global(.mdxeditor-toolbar [role='button']),
+.editor :global(.mdxeditor-toolbar [data-toolbar-item]),
+.editor :global(.mdxeditor-toolbar [class*='selectTrigger']),
+.editor :global(.mdxeditor-toolbar [class*='SelectTrigger']) {
+  color: var(--text-primary) !important;
+  background-color: transparent !important;
+  font-family: inherit !important;
+  font-size: var(--font-base) !important;
+  font-weight: 400 !important;
+}
+
+.editor :global(.mdxeditor-toolbar [class*='selectTrigger']),
+.editor :global(.mdxeditor-toolbar [class*='SelectTrigger']),
+.editor :global(.mdxeditor-toolbar [class*='NodeKindSelectTrigger']) {
+  background-color: var(--bg-elevated) !important;
+  border: 1px solid var(--border-subtle) !important;
+  border-radius: var(--radius-md) !important;
+}
+
+.editor :global(.mdxeditor-toolbar svg) {
+  color: inherit !important;
+  opacity: 1;
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  display: block;
+}
+
+.editor :global(.mdxeditor-toolbar [class*='toolbarToggleItem']),
+.editor :global(.mdxeditor-toolbar [class*='ToolbarToggleItem']),
+.editor :global(.mdxeditor-toolbar [class*='toolbarButton']),
+.editor :global(.mdxeditor-toolbar [class*='ToolbarButton']) {
+  color: var(--text-secondary) !important;
+  padding: 4px !important;
+  border-radius: var(--radius-md) !important;
+}
+
+.editor :global(.mdxeditor-toolbar [class*='toolbarToggleItem']:hover),
+.editor :global(.mdxeditor-toolbar [class*='ToolbarToggleItem']:hover),
+.editor :global(.mdxeditor-toolbar [class*='toolbarButton']:hover),
+.editor :global(.mdxeditor-toolbar [class*='ToolbarButton']:hover) {
+  background-color: var(--bg-hover) !important;
+  color: var(--text-primary) !important;
+}
+
+.editor :global(.mdxeditor-toolbar [class*='toolbarToggleItem'][data-state='on']),
+.editor :global(.mdxeditor-toolbar [class*='ToolbarToggleItem'][data-state='on']),
+.editor :global(.mdxeditor-toolbar [class*='toolbarButton'][data-state='on']),
+.editor :global(.mdxeditor-toolbar [class*='ToolbarButton'][data-state='on']) {
+  background-color: var(--bg-active) !important;
+  color: var(--brand-green) !important;
+}
+
+/* Não forçar fill/stroke, os ícones usam path fill="currentColor" com svg fill="none"
+   (ex.: lista 1-2-3); fill global no svg destruía o desenho. */
+
+/* Área de edição, prose Markdown padrão (título à esquerda, listas indentadas) */
+.editor :global(.mdxeditor-root-contenteditable),
+.editor :global([contenteditable='true']),
+.content {
+  min-height: var(--mdx-min-height, 220px);
+  padding: 14px 16px !important;
+  font-family: inherit !important;
+  font-size: var(--font-md) !important;
+  font-weight: 400 !important;
+  line-height: 1.65 !important;
+  letter-spacing: normal !important;
+  color: var(--text-secondary) !important;
+  caret-color: var(--brand-green) !important;
+  background: var(--bg-input) !important;
+  text-align: left !important;
+}
+
+.editor :global([class*='placeholder']) {
+  color: var(--text-placeholder) !important;
+  font-weight: 400 !important;
+  font-family: inherit !important;
+  font-size: var(--font-md) !important;
+  left: 16px !important;
+  padding-left: 0 !important;
+}
+
+.content :global(*) {
+  max-width: 100%;
+}
+
+.content :global(p),
+.editor :global(.mdxeditor-root-contenteditable p) {
+  margin: 0 0 0.75em !important;
+  padding: 0 !important;
+  font-weight: 400 !important;
+  color: var(--text-secondary) !important;
+}
+
+.content :global(p:last-child),
+.editor :global(.mdxeditor-root-contenteditable p:last-child) {
+  margin-bottom: 0 !important;
+}
+
+.content :global(h1),
+.content :global(h2),
+.content :global(h3),
+.content :global(h4),
+.content :global(h5),
+.content :global(h6),
+.editor :global(.mdxeditor-root-contenteditable h1),
+.editor :global(.mdxeditor-root-contenteditable h2),
+.editor :global(.mdxeditor-root-contenteditable h3),
+.editor :global(.mdxeditor-root-contenteditable h4),
+.editor :global(.mdxeditor-root-contenteditable h5),
+.editor :global(.mdxeditor-root-contenteditable h6) {
+  margin: 1.25em 0 0.5em !important;
+  padding: 0 !important;
+  text-indent: 0 !important;
+  margin-inline: 0 !important;
+  font-weight: 600 !important;
+  color: var(--text-secondary) !important;
+  line-height: 1.3 !important;
+}
+
+.content :global(h1:first-child),
+.content :global(h2:first-child),
+.content :global(h3:first-child),
+.editor :global(.mdxeditor-root-contenteditable h1:first-child),
+.editor :global(.mdxeditor-root-contenteditable h2:first-child),
+.editor :global(.mdxeditor-root-contenteditable h3:first-child) {
+  margin-top: 0 !important;
+}
+
+.content :global(h1),
+.editor :global(.mdxeditor-root-contenteditable h1) {
+  font-size: 1.75em !important; /* ~ Markdown H1 */
+  border-bottom: 1px solid var(--border-subtle);
+  padding-bottom: 0.3em !important;
+}
+
+.content :global(h2),
+.editor :global(.mdxeditor-root-contenteditable h2) {
+  font-size: 1.4em !important;
+  border-bottom: 1px solid var(--border-subtle);
+  padding-bottom: 0.25em !important;
+}
+
+.content :global(h3),
+.editor :global(.mdxeditor-root-contenteditable h3) {
+  font-size: 1.2em !important;
+}
+
+.content :global(h4),
+.editor :global(.mdxeditor-root-contenteditable h4) {
+  font-size: 1.05em !important;
+}
+
+.content :global(ul),
+.content :global(ol),
+.editor :global(.mdxeditor-root-contenteditable ul),
+.editor :global(.mdxeditor-root-contenteditable ol) {
+  margin: 0.5em 0 0.75em !important;
+  padding-left: 2em !important;
+  padding-inline-start: 2em !important;
+  padding-inline-end: 0 !important;
+  margin-inline: 0 !important;
+  list-style-position: outside !important;
+}
+
+.content :global(ul),
+.editor :global(.mdxeditor-root-contenteditable ul) {
+  list-style-type: disc !important;
+}
+
+.content :global(ol),
+.editor :global(.mdxeditor-root-contenteditable ol) {
+  list-style-type: decimal !important;
+}
+
+.content :global(ul ul),
+.editor :global(.mdxeditor-root-contenteditable ul ul) {
+  list-style-type: circle !important;
+  margin-top: 0.25em !important;
+  margin-bottom: 0.25em !important;
+}
+
+.content :global(ul ul ul),
+.editor :global(.mdxeditor-root-contenteditable ul ul ul) {
+  list-style-type: square !important;
+}
+
+.content :global(ol ol),
+.editor :global(.mdxeditor-root-contenteditable ol ol) {
+  list-style-type: lower-alpha !important;
+  margin-top: 0.25em !important;
+  margin-bottom: 0.25em !important;
+}
+
+.content :global(li),
+.editor :global(.mdxeditor-root-contenteditable li) {
+  margin: 0.25em 0 !important;
+  padding: 0 !important;
+  padding-inline: 0 !important;
+  margin-inline: 0 !important;
+  font-weight: 400 !important;
+  color: var(--text-secondary) !important;
+  line-height: 1.55 !important;
+}
+
+.content :global(li > p),
+.editor :global(.mdxeditor-root-contenteditable li > p) {
+  margin: 0 !important;
+}
+
+.content :global(li::marker),
+.editor :global(.mdxeditor-root-contenteditable li::marker) {
+  color: var(--text-muted);
+}
+
+.content :global(a),
+.editor :global(.mdxeditor-root-contenteditable a) {
+  color: var(--brand-green) !important;
+  font-weight: 400;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.content :global(blockquote),
+.editor :global(.mdxeditor-root-contenteditable blockquote) {
+  margin: 0.75em 0 !important;
+  padding: 0.25em 0 0.25em 1em !important;
+  border-left: 3px solid var(--border-strong) !important;
+  color: var(--text-secondary) !important;
+  font-weight: 400;
+  font-style: italic;
+}
+
+.content :global(hr),
+.editor :global(.mdxeditor-root-contenteditable hr) {
+  border: none !important;
+  border-top: 1px solid var(--border-subtle) !important;
+  margin: 1.25em 0 !important;
+}
+
+.content :global(code),
+.editor :global(.mdxeditor-root-contenteditable code) {
+  background: var(--bg-muted);
+  color: var(--brand-green) !important;
+  border: 1px solid var(--border-subtle);
+  border-radius: 4px;
+  padding: 1px 5px;
+  font-size: 0.9em;
+  font-weight: 400;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+.content :global(pre),
+.editor :global(.mdxeditor-root-contenteditable pre) {
+  background: var(--bg-muted);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  padding: 12px 14px;
+  overflow-x: auto;
+  margin: 0.75em 0;
+}
+
+.content :global(pre code),
+.editor :global(.mdxeditor-root-contenteditable pre code) {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--text-secondary) !important;
+  font-size: 0.9em;
+}
+
+.content :global(strong),
+.editor :global(.mdxeditor-root-contenteditable strong) {
+  font-weight: 600 !important;
+}
+
+.content :global(em),
+.editor :global(.mdxeditor-root-contenteditable em) {
+  font-style: italic;
+}
+
+/*
+ * Dropdowns portados ao body, usam tokens do html[data-theme], não do .editor.
+ * Classe pública: .mdxeditor-select-content
+ */
+:global(.mdxeditor-select-content),
+:global(.mdxeditor-popup-container [class*='SelectContainer']),
+:global(.mdxeditor-popup-container [class*='selectContainer']),
+:global(.mdxeditor-popup-container [class*='NodeKindSelectContainer']),
+:global(.mdxeditor-popup-container [class*='ButtonDropdownContainer']),
+:global(.mdxeditor-popup-container [role='listbox']) {
+  background-color: var(--bg-elevated) !important;
+  color: var(--text-primary) !important;
+  border: 1px solid var(--border-default) !important;
+  border-radius: var(--radius-md) !important;
+  box-shadow: 0 10px 32px color-mix(in srgb, #000 40%, transparent) !important;
+  z-index: 120 !important;
+  overflow: hidden;
+  font-family: inherit !important;
+  font-size: var(--font-base) !important;
+  font-weight: 400 !important;
+}
+
+:global(.mdxeditor-select-content [role='option']),
+:global(.mdxeditor-select-content [data-radix-collection-item]),
+:global(.mdxeditor-select-content [class*='selectItem']),
+:global(.mdxeditor-select-content [class*='SelectItem']),
+:global(.mdxeditor-popup-container [class*='selectItem']),
+:global(.mdxeditor-popup-container [class*='SelectItem']),
+:global(.mdxeditor-popup-container [role='option']) {
+  color: var(--text-primary) !important;
+  background-color: transparent !important;
+  cursor: pointer;
+  font-family: inherit !important;
+  font-size: var(--font-base) !important;
+  font-weight: 400 !important;
+}
+
+:global(.mdxeditor-select-content [data-highlighted]),
+:global(.mdxeditor-select-content [data-highlighted][role='option']),
+:global(.mdxeditor-select-content [class*='selectItem'][data-highlighted]),
+:global(.mdxeditor-select-content [class*='SelectItem'][data-highlighted]),
+:global(.mdxeditor-popup-container [class*='selectItem'][data-highlighted]),
+:global(.mdxeditor-popup-container [class*='SelectItem'][data-highlighted]),
+:global(.mdxeditor-popup-container [role='option'][data-highlighted]) {
+  background-color: var(--bg-hover) !important;
+  color: var(--text-primary) !important;
+  outline: none !important;
+  font-weight: 400 !important;
+}
+
+:global(.mdxeditor-select-content [data-state='checked']),
+:global(.mdxeditor-select-content [class*='selectItem'][data-state='checked']),
+:global(.mdxeditor-select-content [class*='SelectItem'][data-state='checked']),
+:global(.mdxeditor-popup-container [class*='selectItem'][data-state='checked']),
+:global(.mdxeditor-popup-container [class*='SelectItem'][data-state='checked']) {
+  background-color: color-mix(in srgb, var(--brand-green) 16%, var(--bg-elevated)) !important;
+  color: var(--brand-green) !important;
+  font-weight: 500 !important;
+}
+
+:global(.mdxeditor-select-content [data-state='checked'][data-highlighted]),
+:global(.mdxeditor-popup-container [class*='SelectItem'][data-state='checked'][data-highlighted]) {
+  background-color: color-mix(in srgb, var(--brand-green) 24%, var(--bg-elevated)) !important;
+  color: var(--brand-green) !important;
+  font-weight: 500 !important;
+}
+
+/* Popovers / dialogs (link etc.) */
+:global(.mdxeditor-popup-container [role='dialog']),
+:global(.mdxeditor-popup-container [data-radix-popover-content]) {
+  background: var(--bg-elevated) !important;
+  color: var(--text-primary) !important;
+  border: 1px solid var(--border-default) !important;
+  border-radius: var(--radius-md);
+  box-shadow: 0 10px 32px color-mix(in srgb, #000 40%, transparent);
+}
+
+:global(.mdxeditor-popup-container input),
+:global(.mdxeditor-popup-container textarea) {
+  background: var(--bg-input) !important;
+  color: var(--text-secondary) !important;
+  -webkit-text-fill-color: var(--text-secondary) !important;
+  border: 1px solid var(--border-input) !important;
+  border-radius: var(--radius-md);
+}
+
+@media (max-width: 767px) {
+  .editor :global(.mdxeditor-toolbar) {
+    gap: 4px;
+  }
+
+  .editor :global(.mdxeditor-root-contenteditable),
+  .editor :global([contenteditable='true']),
+  .content {
+    padding: 10px 12px !important;
+  }
+}

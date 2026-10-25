@@ -1,0 +1,17 @@
+.group {
+  padding: var(--space-2) 0;
+}
+
+.group + .group {
+  border-top: 1px solid var(--border-subtle);
+}
+
+.label {
+  padding: var(--space-1) var(--space-4);
+  font-size: var(--font-xs);
+  font-weight: 600;
+  letter-spacing: 0.6px;
+  color: var(--text-placeholder);
+  text-transform: uppercase;
+  margin-bottom: 2px;
+}

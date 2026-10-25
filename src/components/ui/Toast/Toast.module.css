@@ -1,0 +1,179 @@
+.viewport {
+  position: fixed;
+  right: max(16px, env(safe-area-inset-right, 0px));
+  bottom: max(16px, env(safe-area-inset-bottom, 0px));
+  z-index: var(--z-toast);
+  display: flex;
+  flex-direction: column-reverse;
+  align-items: flex-end;
+  gap: 10px;
+  width: min(380px, calc(100vw - 32px));
+  pointer-events: none;
+}
+
+.toast {
+  position: relative;
+  pointer-events: auto;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  width: 100%;
+  padding: 12px 12px 14px;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border-default);
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  box-shadow: 0 12px 36px color-mix(in srgb, #000 42%, transparent);
+  overflow: hidden;
+  animation: toastIn 180ms ease-out;
+  min-width: 0;
+}
+
+@keyframes toastIn {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.iconWrap {
+  flex-shrink: 0;
+  display: inline-flex;
+  margin-top: 1px;
+}
+
+.body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.title {
+  margin: 0;
+  font-size: var(--font-md);
+  font-weight: 600;
+  line-height: 1.35;
+  color: var(--text-primary);
+}
+
+.message {
+  margin: 0;
+  font-size: var(--font-base);
+  font-weight: 400;
+  line-height: 1.45;
+  color: var(--text-secondary);
+}
+
+.description {
+  margin: 4px 0 0;
+  font-size: var(--font-sm);
+  color: var(--text-muted);
+  line-height: 1.4;
+}
+
+.close {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  margin: -4px -4px 0 0;
+  border: none;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.close:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.progress {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  height: 2px;
+  width: 100%;
+  transform-origin: left center;
+  animation-name: toastProgress;
+  animation-timing-function: linear;
+  animation-fill-mode: forwards;
+  background: currentColor;
+  opacity: 0.55;
+}
+
+@keyframes toastProgress {
+  from {
+    transform: scaleX(1);
+  }
+  to {
+    transform: scaleX(0);
+  }
+}
+
+.success {
+  border-color: color-mix(in srgb, var(--brand-green) 35%, var(--border-default));
+}
+
+.success .iconWrap {
+  color: var(--brand-green);
+}
+
+.success .progress {
+  color: var(--brand-green);
+}
+
+.error {
+  border-color: color-mix(in srgb, var(--status-danger) 40%, var(--border-default));
+}
+
+.error .iconWrap {
+  color: var(--status-danger);
+}
+
+.error .progress {
+  color: var(--status-danger);
+}
+
+.info {
+  border-color: color-mix(in srgb, var(--status-info) 40%, var(--border-default));
+}
+
+.info .iconWrap {
+  color: var(--status-info);
+}
+
+.info .progress {
+  color: var(--status-info);
+}
+
+.warning {
+  border-color: color-mix(in srgb, var(--status-amber) 40%, var(--border-default));
+}
+
+.warning .iconWrap {
+  color: var(--status-amber);
+}
+
+.warning .progress {
+  color: var(--status-amber);
+}
+
+@media (max-width: 767px) {
+  .viewport {
+    right: max(12px, env(safe-area-inset-right, 0px));
+    bottom: max(12px, env(safe-area-inset-bottom, 0px));
+    left: max(12px, env(safe-area-inset-left, 0px));
+    width: auto;
+    align-items: stretch;
+  }
+}

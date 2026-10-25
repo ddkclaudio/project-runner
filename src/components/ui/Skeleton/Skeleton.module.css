@@ -1,0 +1,154 @@
+@keyframes shimmer {
+  0% {
+    background-position: 100% 0;
+  }
+  100% {
+    background-position: -100% 0;
+  }
+}
+
+.bone {
+  display: block;
+  flex-shrink: 0;
+  border-radius: var(--radius-md);
+  background-image: linear-gradient(
+    105deg,
+    var(--bg-muted) 0%,
+    var(--bg-muted) 35%,
+    var(--bg-hover) 45%,
+    color-mix(in srgb, var(--brand-green) 14%, var(--bg-hover)) 50%,
+    var(--bg-hover) 55%,
+    var(--bg-muted) 65%,
+    var(--bg-muted) 100%
+  );
+  background-size: 220% 100%;
+  animation: shimmer 1.35s ease-in-out infinite;
+}
+
+.round {
+  border-radius: 999px;
+}
+
+.pill {
+  border-radius: 999px;
+}
+
+.textStack {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+}
+
+.textLine {
+  max-width: 100%;
+}
+
+.table {
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  background: var(--bg-surface);
+  overflow: hidden;
+}
+
+.tableHead,
+.tableRow {
+  display: grid;
+  grid-template-columns: repeat(var(--skeleton-cols, 4), minmax(0, 1fr));
+  gap: 16px;
+  align-items: center;
+  padding: 12px 16px;
+}
+
+.tableHead {
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--bg-elevated);
+  opacity: 0.9;
+}
+
+.tableRow + .tableRow {
+  border-top: 1px solid var(--border-subtle);
+}
+
+.cards {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+}
+
+.cardMeta {
+  display: flex;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.statusGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.statusCard {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px 16px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  min-height: 72px;
+}
+
+.fluid {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 280px;
+  gap: 0;
+}
+
+.fluidBody {
+  flex: 1;
+  min-height: 0;
+  padding: 0;
+  height: 100%;
+}
+
+.fluidPane {
+  width: 100%;
+  height: 100%;
+  min-height: 200px;
+  border-radius: var(--radius-lg);
+}
+
+@media (max-width: 1099px) {
+  .cards,
+  .statusGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 767px) {
+  .cards,
+  .statusGrid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bone {
+    animation: none;
+    background-image: none;
+    background-color: var(--bg-muted);
+  }
+}
