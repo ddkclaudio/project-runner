@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useLayoutEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { IconInfoCircle, IconCheck, IconMinus } from '@tabler/icons-react';
 import { useTooltip } from '@/hooks/useTooltip';
 import { formatCurrency } from '@/utils';
@@ -97,7 +98,8 @@ export function PricingTooltip({
         <IconInfoCircle size={15} aria-hidden="true" />
       </button>
 
-      {isVisible && (
+      {isVisible
+        ? createPortal(
         <div
           ref={tooltipRef}
           className={styles.tooltip}
@@ -143,8 +145,10 @@ export function PricingTooltip({
               </tr>
             </tbody>
           </table>
-        </div>
-      )}
+        </div>,
+        document.body,
+        )
+        : null}
     </span>
   );
 }

@@ -7,6 +7,10 @@ import { ForgotPasswordForm } from '@/components/features/auth/ForgotPasswordFor
 import { ResetPasswordForm } from '@/components/features/auth/ResetPasswordForm';
 import { HomePage } from '@/pages/HomePage';
 import { ComponentsPage } from '@/pages/ComponentsPage';
+import { NewAppPage } from '@/pages/NewAppPage';
+import { AppPage } from '@/pages/AppPage';
+import { CatalogPage } from '@/pages/CatalogPage';
+import { SettingsPage } from '@/pages/SettingsPage';
 
 function BootScreen() {
   return <div style={{ minHeight: '100dvh', background: 'var(--bg-base)' }} />;
@@ -45,6 +49,15 @@ export const routes = [
     element: <RequireAuth />,
     children: [
       { path: '/', element: <HomePage /> },
+      { path: '/catalog', element: <CatalogPage mode="remote" /> },
+      { path: '/catalog/files', element: <CatalogPage mode="files" /> },
+      { path: '/settings', element: <SettingsPage section="general" /> },
+      { path: '/settings/github', element: <SettingsPage section="github" /> },
+      { path: '/settings/appearance', element: <SettingsPage section="appearance" /> },
+      { path: '/settings/launch', element: <SettingsPage section="launch" /> },
+      { path: '/apps/new', element: <NewAppPage /> },
+      { path: '/apps/:owner/:repo', element: <AppPage /> },
+      { path: '/apps/:owner/:repo/:section', element: <AppPage /> },
       { path: '/components', element: <ComponentsPage /> },
     ],
   },

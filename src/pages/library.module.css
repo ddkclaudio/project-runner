@@ -1,0 +1,94 @@
+.cardBody {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 132px;
+}
+
+.icon {
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+  object-fit: cover;
+  background: var(--bg-muted);
+}
+
+.title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.meta {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: auto;
+}
+
+.progress {
+  height: 6px;
+  border-radius: 99px;
+  background: var(--bg-muted);
+  overflow: hidden;
+}
+
+.progress > span {
+  display: block;
+  height: 100%;
+  background: var(--brand-green);
+}
+
+.list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  max-width: 720px;
+}
+
+.choice {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.choice > button {
+  width: 100%;
+  justify-content: flex-start;
+}
+
+.focused {
+  outline: 2px solid var(--brand-green);
+  outline-offset: 2px;
+}
+
+.backdrop {
+  position: absolute;
+  inset: 0;
+  background-size: cover;
+  background-position: center;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.scrim {
+  position: absolute;
+  inset: 0;
+  background: var(--bg-base);
+  pointer-events: none;
+  z-index: 0;
+}

@@ -8,6 +8,8 @@ use std::fs;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::{Manager, State};
+mod launcher;
+pub use launcher::{cli_requested, run_cli};
 
 const SESSION_SECONDS: i64 = 60 * 60 * 24 * 30;
 const RESET_SECONDS: i64 = 60 * 15;
@@ -282,6 +284,10 @@ pub fn run() {
             app.manage(AuthState {
                 path: dir.join("auth.json"),
             });
+            let root = launcher::resolve_root();
+            launcher::store::ensure_root(&root).map_err(std::io::Error::other)?;
+            launcher::store::cleanup_backups(&root);
+            app.manage(launcher::LauncherState { root });
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -290,7 +296,40 @@ pub fn run() {
             logout,
             current_user,
             forgot_password,
-            reset_password
+            reset_password,
+            launcher::commands::launcher_boot,
+            launcher::commands::library_list,
+            launcher::commands::library_refresh,
+            launcher::commands::library_save,
+            launcher::commands::library_remove,
+            launcher::commands::library_import,
+            launcher::commands::library_export,
+            launcher::commands::library_validate,
+            launcher::commands::library_set_sort,
+            launcher::commands::library_set_filter,
+            launcher::commands::app_hide,
+            launcher::commands::app_detail,
+            launcher::commands::app_install,
+            launcher::commands::app_launch,
+            launcher::commands::app_open_folder,
+            launcher::commands::app_executables,
+            launcher::commands::app_set_executable,
+            launcher::commands::app_skip_update,
+            launcher::commands::app_delete_install,
+            launcher::commands::app_locate,
+            launcher::commands::app_set_icon,
+            launcher::commands::app_clear_icon,
+            launcher::commands::app_releases,
+            launcher::commands::app_changelog,
+            launcher::commands::app_shortcut_desktop,
+            launcher::commands::app_shortcut_steam,
+            launcher::commands::settings_get,
+            launcher::commands::settings_save,
+            launcher::commands::catalog_load,
+            launcher::commands::catalog_add,
+            launcher::commands::launcher_check_update,
+            launcher::commands::launcher_apply_update,
+            launcher::commands::window_close
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

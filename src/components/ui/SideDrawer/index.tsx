@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useLayoutEffect, useRef, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 import { IconX } from '@tabler/icons-react';
 import { OverflowText } from '@/components/ui/OverflowText';
 import { cx } from '@/utils';
@@ -153,7 +154,7 @@ export function SideDrawer({
   const fullTitle = typeof title === 'string' ? title : null;
   const label = ariaLabel || fullTitle || 'Painel';
 
-  return (
+  return createPortal(
     <>
       <button
         type="button"
@@ -203,6 +204,7 @@ export function SideDrawer({
         <div className={cx(styles.body, bodyClassName)}>{children}</div>
         {footer ? <div className={styles.footer}>{footer}</div> : null}
       </aside>
-    </>
+    </>,
+    document.body,
   );
 }

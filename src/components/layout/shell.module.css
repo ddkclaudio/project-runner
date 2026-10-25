@@ -4,6 +4,30 @@
   height: 100dvh;
   background: var(--bg-base);
   overflow: hidden;
+  position: relative;
+}
+
+.atmosphere,
+.atmosphereScrim {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.atmosphere {
+  background-size: cover;
+  background-position: center;
+  z-index: 0;
+}
+
+.atmosphereScrim {
+  background: var(--bg-base);
+  z-index: 0;
+}
+
+.topbarHost {
+  position: relative;
+  z-index: var(--z-sticky);
 }
 
 .body {
@@ -12,6 +36,7 @@
   overflow: hidden;
   position: relative;
   min-height: 0;
+  z-index: 1;
 }
 
 .main {
@@ -20,6 +45,8 @@
   overflow-x: hidden;
   padding: var(--main-padding-y) var(--main-padding-x) 60px;
   min-width: 0;
+  position: relative;
+  z-index: 1;
 }
 
 /* Inbox/conversas: sem folga vertical extra */

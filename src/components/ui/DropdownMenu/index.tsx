@@ -1,6 +1,7 @@
 'use client';
 
 import React, { createContext, useContext, useRef, useLayoutEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { cx, clampToViewport } from '@/utils';
 import styles from './DropdownMenu.module.css';
 
@@ -78,15 +79,19 @@ export function DropdownMenuPanel({
     };
   }, [anchorRef, panelWidth, estimatedHeight]);
 
-  return (
+  if (!pos) return null;
+
+  return createPortal(
     <div
       className={cx(styles.panel, className)}
       role={role}
       aria-label={ariaLabel}
-      style={pos ? { top: pos.top, left: pos.left, width: pos.width } : undefined}
+      style={{ top: pos.top, left: pos.left, width: pos.width }}
+      onMouseDown={(event) => event.stopPropagation()}
     >
       {children}
-    </div>
+    </div>,
+    document.body,
   );
 }
 
