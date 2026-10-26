@@ -206,26 +206,47 @@ pub async fn app_install(
 
 #[tauri::command]
 pub async fn app_launch(
+    app: AppHandle,
     paths: State<'_, AppPaths>,
     repository: String,
     executable: Option<String>,
     force: Option<bool>,
 ) -> Result<LaunchResult, String> {
     let (meta, workspace) = roots(&paths)?;
+    let apps = store::load_apps(&meta);
+    let progress_key = store::find_app(&apps, &repository)
+        .map(|entry| entry.folder_name.clone())
+        .unwrap_or_else(|_| repository.clone());
+    let handle = app.clone();
+    let key = progress_key.clone();
     launch::launch(
         &meta,
         &workspace,
         &repository,
         executable,
         force.unwrap_or(false),
+        &|percent, phase| emit(&handle, &key, percent, phase),
     )
     .await
 }
 
 #[tauri::command]
-pub async fn app_generate_launchfile(paths: State<'_, AppPaths>, repository: String) -> Result<String, String> {
+pub async fn app_generate_launchfile(
+    app: AppHandle,
+    paths: State<'_, AppPaths>,
+    repository: String,
+) -> Result<String, String> {
     let (meta, workspace) = roots(&paths)?;
-    launch::generate_launchfile(&meta, &workspace, &repository).await?;
+    let apps = store::load_apps(&meta);
+    let progress_key = store::find_app(&apps, &repository)
+        .map(|entry| entry.folder_name.clone())
+        .unwrap_or_else(|_| repository.clone());
+    let handle = app.clone();
+    let key = progress_key.clone();
+    launch::generate_launchfile(&meta, &workspace, &repository, &|percent, phase| {
+        emit(&handle, &key, percent, phase);
+    })
+    .await?;
     Ok("Launchfile gerado com DeepSeek.".into())
 }
 

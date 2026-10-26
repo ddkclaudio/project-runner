@@ -6,6 +6,9 @@ import { useLibraryMutations } from '@/components/launcher/LibraryCard';
 import { launcherError, type AppView } from '@/lib/launcher-api';
 import { logInfo, logWarn } from '@/lib/activity-log';
 import { useToast } from '@/components/ui/Toast';
+import { appId } from '@/components/launcher/LibraryCard';
+import { AppProgressBar } from '@/components/launcher/AppProgressBar';
+import { useAppProgressStore } from '@/stores/app-progress';
 
 export type PortBusyDetail = {
   app: AppView;
@@ -27,6 +30,8 @@ export function ForcePortModal() {
   const actions = useLibraryMutations();
   const [pending, setPending] = useState<PortBusyDetail | null>(null);
   const [busy, setBusy] = useState(false);
+  const progressId = pending ? appId(pending.app) : '';
+  const progress = useAppProgressStore((s) => (progressId ? s.byId[progressId] : undefined));
 
   useEffect(() => {
     function onBusy(event: CustomEvent<PortBusyDetail>) {
@@ -84,6 +89,7 @@ export function ForcePortModal() {
             A libertar a porta, instalar dependências se necessário e arrancar a app… Isto pode demorar.
           </Modal.Text>
         ) : null}
+        {busy && progress ? <AppProgressBar progress={progress} /> : null}
       </Modal.Content>
       <Modal.Footer>
         <Button type="button" disabled={busy} onClick={() => setPending(null)}>

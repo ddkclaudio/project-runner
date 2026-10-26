@@ -6,6 +6,7 @@ export interface SwitcherItem {
   searchText?: string;
   leading?: React.ReactNode;
   trailing?: React.ReactNode;
+  disabled?: boolean;
 }
 
 export interface SwitcherAction {

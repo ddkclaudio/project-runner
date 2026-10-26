@@ -74,6 +74,25 @@
   background: var(--brand-green);
 }
 
+.appProgressHost {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 12px 0 4px;
+  max-width: 420px;
+}
+
+.appProgressPhase {
+  font-size: var(--font-base);
+  color: var(--text-muted);
+}
+
+@keyframes appProgressSpin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 /* Vertical stacks under PageShell (app detail, catalog tools). */
 .stack {
   display: flex;

@@ -23,19 +23,35 @@ commands.start must be a plain command (e.g. npm start). Put variables under env
 When ready, call write_launchfile or update_launchfile, then finish.
 "#;
 
-pub async fn ensure_launchfile(project: &Path, info: &Path, token: &str) -> Result<(), String> {
+pub async fn ensure_launchfile(
+    project: &Path,
+    info: &Path,
+    token: &str,
+    on_progress: &impl Fn(u32, &str),
+) -> Result<(), String> {
     if launchfile::exists(info) {
         let _ = launchfile::read(info)?;
         return Ok(());
     }
-    run_agent(project, info, token, false).await
+    run_agent(project, info, token, false, on_progress).await
 }
 
-pub async fn generate_launchfile(project: &Path, info: &Path, token: &str) -> Result<(), String> {
-    run_agent(project, info, token, true).await
+pub async fn generate_launchfile(
+    project: &Path,
+    info: &Path,
+    token: &str,
+    on_progress: &impl Fn(u32, &str),
+) -> Result<(), String> {
+    run_agent(project, info, token, true, on_progress).await
 }
 
-async fn run_agent(project: &Path, info: &Path, token: &str, allow_update: bool) -> Result<(), String> {
+async fn run_agent(
+    project: &Path,
+    info: &Path,
+    token: &str,
+    allow_update: bool,
+    on_progress: &impl Fn(u32, &str),
+) -> Result<(), String> {
     let token = token.trim();
     if token.is_empty() {
         return Err(
@@ -46,6 +62,7 @@ async fn run_agent(project: &Path, info: &Path, token: &str, allow_update: bool)
         return Err("Pasta do projecto inválida.".into());
     }
     fs::create_dir_all(info).map_err(|err| err.to_string())?;
+    on_progress(8, "DeepSeek a preparar…");
 
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(90))
@@ -65,7 +82,9 @@ async fn run_agent(project: &Path, info: &Path, token: &str, allow_update: bool)
     ];
 
     let mut finished = false;
-    for _ in 0..MAX_ROUNDS {
+    for round in 0..MAX_ROUNDS {
+        let pct = 10 + ((round as u32 * 28) / MAX_ROUNDS as u32);
+        on_progress(pct.min(38), &format!("DeepSeek a explorar… ({}/{})", round + 1, MAX_ROUNDS));
         let body = json!({
             "model": MODEL,
             "messages": messages,
@@ -118,6 +137,9 @@ async fn run_agent(project: &Path, info: &Path, token: &str, allow_update: bool)
                 .and_then(|item| item.as_str())
                 .unwrap_or("")
                 .to_string();
+            if name.contains("launchfile") {
+                on_progress(40, "DeepSeek a escrever Launchfile…");
+            }
             let args_raw = call
                 .pointer("/function/arguments")
                 .and_then(|item| item.as_str())
@@ -138,10 +160,12 @@ async fn run_agent(project: &Path, info: &Path, token: &str, allow_update: bool)
         }
     }
 
+    on_progress(42, "A validar Launchfile…");
     let doc = launchfile::read(info).map_err(|_| {
         "O DeepSeek terminou sem criar um Launchfile válido. Tente regenerar.".to_string()
     })?;
     launchfile::validate(&doc)?;
+    on_progress(45, "Launchfile pronto");
     Ok(())
 }
 

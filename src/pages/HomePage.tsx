@@ -9,13 +9,13 @@ import { ViewToolbar, type ViewMode } from '@/components/ui/ViewToolbar';
 import { FilterDropdown, type FilterOption } from '@/components/ui/FilterDropdown';
 import { Modal } from '@/components/ui/Modal';
 import { InlineAlert } from '@/components/ui/InlineAlert';
-import { listen } from '@tauri-apps/api/event';
 import { libraryList, libraryRefresh, librarySetFilter, librarySetSort, settingsGet, settingsSave, type AppView } from '@/lib/launcher-api';
 import { isEditableTarget } from '@/lib/hotkeys';
 import { appId, ChoiceList, LibraryCard, useLibraryMutations } from '@/components/launcher/LibraryCard';
 import { LibraryListView } from '@/components/launcher/LibraryListView';
 import { useToast } from '@/components/ui/Toast';
 import { launcherError } from '@/lib/launcher-api';
+import { useAppProgressStore } from '@/stores/app-progress';
 
 type LibraryStatus = 'all' | 'installed' | 'not_installed' | 'update' | 'hidden';
 
@@ -45,7 +45,8 @@ export function HomePage() {
   const [statusFilter, setStatusFilter] = useState<LibraryStatus>('all');
   const statusSynced = useRef(false);
   const [focus, setFocus] = useState(-1);
-  const [progress, setProgress] = useState<Record<string, { percent: number; phase: string }>>({});
+  const progressById = useAppProgressStore((s) => s.byId);
+  const clearProgress = useAppProgressStore((s) => s.clearProgress);
   const [choice, setChoice] = useState<{ app: AppView; assets: string[]; warning?: string | null; confirm?: boolean } | null>(null);
   const [exeChoice, setExeChoice] = useState<{ app: AppView; executables: string[] } | null>(null);
 
@@ -58,13 +59,8 @@ export function HomePage() {
       .catch((err) => {
         if (!cancelled) toast.error(launcherError(err));
       });
-    const unlisten = listen<{ repository: string; percent: number; phase: string }>('launcher-progress', (event) => {
-      // `repository` no evento é a chave de progresso (pasta da app).
-      setProgress((current) => ({ ...current, [event.payload.repository]: event.payload }));
-    });
     return () => {
       cancelled = true;
-      void unlisten.then((stop) => stop());
     };
     // Corre uma vez ao abrir a biblioteca.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -169,11 +165,7 @@ export function HomePage() {
     if (result.needsChoice || result.needsConfirm) {
       setChoice({ app, assets: result.assets, warning: result.warning, confirm: result.needsConfirm });
     } else {
-      setProgress((current) => {
-        const next = { ...current };
-        delete next[appId(app)];
-        return next;
-      });
+      clearProgress(appId(app));
     }
   }
 
@@ -284,7 +276,7 @@ export function HomePage() {
             <LibraryCard
               app={app}
               focused={focus >= 0 && apps[focus] != null && appId(apps[focus]) === appId(app)}
-              progress={progress[appId(app)]}
+              progress={progressById[appId(app)]}
               onPrimary={(item) => void primary(item)}
             />
           )}

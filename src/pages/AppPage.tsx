@@ -22,6 +22,7 @@ import { RowActions } from '@/components/ui/RowActions';
 import { ItemCard, gridCardStyles as gc } from '@/components/ui/ItemCard';
 import { useToast } from '@/components/ui/Toast';
 import { appIconSrc, appId, ChoiceList, useLibraryMutations } from '@/components/launcher/LibraryCard';
+import { AppProgressBar } from '@/components/launcher/AppProgressBar';
 import { useListingView } from '@/components/launcher/useListingView';
 import { formatDate } from '@/utils';
 import {
@@ -36,7 +37,6 @@ import {
   appSetIcon,
   appShortcutDesktop,
   appShortcutSteam,
-  appSkipUpdate,
   launcherError,
   libraryRemove,
   librarySave,
@@ -45,6 +45,7 @@ import {
   type LaunchField,
   type ReleaseInfo,
 } from '@/lib/launcher-api';
+import { useAppProgressStore } from '@/stores/app-progress';
 import styles from './library.module.css';
 
 function publishedLabel(value: string) {
@@ -79,8 +80,8 @@ export function AppPage() {
 
 function Overview({ app }: { app: AppView }) {
   const actions = useLibraryMutations();
-  const toast = useToast();
   const queryClient = useQueryClient();
+  const progress = useAppProgressStore((s) => s.byId[appId(app)]);
   const [choice, setChoice] = useState<string[] | null>(null);
   const [confirmWine, setConfirmWine] = useState(false);
   const [warning, setWarning] = useState<string | null>(null);
@@ -132,29 +133,7 @@ function Overview({ app }: { app: AppView }) {
         </div>
       </header>
 
-      <div className={styles.actions}>
-        <Button variant="secondary" onClick={() => void primary()}>
-          {actions.primaryLabel(app)}
-        </Button>
-        <Button onClick={() => void actions.openFolder(app)}>Abrir pasta</Button>
-        <Button onClick={() => void openUrl(`https://github.com/${app.repository}`)}>GitHub</Button>
-        {app.running && app.openUrl ? (
-          <Button onClick={() => void openUrl(app.openUrl!).catch((err) => toast.error(launcherError(err)))}>
-            Abrir no browser
-          </Button>
-        ) : null}
-        {app.remoteVersion && app.status === 'update' ? (
-          <Button
-            onClick={() =>
-              void appSkipUpdate(appId(app), app.remoteVersion)
-                .then(() => queryClient.invalidateQueries({ queryKey: ['launcher'] }))
-                .catch((err) => toast.error(launcherError(err)))
-            }
-          >
-            Saltar {app.remoteVersion}
-          </Button>
-        ) : null}
-      </div>
+      {progress ? <AppProgressBar progress={progress} /> : null}
 
       <div className={styles.overviewStats} role="list" aria-label="Indicadores">
         {stats.map((stat) => (
@@ -518,18 +497,29 @@ function Executable({ app }: { app: AppView }) {
     }
   }
 
+  const progress = useAppProgressStore((s) => s.byId[appId(app)]);
+  const setProgress = useAppProgressStore((s) => s.setProgress);
+  const clearProgress = useAppProgressStore((s) => s.clearProgress);
+
   async function generateWithDeepseek() {
+    const id = appId(app);
+    if (useAppProgressStore.getState().isBusy(id) || configBusy) {
+      toast.error('Já em curso…');
+      return;
+    }
     setConfigBusy(true);
+    setProgress(id, { percent: 1, phase: 'DeepSeek a analisar…', kind: 'deepseek' });
     try {
-      await appGenerateLaunchfile(appId(app));
+      await appGenerateLaunchfile(id);
       await queryClient.invalidateQueries({ queryKey: ['launcher'] });
-      await queryClient.invalidateQueries({ queryKey: ['launcher', 'launch-config', appId(app)] });
-      await queryClient.invalidateQueries({ queryKey: ['launcher', 'exe', appId(app)] });
+      await queryClient.invalidateQueries({ queryKey: ['launcher', 'launch-config', id] });
+      await queryClient.invalidateQueries({ queryKey: ['launcher', 'exe', id] });
       toast.success('Launchfile gerado com DeepSeek.');
     } catch (err) {
       toast.error(launcherError(err));
     } finally {
       setConfigBusy(false);
+      window.setTimeout(() => clearProgress(id), 700);
     }
   }
 
@@ -540,11 +530,12 @@ function Executable({ app }: { app: AppView }) {
         {config.data ? <StatusBadge label={config.data.runnerLabel} tone="info" /> : null}
       </PageShell.Heading>
       {config.error ? <InlineAlert>{launcherError(config.error)}</InlineAlert> : null}
+      {progress ? <AppProgressBar progress={progress} /> : null}
 
       <LaunchConfigForm
         loaded={config.data}
         fields={fields}
-        busy={configBusy}
+        busy={configBusy || Boolean(progress)}
         onFieldsChange={setFields}
         onSaveFields={() => void saveFields()}
         onGenerateDeepseek={() => void generateWithDeepseek()}

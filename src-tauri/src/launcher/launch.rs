@@ -66,6 +66,7 @@ pub async fn launch(
     repository: &str,
     _executable: Option<String>,
     force: bool,
+    on_progress: &impl Fn(u32, &str),
 ) -> Result<LaunchResult, String> {
     let apps = load_apps(meta);
     let app = find_app(&apps, repository)?.clone();
@@ -76,10 +77,11 @@ pub async fn launch(
         return Err("Esta app não está instalada.".into());
     }
     let info = store::ensure_launch_info(workspace, &app)?;
+    on_progress(3, "A preparar Launchfile…");
 
     if !crate::launcher::launchfile::exists(&info) {
         let token = store::deepseek_token_of(meta);
-        crate::launcher::deepseek::ensure_launchfile(&project, &info, &token).await?;
+        crate::launcher::deepseek::ensure_launchfile(&project, &info, &token, on_progress).await?;
     }
 
     let doc = crate::launcher::launchfile::read(&info)?;
@@ -116,6 +118,7 @@ pub async fn launch(
                     force_process_name: Some(process_name),
                 });
             }
+            on_progress(48, &format!("A libertar porta {port}…"));
             crate::launcher::activity_log::info(
                 "launch",
                 &format!("force: a libertar porta {port} (occupant {process_name}/{pid})"),
@@ -123,7 +126,6 @@ pub async fn launch(
             crate::launcher::runtime::free_port(port)?;
             let _ = crate::launcher::runtime::clear_running_for_port(meta, port);
             let _ = crate::launcher::runtime::clear(meta, &runtime_key);
-            // Garantir que a porta está livre antes do spawn (evita hang do CRA).
             if crate::launcher::runtime::port_occupant(port).is_some() {
                 let err = format!(
                     "A porta {port} continua ocupada após forçar. Feche o processo manualmente e tente de novo."
@@ -140,8 +142,10 @@ pub async fn launch(
 
     if crate::launcher::launchfile::needs_install(&project, &doc) {
         if let Some(install) = doc.install.as_ref().map(|item| item.trim()).filter(|item| !item.is_empty()) {
+            on_progress(55, "A instalar dependências…");
             crate::launcher::activity_log::info("launch", &format!("install: {install}"));
             runners::run_command_wait(&project, install)?;
+            on_progress(70, "Dependências instaladas");
         }
     }
 
@@ -154,11 +158,11 @@ pub async fn launch(
     let settings = store::load_settings(meta);
     let open_url = crate::launcher::launchfile::open_url_of(&doc);
 
-    // Marca para só ler conteúdo novo nos logs da app.
     let out_mark = fs::metadata(info.join("launch.out.log"))
         .map(|m| m.len())
         .unwrap_or(0);
 
+    on_progress(75, "A arrancar o processo…");
     let spawned =
         runners::spawn_command_line_with_env(&project, &doc.start, Some(&work), &doc.env, Some(&info))?;
     let Some((wrapper_pid, wrapper_name)) = spawned else {
@@ -172,12 +176,15 @@ pub async fn launch(
     if let Some(port) = port {
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(45);
         let mut ready = false;
+        let mut tick = 0u32;
         while std::time::Instant::now() < deadline {
+            let wait_pct = 80 + (tick.min(14));
+            on_progress(wait_pct, &format!("À espera da porta {port}…"));
+            tick = tick.saturating_add(1);
             if runners::wait_for_port(port, 1_000) {
                 ready = true;
                 break;
             }
-            // CRA: «Something is already running on port» com stdin fechado → hang.
             if launch_out_grew_with_port_busy(&info, out_mark) {
                 let _ = crate::launcher::runtime::kill_pid_tree(wrapper_pid);
                 let tail = runners::tail_launch_logs(&info, 20);
@@ -198,6 +205,7 @@ pub async fn launch(
         }
     }
 
+    on_progress(96, "A gravar estado…");
     let cwd = work.to_string_lossy();
     crate::launcher::runtime::record_spawn(
         meta,
@@ -223,6 +231,7 @@ pub async fn launch(
         .get("CloseAfterLaunch")
         .and_then(|value| value.as_bool())
         .unwrap_or(false);
+    on_progress(100, "A correr");
     Ok(LaunchResult {
         started: true,
         needs_choice: false,
@@ -250,7 +259,12 @@ fn launch_out_grew_with_port_busy(info: &Path, mark: u64) -> bool {
         || fresh.contains("address already in use")
 }
 
-pub async fn generate_launchfile(meta: &Path, workspace: &Path, repository: &str) -> Result<(), String> {
+pub async fn generate_launchfile(
+    meta: &Path,
+    workspace: &Path,
+    repository: &str,
+    on_progress: &impl Fn(u32, &str),
+) -> Result<(), String> {
     let apps = load_apps(meta);
     let app = find_app(&apps, repository)?;
     let _ = store::migrate_legacy_install(workspace, app);
@@ -260,7 +274,9 @@ pub async fn generate_launchfile(meta: &Path, workspace: &Path, repository: &str
     }
     let info = store::ensure_launch_info(workspace, app)?;
     let token = store::deepseek_token_of(meta);
-    crate::launcher::deepseek::generate_launchfile(&project, &info, &token).await
+    crate::launcher::deepseek::generate_launchfile(&project, &info, &token, on_progress).await?;
+    on_progress(100, "Launchfile gerado");
+    Ok(())
 }
 
 fn process_image_name(exe: &Path) -> String {

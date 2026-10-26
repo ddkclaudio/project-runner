@@ -123,7 +123,7 @@ async fn execute() -> Result<(), String> {
         }
         "--run" | "-r" => {
             let app = named(&root, &name)?;
-            let result = launch::launch(&root, &workspace, &app.repository, None, false).await?;
+            let result = launch::launch(&root, &workspace, &app.repository, None, false, &|_, _| {}).await?;
             println!("{}", result.message);
             if result.needs_choice {
                 for exe in result.executables {

@@ -2,6 +2,7 @@ import { Fragment, useEffect, useRef } from 'react';
 import { useLocation } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { convertFileSrc } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
 import { LayoutNavEffects, useLayoutNav } from '@/hooks/useLayoutNav';
 import { AppMenuSidebar, LibrarySidebar } from './AppSidebar';
 import { AppSwitcher } from './AppSwitcher';
@@ -16,7 +17,19 @@ import { launcherBoot, settingsGet } from '@/lib/launcher-api';
 import { logInfo } from '@/lib/activity-log';
 import { parseContextStack, type SwitcherId } from '@/lib/contextSwitchers';
 import { useOrg } from '@/contexts/OrgContext';
+import { useAppProgressStore, type AppProgressKind } from '@/stores/app-progress';
 import styles from './shell.module.css';
+
+function inferProgressKind(phase: string): AppProgressKind {
+  const lower = phase.toLowerCase();
+  if (lower.includes('deepseek') || lower.includes('launchfile') || lower.includes('explorar')) {
+    return 'deepseek';
+  }
+  if (lower.includes('clon') || lower.includes('transfer') || lower.includes('descarreg') || lower.includes('depend')) {
+    return 'install';
+  }
+  return 'launch';
+}
 
 function SwitcherTrail({
   layers,
@@ -71,6 +84,36 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     if (!activeOrg) return;
     void launcherBoot().catch(() => undefined);
   }, [activeOrg?.id]);
+
+  useEffect(() => {
+    const setProgress = useAppProgressStore.getState().setProgress;
+    const clearProgress = useAppProgressStore.getState().clearProgress;
+    const timers = new Map<string, number>();
+    const unlisten = listen<{ repository: string; percent: number; phase: string }>('launcher-progress', (event) => {
+      const id = event.payload.repository;
+      const percent = event.payload.percent;
+      setProgress(id, {
+        percent,
+        phase: event.payload.phase,
+        kind: inferProgressKind(event.payload.phase),
+      });
+      const existing = timers.get(id);
+      if (existing) window.clearTimeout(existing);
+      if (percent >= 100) {
+        timers.set(
+          id,
+          window.setTimeout(() => {
+            clearProgress(id);
+            timers.delete(id);
+          }, 800),
+        );
+      }
+    });
+    return () => {
+      void unlisten.then((stop) => stop());
+      for (const timer of timers.values()) window.clearTimeout(timer);
+    };
+  }, []);
 
   useEffect(() => {
     const audio = audioRef.current;

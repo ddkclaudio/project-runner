@@ -21,6 +21,7 @@ import {
   type InstallResult,
   type LaunchResult,
 } from '@/lib/launcher-api';
+import { useAppProgressStore } from '@/stores/app-progress';
 import styles from '@/pages/library.module.css';
 
 export function appIconSrc(app: { iconPath?: string | null; appIconUrl?: string | null }) {
@@ -67,14 +68,23 @@ export function useLibraryMutations() {
 
   return {
     async install(app: AppView, options?: { assetName?: string; tag?: string; confirmWine?: boolean }) {
+      const id = appId(app);
+      const { isBusy, setProgress, clearProgress } = useAppProgressStore.getState();
+      if (isBusy(id)) {
+        toast.error('Já em curso…');
+        return null;
+      }
+      setProgress(id, { percent: 1, phase: 'A iniciar instalação…', kind: 'install' });
       try {
-        const result = await appInstall(appId(app), options);
+        const result = await appInstall(id, options);
         if (!result.needsChoice && !result.needsConfirm) toast.success(result.message);
         await refresh();
         return result;
       } catch (err) {
         toast.error(launcherError(err));
         return null;
+      } finally {
+        clearProgress(id);
       }
     },
     async launch(
@@ -82,9 +92,21 @@ export function useLibraryMutations() {
       executable?: string,
       options?: { force?: boolean },
     ): Promise<LaunchResult | null> {
+      const id = appId(app);
+      const { isBusy, setProgress, clearProgress } = useAppProgressStore.getState();
+      if (isBusy(id) && !options?.force) {
+        toast.error('Já em curso…');
+        return null;
+      }
+      setProgress(id, {
+        percent: 1,
+        phase: options?.force ? 'A forçar inicialização…' : 'A iniciar…',
+        kind: 'launch',
+      });
       try {
-        const result = await appLaunch(appId(app), executable, options?.force ?? false);
+        const result = await appLaunch(id, executable, options?.force ?? false);
         if (result.needsForce && !options?.force) {
+          clearProgress(id);
           window.dispatchEvent(
             new CustomEvent('painel-port-busy', {
               detail: {
@@ -103,6 +125,8 @@ export function useLibraryMutations() {
       } catch (err) {
         toast.error(launcherError(err));
         return null;
+      } finally {
+        window.setTimeout(() => clearProgress(id), 700);
       }
     },
     async hide(app: AppView) {
