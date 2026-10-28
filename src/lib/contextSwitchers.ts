@@ -16,6 +16,7 @@ export type ContextStack = {
 function isDeepLibraryPath(pathname: string): boolean {
   return (
     pathname.startsWith('/catalog') ||
+    pathname.startsWith('/comunicacoes') ||
     pathname.startsWith('/settings') ||
     pathname.startsWith('/orgs') ||
     pathname.startsWith('/apps/new') ||

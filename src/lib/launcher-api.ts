@@ -164,6 +164,40 @@ export function libraryList() {
   return invoke<LibrarySnapshot>('library_list');
 }
 
+export type CommunicationNode = {
+  id: string;
+  folderName: string;
+  repository: string;
+  name: string;
+  x: number;
+  y: number;
+  /** O Run flow inicia esta app quando ela está parada. */
+  alwaysOn: boolean;
+};
+
+export type CommunicationEdge = {
+  id: string;
+  source: string;
+  target: string;
+};
+
+export type CommunicationsGraph = {
+  nodes: CommunicationNode[];
+  edges: CommunicationEdge[];
+};
+
+export function communicationsGet() {
+  return invoke<CommunicationsGraph>('communications_get');
+}
+
+export function communicationsSave(graph: CommunicationsGraph) {
+  return invoke<CommunicationsGraph>('communications_save', { graph });
+}
+
+export function communicationsOpenDir() {
+  return invoke<void>('communications_open_dir');
+}
+
 export function libraryRefresh(force = false) {
   return invoke<LibrarySnapshot>('library_refresh', { force });
 }

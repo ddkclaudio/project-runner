@@ -189,7 +189,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         {navOpen ? (
           <button type="button" className={styles.backdrop} aria-label="Fechar menu de navegação" onClick={closeNav} />
         ) : null}
-        <main className={styles.main} id="main-content" tabIndex={-1}>
+        <main
+          className={pathname.startsWith('/comunicacoes') ? styles.mainCanvas : styles.main}
+          id="main-content"
+          tabIndex={-1}
+        >
           {orgLoading ? <p style={{ color: 'var(--text-muted)', padding: 24 }}>A carregar organização…</p> : null}
           {!orgLoading && !activeOrg ? (
             <p style={{ color: 'var(--text-muted)', padding: 24 }}>Crie ou escolha uma organização para continuar.</p>

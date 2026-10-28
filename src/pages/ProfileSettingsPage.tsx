@@ -98,9 +98,31 @@ export function ProfileSettingsPage() {
       (draft.cloudflareApiToken.trim() !== (settings.data.cloudflareApiToken ?? '').trim() ||
         draft.cloudflaredPath.trim() !== (settings.data.cloudflaredPath ?? '').trim()),
   );
+  const deepseekDirty = Boolean(
+    settings.data && draft.deepseekApiToken.trim() !== (settings.data.deepseekApiToken ?? '').trim(),
+  );
+  const profileDirty = name.trim() !== (user?.displayName ?? '').trim();
+  const locationDirty = Boolean(location.data && dataPath.trim() !== location.data.current.trim());
+  const launcherDirty = Boolean(
+    settings.data &&
+      (draft.platform !== settings.data.platform ||
+        draft.sortBy !== settings.data.sortBy ||
+        draft.useGridView !== settings.data.useGridView ||
+        draft.startFullscreen !== settings.data.startFullscreen ||
+        draft.githubApiToken.trim() !== (settings.data.githubApiToken ?? '').trim() ||
+        draft.appListRepository.trim() !== (settings.data.appListRepository ?? '').trim() ||
+        draft.painelUpdateRepository.trim() !== (settings.data.painelUpdateRepository ?? '').trim() ||
+        draft.backgroundImagePath.trim() !== (settings.data.backgroundImagePath ?? '').trim() ||
+        Math.abs(draft.backgroundOpacity - settings.data.backgroundOpacity) > 0.0001 ||
+        draft.launcherMusicPath.trim() !== (settings.data.launcherMusicPath ?? '').trim() ||
+        Math.abs(draft.musicVolume - settings.data.musicVolume) > 0.0001 ||
+        draft.closeAfterLaunch !== settings.data.closeAfterLaunch ||
+        draft.enableGamepadInput !== settings.data.enableGamepadInput),
+  );
 
   async function saveDeepseek(event: React.FormEvent) {
     event.preventDefault();
+    if (!deepseekDirty) return;
     setBusy(true);
     setError(null);
     try {
@@ -136,6 +158,7 @@ export function ProfileSettingsPage() {
 
   async function saveLauncher(event: React.FormEvent) {
     event.preventDefault();
+    if (!launcherDirty) return;
     setBusy(true);
     setError(null);
     try {
@@ -151,6 +174,7 @@ export function ProfileSettingsPage() {
 
   async function saveProfile(event: React.FormEvent) {
     event.preventDefault();
+    if (!profileDirty) return;
     setBusy(true);
     setError(null);
     try {
@@ -165,6 +189,7 @@ export function ProfileSettingsPage() {
 
   async function saveLocation(event: React.FormEvent) {
     event.preventDefault();
+    if (!locationDirty) return;
     setBusy(true);
     setError(null);
     try {
@@ -223,7 +248,9 @@ export function ProfileSettingsPage() {
         <FormRow label="Username">
           <Input value={prefs.username} onChange={(event) => patchPrefs({ username: event.target.value })} />
         </FormRow>
-        <FormCard.Footer right={<Button type="submit" variant="secondary" disabled={busy}>Salvar perfil</Button>} />
+        {profileDirty ? (
+          <FormCard.Footer right={<Button type="submit" variant="secondary" disabled={busy}>Salvar</Button>} />
+        ) : null}
       </FormCard>
 
       <FormCard onSubmit={(event) => void saveDeepseek(event)} aria-label="DeepSeek" style={{ marginTop: 20 }}>
@@ -243,13 +270,15 @@ export function ProfileSettingsPage() {
             Sem token, o arranque bloqueia se a app ainda não tiver Launchfile. Obtenha a chave em platform.deepseek.com.
           </FormCard.Hint>
         </FormRow>
-        <FormCard.Footer
-          right={
-            <Button type="submit" variant="secondary" disabled={busy || settings.isLoading}>
-              Salvar token
-            </Button>
-          }
-        />
+        {deepseekDirty ? (
+          <FormCard.Footer
+            right={
+              <Button type="submit" variant="secondary" disabled={busy || settings.isLoading}>
+                Salvar
+              </Button>
+            }
+          />
+        ) : null}
       </FormCard>
 
       <FormCard onSubmit={(event) => void saveCloudflare(event)} aria-label="Cloudflare" style={{ marginTop: 20 }}>
@@ -289,7 +318,7 @@ export function ProfileSettingsPage() {
           right={
             cloudflareDirty ? (
               <Button type="submit" variant="secondary" disabled={busy || settings.isLoading}>
-                Salvar Cloudflare
+                Salvar
               </Button>
             ) : null
           }
@@ -334,9 +363,11 @@ export function ProfileSettingsPage() {
               >
                 Usar predefinida (AppData)
               </Button>
-              <Button type="submit" variant="secondary" disabled={busy}>
-                Salvar pasta
-              </Button>
+              {locationDirty ? (
+                <Button type="submit" variant="secondary" disabled={busy}>
+                  Salvar
+                </Button>
+              ) : null}
             </div>
           }
         />
@@ -505,13 +536,15 @@ export function ProfileSettingsPage() {
           checked={draft.enableGamepadInput}
           onChange={(enableGamepadInput) => patchDraft({ enableGamepadInput })}
         />
-        <FormCard.Footer
-          right={
-            <Button type="submit" variant="secondary" disabled={busy || settings.isLoading}>
-              Salvar definições
-            </Button>
-          }
-        />
+        {launcherDirty ? (
+          <FormCard.Footer
+            right={
+              <Button type="submit" variant="secondary" disabled={busy || settings.isLoading}>
+                Salvar
+              </Button>
+            }
+          />
+        ) : null}
       </FormCard>
 
       <Modal

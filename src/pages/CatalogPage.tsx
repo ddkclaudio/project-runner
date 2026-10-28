@@ -285,7 +285,7 @@ function RemoteCatalog() {
 
   async function saveToken() {
     const current = settings.data;
-    if (!current) return;
+    if (!current || token.trim() === current.githubApiToken.trim()) return;
     const { dataDir: _dataDir, appVersion: _appVersion, ...rest } = current;
     try {
       await settingsSave({ ...rest, githubApiToken: token.trim() });
@@ -330,9 +330,11 @@ function RemoteCatalog() {
               </Button>
             }
             right={
-              <Button type="submit" variant="secondary" disabled={!token.trim()}>
-                Salvar token
-              </Button>
+              settings.data && token.trim() !== settings.data.githubApiToken.trim() ? (
+                <Button type="submit" variant="secondary">
+                  Salvar
+                </Button>
+              ) : null
             }
           />
         </FormCard>

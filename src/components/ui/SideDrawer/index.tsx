@@ -26,8 +26,13 @@ export interface SideDrawerProps {
   ariaLabel?: string;
   /** aria-label do botão fechar / backdrop. */
   closeLabel?: string;
-  /** Trava scroll do `body` enquanto aberto. Default: true. */
+  /** Trava scroll do `body` enquanto aberto. Default: true. Ignorado quando `modal` é false. */
   lockScroll?: boolean;
+  /**
+   * Cobre a página e bloqueia o que está atrás. False encaixa o painel na linha do pai,
+   * sem véu, para o canvas continuar recebendo clique.
+   */
+  modal?: boolean;
   className?: string;
   bodyClassName?: string;
 }
@@ -98,6 +103,7 @@ export function SideDrawer({
   ariaLabel,
   closeLabel = 'Fechar',
   lockScroll = true,
+  modal = true,
   className,
   bodyClassName,
 }: SideDrawerProps) {
@@ -110,13 +116,14 @@ export function SideDrawer({
       if (e.key === 'Escape') onClose();
     }
     document.addEventListener('keydown', onKey);
-    const prev = lockScroll ? document.body.style.overflow : null;
-    if (lockScroll) document.body.style.overflow = 'hidden';
+    const holdScroll = modal && lockScroll;
+    const prev = holdScroll ? document.body.style.overflow : null;
+    if (holdScroll) document.body.style.overflow = 'hidden';
     return () => {
       document.removeEventListener('keydown', onKey);
-      if (lockScroll && prev != null) document.body.style.overflow = prev;
+      if (holdScroll && prev != null) document.body.style.overflow = prev;
     };
-  }, [open, onClose, lockScroll]);
+  }, [open, onClose, lockScroll, modal]);
 
   useLayoutEffect(() => {
     const panel = panelRef.current;
@@ -128,7 +135,7 @@ export function SideDrawer({
     const mq = window.matchMedia(MOBILE_QUERY);
 
     function applyFit() {
-      if (!open || mq.matches) {
+      if (!modal || !open || mq.matches) {
         panelEl.style.removeProperty('min-width');
         return;
       }
@@ -149,27 +156,35 @@ export function SideDrawer({
       mq.removeEventListener('change', applyFit);
       panel.style.removeProperty('min-width');
     };
-  }, [open, title, headerLeading, headerActions]);
+  }, [open, title, headerLeading, headerActions, modal]);
 
   const fullTitle = typeof title === 'string' ? title : null;
   const label = ariaLabel || fullTitle || 'Painel';
 
-  return createPortal(
+  const panel = (
     <>
-      <button
-        type="button"
-        className={cx(styles.backdrop, open && styles.backdropOpen)}
-        aria-label={closeLabel}
-        tabIndex={open ? 0 : -1}
-        onClick={onClose}
-      />
+      {modal ? (
+        <button
+          type="button"
+          className={cx(styles.backdrop, open && styles.backdropOpen)}
+          aria-label={closeLabel}
+          tabIndex={open ? 0 : -1}
+          onClick={onClose}
+        />
+      ) : null}
       <aside
         ref={panelRef}
-        className={cx(styles.panel, open && styles.panelOpen, className)}
-        role="dialog"
-        aria-modal="true"
+        className={cx(
+          styles.panel,
+          modal ? open && styles.panelOpen : styles.panelDock,
+          !modal && open && styles.panelDockOpen,
+          className,
+        )}
+        role={modal ? 'dialog' : 'complementary'}
+        aria-modal={modal ? true : undefined}
         aria-label={label}
         aria-hidden={!open}
+        inert={!open && !modal ? true : undefined}
       >
         <div ref={headerRef} className={styles.header}>
           <div className={styles.headerMain}>
@@ -204,7 +219,9 @@ export function SideDrawer({
         <div className={cx(styles.body, bodyClassName)}>{children}</div>
         {footer ? <div className={styles.footer}>{footer}</div> : null}
       </aside>
-    </>,
-    document.body,
+    </>
   );
+
+  if (!modal) return panel;
+  return createPortal(panel, document.body);
 }

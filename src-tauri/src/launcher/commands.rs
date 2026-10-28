@@ -4,7 +4,9 @@ use crate::launcher::launch::{self, LaunchResult};
 use crate::launcher::runners::{self, LaunchConfigSave, LaunchConfigView};
 use crate::launcher::runtime;
 use crate::launcher::self_update::{self, UpdateStatus};
-use crate::launcher::store::{self, AppEntry, AppView, LibrarySnapshot, PublicSettings, SettingsInput};
+use crate::launcher::store::{
+    self, AppEntry, AppView, CommunicationsGraph, LibrarySnapshot, PublicSettings, SettingsInput,
+};
 use crate::launcher::github;
 use crate::session::AppPaths;
 use serde::Serialize;
@@ -528,6 +530,26 @@ pub fn settings_get(paths: State<'_, AppPaths>) -> Result<PublicSettings, String
 #[tauri::command]
 pub fn settings_save(paths: State<'_, AppPaths>, input: SettingsInput) -> Result<PublicSettings, String> {
     store::apply_settings(&paths.org_root()?, input)
+}
+
+#[tauri::command]
+pub fn communications_get(paths: State<'_, AppPaths>) -> Result<CommunicationsGraph, String> {
+    store::load_communications(&paths.org_root()?)
+}
+
+#[tauri::command]
+pub fn communications_save(
+    paths: State<'_, AppPaths>,
+    graph: CommunicationsGraph,
+) -> Result<CommunicationsGraph, String> {
+    store::save_communications(&paths.org_root()?, graph)
+}
+
+#[tauri::command]
+pub fn communications_open_dir(paths: State<'_, AppPaths>) -> Result<(), String> {
+    let root = paths.org_root()?;
+    store::ensure_root(&root)?;
+    launch::reveal_dir(&root)
 }
 
 #[tauri::command]

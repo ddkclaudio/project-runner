@@ -467,7 +467,7 @@ pub fn open_launch_dir(meta: &Path, workspace: &Path, repository: &str) -> Resul
     reveal_dir(&dir)
 }
 
-fn reveal_dir(dir: &Path) -> Result<(), String> {
+pub(crate) fn reveal_dir(dir: &Path) -> Result<(), String> {
     if !dir.is_dir() {
         return Err("A pasta ainda não existe.".into());
     }

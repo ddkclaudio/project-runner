@@ -105,9 +105,11 @@ export function ResetPasswordForm() {
                   disabled={loading}
                 />
               </div>
-              <Button type="submit" variant="secondary" size="lg" loading={loading} style={{ width: '100%' }}>
-                Salvar senha
-              </Button>
+              {(password.trim() || confirm.trim()) ? (
+                <Button type="submit" variant="secondary" size="lg" loading={loading} style={{ width: '100%' }}>
+                  Salvar
+                </Button>
+              ) : null}
             </>
           )}
           <AuthCard.Hint>

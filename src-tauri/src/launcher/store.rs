@@ -1281,6 +1281,136 @@ pub fn cache_age_ok(checked_at: i64, installed: bool, now: i64, force: bool) -> 
     age < interval && age < 24 * 3600
 }
 
+const MAX_COMMUNICATION_NODES: usize = 200;
+const MAX_COMMUNICATION_EDGES: usize = 400;
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CommunicationNode {
+    pub id: String,
+    #[serde(default)]
+    pub folder_name: String,
+    #[serde(default)]
+    pub repository: String,
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub x: f64,
+    #[serde(default)]
+    pub y: f64,
+    #[serde(default)]
+    pub always_on: bool,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CommunicationEdge {
+    pub id: String,
+    pub source: String,
+    pub target: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CommunicationsGraph {
+    #[serde(default)]
+    pub nodes: Vec<CommunicationNode>,
+    #[serde(default)]
+    pub edges: Vec<CommunicationEdge>,
+}
+
+fn communications_path(root: &Path) -> PathBuf {
+    root.join("communications.json")
+}
+
+fn clip_line(value: &str, max: usize) -> String {
+    let mut out = String::new();
+    for ch in value.trim().chars() {
+        if out.chars().count() >= max {
+            break;
+        }
+        if ch == '\n' || ch == '\r' {
+            continue;
+        }
+        out.push(ch);
+    }
+    out
+}
+
+pub fn empty_communications() -> CommunicationsGraph {
+    CommunicationsGraph {
+        nodes: Vec::new(),
+        edges: Vec::new(),
+    }
+}
+
+pub fn sanitize_communications(graph: CommunicationsGraph) -> CommunicationsGraph {
+    let mut nodes = Vec::new();
+    let mut seen_nodes = std::collections::HashSet::new();
+    for node in graph.nodes {
+        if nodes.len() >= MAX_COMMUNICATION_NODES {
+            break;
+        }
+        let id = clip_line(&node.id, 80);
+        if id.is_empty() || !seen_nodes.insert(id.clone()) || !node.x.is_finite() || !node.y.is_finite() {
+            continue;
+        }
+        nodes.push(CommunicationNode {
+            id,
+            folder_name: clip_line(&node.folder_name, 300),
+            repository: clip_line(&node.repository, 300),
+            name: clip_line(&node.name, 200),
+            x: node.x,
+            y: node.y,
+            always_on: node.always_on,
+        });
+    }
+    let ids: std::collections::HashSet<String> = nodes.iter().map(|node| node.id.clone()).collect();
+    let mut edges = Vec::new();
+    let mut seen_edges = std::collections::HashSet::new();
+    let mut pairs = std::collections::HashSet::new();
+    for edge in graph.edges {
+        if edges.len() >= MAX_COMMUNICATION_EDGES {
+            break;
+        }
+        let id = clip_line(&edge.id, 80);
+        let source = clip_line(&edge.source, 80);
+        let target = clip_line(&edge.target, 80);
+        if id.is_empty() || source.is_empty() || target.is_empty() || source == target {
+            continue;
+        }
+        if !ids.contains(&source) || !ids.contains(&target) {
+            continue;
+        }
+        if !seen_edges.insert(id.clone()) || !pairs.insert((source.clone(), target.clone())) {
+            continue;
+        }
+        edges.push(CommunicationEdge { id, source, target });
+    }
+    CommunicationsGraph { nodes, edges }
+}
+
+pub fn load_communications(root: &Path) -> Result<CommunicationsGraph, String> {
+    let path = communications_path(root);
+    if !path.is_file() {
+        return Ok(empty_communications());
+    }
+    let raw = fs::read_to_string(&path).map_err(|err| err.to_string())?;
+    if raw.trim().is_empty() {
+        return Ok(empty_communications());
+    }
+    let parsed: CommunicationsGraph = serde_json::from_str(&raw).map_err(|err| err.to_string())?;
+    Ok(sanitize_communications(parsed))
+}
+
+pub fn save_communications(root: &Path, graph: CommunicationsGraph) -> Result<CommunicationsGraph, String> {
+    ensure_root(root)?;
+    let clean = sanitize_communications(graph);
+    let raw = serde_json::to_string_pretty(&clean).map_err(|err| err.to_string())?;
+    fs::write(communications_path(root), raw).map_err(|err| err.to_string())?;
+    Ok(clean)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1298,6 +1428,36 @@ mod tests {
         // Mesmo repo (acme/um) duas vezes — pastas distintas — ambas ficam.
         assert_eq!(apps.len(), 3);
         assert_eq!(apps[2].app_icon_url.as_deref(), Some("https://example.com/a.png"));
+    }
+
+    #[test]
+    fn communications_drop_invalid_edges() {
+        let graph = sanitize_communications(CommunicationsGraph {
+            nodes: vec![CommunicationNode {
+                id: "a".into(),
+                folder_name: "hello".into(),
+                repository: "acme/hello".into(),
+                name: "Hello".into(),
+                x: 10.0,
+                y: 20.0,
+                always_on: false,
+            }],
+            edges: vec![
+                CommunicationEdge {
+                    id: "e1".into(),
+                    source: "a".into(),
+                    target: "a".into(),
+                },
+                CommunicationEdge {
+                    id: "e2".into(),
+                    source: "a".into(),
+                    target: "missing".into(),
+                },
+            ],
+        });
+        assert!(graph.edges.is_empty());
+        assert_eq!(graph.nodes.len(), 1);
+        assert_eq!(graph.nodes[0].folder_name, "hello");
     }
 
     #[test]

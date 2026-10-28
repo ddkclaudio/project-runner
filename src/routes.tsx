@@ -6,6 +6,7 @@ import { RegisterForm } from '@/components/features/auth/RegisterForm';
 import { ForgotPasswordForm } from '@/components/features/auth/ForgotPasswordForm';
 import { ResetPasswordForm } from '@/components/features/auth/ResetPasswordForm';
 import { HomePage } from '@/pages/HomePage';
+import { CommunicationsPage } from '@/pages/CommunicationsPage';
 import { ComponentsPage } from '@/pages/ComponentsPage';
 import { NewAppPage } from '@/pages/NewAppPage';
 import { AppPage } from '@/pages/AppPage';
@@ -57,6 +58,7 @@ export const routes = [
     element: <RequireAuth />,
     children: [
       { path: '/', element: <HomePage /> },
+      { path: '/comunicacoes', element: <CommunicationsPage /> },
       { path: '/catalog', element: <CatalogPage mode="remote" /> },
       { path: '/catalog/files', element: <CatalogPage mode="files" /> },
       { path: '/settings', element: <Navigate to="/settings/profile" replace /> },

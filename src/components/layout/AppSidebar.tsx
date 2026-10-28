@@ -1,4 +1,4 @@
-import { IconHome, IconBooks, IconSettings, IconComponents, IconLayoutSidebarLeftCollapse, IconLayoutSidebarLeftExpand, IconLayoutDashboard, IconVersions, IconTerminal2, IconLink, IconNotes, IconAdjustments, IconCloud } from '@tabler/icons-react';
+import { IconHome, IconAffiliate, IconBooks, IconSettings, IconComponents, IconLayoutSidebarLeftCollapse, IconLayoutSidebarLeftExpand, IconLayoutDashboard, IconVersions, IconTerminal2, IconLink, IconNotes, IconAdjustments, IconCloud } from '@tabler/icons-react';
 import { useLocation } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { NavMenuItem } from '@/components/ui/NavMenuItem';
@@ -60,6 +60,7 @@ function ShellSidebar({ label, items }: { label: string; items: NavItem[] }) {
 
 const LIBRARY: NavItem[] = [
   { label: 'Biblioteca', href: '/', Icon: IconHome, exact: true },
+  { label: 'Comunicações', href: '/comunicacoes', Icon: IconAffiliate, exact: true },
   { label: 'Catálogo', href: '/catalog', Icon: IconBooks, exact: false },
   { label: 'Definições', href: '/settings/profile', Icon: IconSettings, exact: false },
   { label: 'Componentes', href: '/components', Icon: IconComponents, exact: false },
