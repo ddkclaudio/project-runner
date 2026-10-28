@@ -45,6 +45,22 @@ function storageKey(uid: string) {
   return `${STORAGE_PREFIX}:${uid}`;
 }
 
+/** Fuso gravado nas preferências locais. Defeito: America/Sao_Paulo. */
+export function readStoredTimezone(): string {
+  const fallback = 'America/Sao_Paulo';
+  try {
+    for (let index = 0; index < localStorage.length; index += 1) {
+      const key = localStorage.key(index);
+      if (!key?.startsWith(`${STORAGE_PREFIX}:`)) continue;
+      const parsed = JSON.parse(localStorage.getItem(key) || '') as { timezone?: string };
+      if (parsed.timezone?.trim()) return parsed.timezone.trim();
+    }
+  } catch {
+    return fallback;
+  }
+  return fallback;
+}
+
 function defaultPrefs(username = ''): AccountLocalPrefs {
   return {
     timezone: 'America/Sao_Paulo',

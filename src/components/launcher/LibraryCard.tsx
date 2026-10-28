@@ -1,6 +1,6 @@
 import { convertFileSrc } from '@tauri-apps/api/core';
 import { openUrl } from '@tauri-apps/plugin-opener';
-import { IconPlayerPlay, IconDownload, IconRefresh, IconFolder, IconEyeOff, IconEye, IconExternalLink } from '@tabler/icons-react';
+import { IconPlayerPlay, IconPlayerStop, IconDownload, IconRefresh, IconFolder, IconEyeOff, IconEye, IconExternalLink } from '@tabler/icons-react';
 import { useNavigate } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import { ItemCard, gridCardStyles as gc } from '@/components/ui/ItemCard';
@@ -15,6 +15,7 @@ import {
   appInstall,
   appLaunch,
   appOpenFolder,
+  appStop,
   launcherError,
   windowClose,
   type AppView,
@@ -77,7 +78,21 @@ export function useLibraryMutations() {
       setProgress(id, { percent: 1, phase: 'A iniciar instalação…', kind: 'install' });
       try {
         const result = await appInstall(id, options);
-        if (!result.needsChoice && !result.needsConfirm) toast.success(result.message);
+        if (result.needsChoice || result.needsConfirm) {
+          window.dispatchEvent(
+            new CustomEvent('painel-install-choice', {
+              detail: {
+                app,
+                assets: result.assets,
+                warning: result.warning ?? null,
+                confirm: result.needsConfirm,
+                tag: options?.tag ?? null,
+              },
+            }),
+          );
+        } else {
+          toast.success(result.message);
+        }
         await refresh();
         return result;
       } catch (err) {
@@ -105,6 +120,14 @@ export function useLibraryMutations() {
       });
       try {
         const result = await appLaunch(id, executable, options?.force ?? false);
+        if (result.needsChoice) {
+          window.dispatchEvent(
+            new CustomEvent('painel-exe-choice', {
+              detail: { app, executables: result.executables },
+            }),
+          );
+          return result;
+        }
         if (result.needsForce && !options?.force) {
           clearProgress(id);
           window.dispatchEvent(
@@ -129,6 +152,35 @@ export function useLibraryMutations() {
         window.setTimeout(() => clearProgress(id), 700);
       }
     },
+    async stop(app: AppView) {
+      try {
+        const result = await appStop(appId(app));
+        await refresh();
+        await queryClient.invalidateQueries({ queryKey: ['launcher', 'cloudflare'] });
+        toast.success(result.tunnelStopped ? 'App e túnel Cloudflare parados.' : 'App parada.');
+        return true;
+      } catch (err) {
+        toast.error(launcherError(err));
+        return false;
+      }
+    },
+    async restart(app: AppView) {
+      const id = appId(app);
+      const { isBusy } = useAppProgressStore.getState();
+      if (isBusy(id)) {
+        toast.error('Já em curso…');
+        return null;
+      }
+      try {
+        await appStop(id);
+        await refresh();
+        await queryClient.invalidateQueries({ queryKey: ['launcher', 'cloudflare'] });
+      } catch (err) {
+        toast.error(launcherError(err));
+        return null;
+      }
+      return this.launch(app);
+    },
     async hide(app: AppView) {
       try {
         await appHide(appId(app), !app.manuallyHidden);
@@ -148,6 +200,7 @@ export function useLibraryMutations() {
       navigate(appHref(app));
     },
     primaryLabel(app: AppView) {
+      if (app.running && app.status !== 'not_installed') return 'Reiniciar';
       if (app.status === 'update') return 'Atualizar';
       if (app.status === 'installed') return 'Lançar';
       return 'Descarregar';
@@ -172,14 +225,29 @@ export function libraryMenu(
   onPrimary: (app: AppView) => void,
 ): ContextMenuItem[] {
   const primary = actions.primaryLabel(app);
-  const PrimaryIcon = app.status === 'update' ? IconRefresh : app.status === 'installed' ? IconPlayerPlay : IconDownload;
+  const restarting = Boolean(app.running && app.status !== 'not_installed');
+  const PrimaryIcon = restarting || app.status === 'update' ? IconRefresh : app.status === 'installed' ? IconPlayerPlay : IconDownload;
   const items: ContextMenuItem[] = [
-    { label: 'Abrir', icon: <IconEye size={15} />, onClick: () => actions.open(app) },
+    { label: 'Abrir no Painel', icon: <IconEye size={15} />, onClick: () => actions.open(app) },
     { label: primary, icon: <PrimaryIcon size={15} />, onClick: () => onPrimary(app) },
   ];
+  if (app.running) {
+    items.push({
+      label: 'Parar',
+      icon: <IconPlayerStop size={15} />,
+      onClick: () => void actions.stop(app),
+    });
+  }
+  if (restarting && app.status === 'update') {
+    items.push({
+      label: 'Atualizar',
+      icon: <IconRefresh size={15} />,
+      onClick: () => void actions.install(app),
+    });
+  }
   if (app.running && app.openUrl) {
     items.push({
-      label: 'Abrir',
+      label: 'Abrir no browser',
       icon: <IconExternalLink size={15} />,
       onClick: () => void openUrl(app.openUrl!).catch(() => undefined),
     });

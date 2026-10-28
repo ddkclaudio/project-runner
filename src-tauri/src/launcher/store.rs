@@ -49,6 +49,8 @@ pub struct AppView {
     pub running_pid: Option<u32>,
     /// Nome do processo (ex. node.exe), se `running`.
     pub running_process_name: Option<String>,
+    /// A pasta instalada é um clone git (selector de branch).
+    pub git_clone: bool,
 }
 
 #[derive(Serialize)]
@@ -781,7 +783,11 @@ pub const REPOSITORIES_DIR: &str = "repositories";
 /// Destino do clone/instalação: `{workspace}/{appFolder}/repositories/{repo}/`.
 pub fn install_dir(workspace: &Path, app: &AppEntry) -> PathBuf {
     if let Some(path) = app.install_path.as_ref().filter(|path| !path.trim().is_empty()) {
-        return PathBuf::from(path);
+        let custom = PathBuf::from(path);
+        // Um save antigo gravou a pasta da app (view) como installPath. Isso não é um destino custom.
+        if custom != app_dir(workspace, app) {
+            return custom;
+        }
     }
     app_dir(workspace, app)
         .join(REPOSITORIES_DIR)
@@ -822,7 +828,8 @@ pub fn migrate_legacy_install(workspace: &Path, app: &AppEntry) -> Result<PathBu
 }
 
 /// Metadados do Painel (fora do git): `{workspace}/{appFolder}/launch-info/`.
-/// Contém version.txt, LastPlayed.txt, open_url.txt, selected_executable.txt, Launchfile.
+/// Contém version.txt, LastPlayed.txt, open_url.txt, selected_executable.txt.
+/// O Launchfile de cada branch fica em `launch-info/branches/{branch}/`.
 pub fn launch_info_dir(workspace: &Path, app: &AppEntry) -> PathBuf {
     if let Some(path) = app.install_path.as_ref().filter(|path| !path.trim().is_empty()) {
         let project = PathBuf::from(path);
@@ -874,6 +881,51 @@ pub fn ensure_launch_info(workspace: &Path, app: &AppEntry) -> Result<PathBuf, S
         }
     }
     Ok(info)
+}
+
+/// Segmento de pasta para uma branch. `/` e `\` viram `__`.
+pub fn sanitize_branch_dir(branch: &str) -> String {
+    let mut out = String::new();
+    for ch in branch.trim().chars() {
+        match ch {
+            '/' | '\\' => out.push_str("__"),
+            c if c.is_control() => {}
+            ':' | '*' | '?' | '"' | '<' | '>' | '|' => out.push('_'),
+            c => out.push(c),
+        }
+    }
+    let trimmed = out.trim().trim_matches('.').to_string();
+    if trimmed.is_empty() {
+        "default".into()
+    } else {
+        trimmed
+    }
+}
+
+pub fn branch_launch_dir(info: &Path, branch: &str) -> PathBuf {
+    info.join("branches").join(sanitize_branch_dir(branch))
+}
+
+pub fn active_branch_name(meta: &Path, workspace: &Path, app: &AppEntry) -> String {
+    let project = install_dir(workspace, app);
+    crate::launcher::runtime::selected_branch(meta, &app.folder_name)
+        .filter(|item| !item.trim().is_empty())
+        .or_else(|| crate::launcher::install::current_branch(&project))
+        .unwrap_or_else(|| "default".into())
+}
+
+/// Pasta do Launchfile da branch activa. Copia o ficheiro antigo da raiz uma vez.
+pub fn active_launch_dir(meta: &Path, workspace: &Path, app: &AppEntry) -> Result<PathBuf, String> {
+    let info = ensure_launch_info(workspace, app)?;
+    let branch = active_branch_name(meta, workspace, app);
+    let dir = branch_launch_dir(&info, &branch);
+    fs::create_dir_all(&dir).map_err(|err| err.to_string())?;
+    let dest = dir.join("Launchfile");
+    let legacy = info.join("Launchfile");
+    if !dest.is_file() && legacy.is_file() {
+        fs::copy(&legacy, &dest).map_err(|err| err.to_string())?;
+    }
+    Ok(dir)
 }
 
 fn read_text(path: &Path) -> Option<String> {
@@ -1030,6 +1082,7 @@ pub fn view_app(meta: &Path, workspace: &Path, app: &AppEntry, settings: &Value,
         },
         running_pid: running_entry.as_ref().map(|item| item.pid),
         running_process_name: running_entry.map(|item| item.process_name),
+        git_clone: dir.join(".git").is_dir(),
     }
 }
 
@@ -1179,9 +1232,20 @@ pub fn locate_install(root: &Path, repository: &str, path: &str) -> Result<(), S
     save_apps(root, &apps)
 }
 
+pub fn halt_app(meta: &Path, workspace: &Path, app: &AppEntry) {
+    if crate::launcher::runtime::is_running(meta, &app.folder_name) {
+        let _ = crate::launcher::runtime::stop(meta, &app.folder_name);
+    }
+    let info = launch_info_dir(workspace, app);
+    if info.is_dir() {
+        let _ = crate::launcher::cloudflare::stop_tunnel(meta, workspace, &info, app);
+    }
+}
+
 pub fn delete_install(meta: &Path, workspace: &Path, repository: &str) -> Result<(), String> {
     let apps = load_apps(meta);
     let app = find_app(&apps, repository)?;
+    halt_app(meta, workspace, app);
     let dir = install_dir(workspace, app);
     if !dir.is_dir() {
         return Err("Esta app não está instalada.".into());
@@ -1234,6 +1298,13 @@ mod tests {
         // Mesmo repo (acme/um) duas vezes — pastas distintas — ambas ficam.
         assert_eq!(apps.len(), 3);
         assert_eq!(apps[2].app_icon_url.as_deref(), Some("https://example.com/a.png"));
+    }
+
+    #[test]
+    fn branch_dir_replaces_slashes() {
+        assert_eq!(sanitize_branch_dir("feature/foo"), "feature__foo");
+        assert_eq!(sanitize_branch_dir("gh-pages"), "gh-pages");
+        assert_eq!(sanitize_branch_dir("  "), "default");
     }
 
     #[test]

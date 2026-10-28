@@ -18,13 +18,18 @@ function FormCardRoot({ children, className, ...props }: FormCardProps) {
 function FormCardHeader({
   title,
   subtitle,
+  actions,
 }: {
   title: React.ReactNode;
   subtitle?: React.ReactNode;
+  actions?: React.ReactNode;
 }) {
   return (
     <div className={styles.header}>
-      <h1 className={styles.title}>{title}</h1>
+      <div className={styles.headerTop}>
+        <h1 className={styles.title}>{title}</h1>
+        {actions ? <div className={styles.headerActions}>{actions}</div> : null}
+      </div>
       {subtitle && <div className={styles.subtitle}>{subtitle}</div>}
     </div>
   );

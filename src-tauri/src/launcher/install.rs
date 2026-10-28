@@ -28,18 +28,67 @@ fn result_message(message: impl Into<String>) -> InstallResult {
     }
 }
 
-fn git_clone(repository: &str, dir: &Path, on_progress: &impl Fn(u32, &str)) -> Result<(), String> {
+fn run_git(dir: &Path, args: &[&str]) -> Result<(), String> {
     use std::process::Command;
+    let shown = args.first().copied().unwrap_or("git");
+    let status = Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args(args)
+        .status()
+        .map_err(|err| format!("git {shown} falhou: {err}"))?;
+    if !status.success() {
+        return Err(format!("git {shown} não concluiu com sucesso."));
+    }
+    Ok(())
+}
+
+/// `git fetch` + checkout da branch (funciona em clones shallow).
+pub fn checkout_branch(dir: &Path, branch: &str) -> Result<(), String> {
+    let branch = branch.trim();
+    if branch.is_empty() {
+        return Err("Indique a branch.".into());
+    }
+    if !dir.join(".git").is_dir() {
+        return Err("Esta instalação não é um clone git.".into());
+    }
+    run_git(dir, &["fetch", "origin", branch, "--depth", "1"])?;
+    run_git(dir, &["checkout", "-B", branch, "FETCH_HEAD"])
+}
+
+pub fn current_branch(dir: &Path) -> Option<String> {
+    use std::process::Command;
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args(["rev-parse", "--abbrev-ref", "HEAD"])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let name = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if name.is_empty() || name == "HEAD" {
+        None
+    } else {
+        Some(name)
+    }
+}
+
+fn git_clone(
+    repository: &str,
+    dir: &Path,
+    branch: Option<&str>,
+    on_progress: &impl Fn(u32, &str),
+) -> Result<(), String> {
+    use std::process::Command;
+    let branch = branch.map(str::trim).filter(|item| !item.is_empty());
     if dir.join(".git").is_dir() {
         on_progress(40, "A actualizar o clone");
-        let status = Command::new("git")
-            .args(["-C", &dir.display().to_string(), "pull", "--ff-only"])
-            .status()
-            .map_err(|err| format!("git pull falhou: {err}"))?;
-        if !status.success() {
-            return Err("git pull não concluiu com sucesso.".into());
+        if let Some(branch) = branch {
+            return checkout_branch(dir, branch);
         }
-        return Ok(());
+        return run_git(dir, &["pull", "--ff-only"]);
     }
     if dir.exists() {
         let empty = fs::read_dir(dir).map(|mut entries| entries.next().is_none()).unwrap_or(false);
@@ -53,8 +102,16 @@ fn git_clone(repository: &str, dir: &Path, on_progress: &impl Fn(u32, &str)) -> 
     }
     on_progress(20, "A clonar o repositório");
     let url = format!("https://github.com/{repository}.git");
+    let mut args = vec!["clone".to_string(), "--depth".into(), "1".into()];
+    if let Some(branch) = branch {
+        args.push("--branch".into());
+        args.push(branch.to_string());
+        args.push("--single-branch".into());
+    }
+    args.push(url);
+    args.push(dir.display().to_string());
     let status = Command::new("git")
-        .args(["clone", "--depth", "1", &url, &dir.display().to_string()])
+        .args(&args)
         .status()
         .map_err(|err| format!("git clone falhou (está o git instalado?): {err}"))?;
     if !status.success() {
@@ -86,12 +143,14 @@ pub async fn install(
         Ok(Some(release)) => release,
         Ok(None) | Err(_) => {
             on_progress(10, "Sem release — a clonar via git");
-            git_clone(&app.repository, &dir, &on_progress)?;
+            let branch = crate::launcher::runtime::selected_branch(meta, &app.folder_name);
+            git_clone(&app.repository, &dir, branch.as_deref(), &on_progress)?;
             let _ = store::write_version(workspace, &app, "git");
             if dir.join("package.json").is_file() {
                 on_progress(85, "A instalar dependências Node");
                 crate::launcher::runners::node::ensure_dependencies(&dir)?;
             }
+            ensure_launchfile_during_install(meta, workspace, &app, &on_progress).await?;
             on_progress(100, "Concluído");
             let mut done = result_message(format!("{} clonada de {}.", app.name, app.repository));
             done.installed_version = Some("git".into());
@@ -158,6 +217,7 @@ pub async fn install(
     let mut cache = store::load_version_cache(meta);
     github::cache_release(&mut cache, &app.repository, &release);
     store::save_version_cache(meta, &cache)?;
+    ensure_launchfile_during_install(meta, workspace, &app, &on_progress).await?;
     on_progress(100, "Concluído");
     Ok(InstallResult {
         needs_choice: false,
@@ -167,6 +227,20 @@ pub async fn install(
         message: format!("{} instalada ({})", app.name, release.tag),
         installed_version: Some(release.tag),
     })
+}
+
+async fn ensure_launchfile_during_install(
+    meta: &Path,
+    workspace: &Path,
+    app: &store::AppEntry,
+    on_progress: &impl Fn(u32, &str),
+) -> Result<(), String> {
+    crate::launcher::launch::ensure_branch_launchfile(meta, workspace, app, &|percent, phase| {
+        let mapped = 85 + (percent.min(100) * 14 / 100);
+        on_progress(mapped.min(99), phase);
+    })
+    .await?;
+    Ok(())
 }
 
 fn place_asset(file: &Path, dir: &Path, asset: &AssetInfo) -> Result<(), String> {

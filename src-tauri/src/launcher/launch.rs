@@ -36,12 +36,12 @@ fn no_window(command: &mut Command) {
 pub fn executables_for(meta: &Path, workspace: &Path, repository: &str) -> Result<Vec<String>, String> {
     let apps = load_apps(meta);
     let app = find_app(&apps, repository)?;
-    let info = store::ensure_launch_info(workspace, app)?;
     let project = install_dir(workspace, app);
     if !project.is_dir() {
         return Err("Esta app não está instalada.".into());
     }
-    let (_, candidates) = runners::resolve_candidates(&info)?;
+    let launch_dir = store::active_launch_dir(meta, workspace, app)?;
+    let (_, candidates) = runners::resolve_candidates(&launch_dir)?;
     Ok(candidates.into_iter().map(|item| item.label).collect())
 }
 
@@ -49,7 +49,8 @@ pub fn set_executable(meta: &Path, workspace: &Path, repository: &str, executabl
     let apps = load_apps(meta);
     let app = find_app(&apps, repository)?;
     let info = store::ensure_launch_info(workspace, app)?;
-    let id = match runners::resolve_candidates(&info) {
+    let launch_dir = store::active_launch_dir(meta, workspace, app)?;
+    let id = match runners::resolve_candidates(&launch_dir) {
         Ok((_, candidates)) => candidates
             .iter()
             .find(|item| item.label == executable.trim() || item.id == executable.trim())
@@ -78,13 +79,10 @@ pub async fn launch(
     }
     let info = store::ensure_launch_info(workspace, &app)?;
     on_progress(3, "A preparar Launchfile…");
+    let launch_dir = ensure_branch_launchfile(meta, workspace, &app, on_progress).await?;
 
-    if !crate::launcher::launchfile::exists(&info) {
-        let token = store::deepseek_token_of(meta);
-        crate::launcher::deepseek::ensure_launchfile(&project, &info, &token, on_progress).await?;
-    }
-
-    let doc = crate::launcher::launchfile::read(&info)?;
+    let doc = crate::launcher::launchfile::read(&launch_dir)?;
+    let start_cmd = crate::launcher::launchfile::lasting_start(&doc);
     let port = crate::launcher::launchfile::effective_port(&doc);
 
     crate::launcher::activity_log::info(
@@ -95,10 +93,11 @@ pub async fn launch(
         ),
     );
 
-    // Sempre: se a porta do Launchfile já está em uso → modal (Start e Lançar).
+    // Porta ocupada pelo processo desta app: reinicia sem modal. Outro processo pede Forçar.
     if let Some(port) = port {
         if let Some((pid, process_name)) = crate::launcher::runtime::port_occupant(port) {
-            if !force {
+            let own = crate::launcher::runtime::is_running(meta, &runtime_key);
+            if !force && !own {
                 crate::launcher::activity_log::warn(
                     "launch",
                     &format!("needs_force port={port} pid={pid} name={process_name}"),
@@ -107,7 +106,7 @@ pub async fn launch(
                     started: false,
                     needs_choice: false,
                     needs_force: true,
-                    executables: vec![doc.start.clone()],
+                    executables: vec![start_cmd.clone()],
                     close_after_launch: false,
                     message: format!(
                         "A porta {port} está em uso por {process_name} (PID {pid}). Quer forçar a inicialização e libertar a porta?"
@@ -118,10 +117,14 @@ pub async fn launch(
                     force_process_name: Some(process_name),
                 });
             }
+            if own {
+                let _ = crate::launcher::cloudflare::stop_tunnel(meta, workspace, &info, &app);
+                let _ = crate::launcher::runtime::stop(meta, &runtime_key);
+            }
             on_progress(48, &format!("A libertar porta {port}…"));
             crate::launcher::activity_log::info(
                 "launch",
-                &format!("force: a libertar porta {port} (occupant {process_name}/{pid})"),
+                &format!("a libertar porta {port} (occupant {process_name}/{pid} own={own})"),
             );
             crate::launcher::runtime::free_port(port)?;
             let _ = crate::launcher::runtime::clear_running_for_port(meta, port);
@@ -140,21 +143,25 @@ pub async fn launch(
         let _ = crate::launcher::runtime::stop(meta, &runtime_key);
     }
 
-    if crate::launcher::launchfile::needs_install(&project, &doc) {
-        if let Some(install) = doc.install.as_ref().map(|item| item.trim()).filter(|item| !item.is_empty()) {
-            on_progress(55, "A instalar dependências…");
-            crate::launcher::activity_log::info("launch", &format!("install: {install}"));
-            runners::run_command_wait(&project, install)?;
-            on_progress(70, "Dependências instaladas");
-        }
-    }
-
     let work = doc
         .cwd
         .as_ref()
         .map(|item| project.join(item))
         .filter(|path| path.is_dir())
         .unwrap_or_else(|| project.clone());
+
+    let pre_start = crate::launcher::launchfile::finished_steps(&doc.pre_start);
+    for (index, step) in pre_start.iter().enumerate() {
+        on_progress(52, &format!("Pre-start {}/{}…", index + 1, pre_start.len()));
+        crate::launcher::activity_log::info("launch", &format!("pre-start: {step}"));
+        runners::run_command_wait(&work, step)?;
+    }
+    let setup = crate::launcher::launchfile::start_setup(&doc);
+    for (index, step) in setup.iter().enumerate() {
+        on_progress(68, &format!("Start {}/{}…", index + 1, setup.len()));
+        crate::launcher::activity_log::info("launch", &format!("start setup: {step}"));
+        runners::run_command_wait(&work, step)?;
+    }
     let settings = store::load_settings(meta);
     let open_url = crate::launcher::launchfile::open_url_of(&doc);
 
@@ -164,7 +171,7 @@ pub async fn launch(
 
     on_progress(75, "A arrancar o processo…");
     let spawned =
-        runners::spawn_command_line_with_env(&project, &doc.start, Some(&work), &doc.env, Some(&info))?;
+        runners::spawn_command_line_with_env(&project, &start_cmd, Some(&work), &doc.env, Some(&info))?;
     let Some((wrapper_pid, wrapper_name)) = spawned else {
         return Err("O comando de arranque não devolveu um processo.".into());
     };
@@ -213,9 +220,9 @@ pub async fn launch(
         wrapper_pid,
         &wrapper_name,
         open_url.as_deref(),
-        Some(doc.start.as_str()),
+        Some(start_cmd.as_str()),
         Some(cwd.as_ref()),
-        &format!("cmd:{}", doc.start),
+        &format!("cmd:{start_cmd}"),
         port,
     )?;
     crate::launcher::activity_log::info(
@@ -230,12 +237,13 @@ pub async fn launch(
 
     let cf_cfg = crate::launcher::cloudflare::load_config(&info);
     if cf_cfg.start_with_app {
+        let _ = crate::launcher::cloudflare::stop_tunnel(meta, workspace, &info, &app);
         on_progress(98, "A iniciar túnel Cloudflare…");
         crate::launcher::activity_log::info(
             "cloudflare",
             &format!("start_with_app folder={runtime_key}"),
         );
-        match crate::launcher::cloudflare::start(meta, &info, &app).await {
+        match crate::launcher::cloudflare::start(meta, workspace, &info, &app).await {
             Ok(view) => {
                 crate::launcher::activity_log::info(
                     "cloudflare",
@@ -264,7 +272,7 @@ pub async fn launch(
         started: true,
         needs_choice: false,
         needs_force: false,
-        executables: vec![doc.start.clone()],
+        executables: vec![start_cmd],
         close_after_launch: close,
         message: format!("{} a correr.", app.name),
         open_url,
@@ -287,6 +295,27 @@ fn launch_out_grew_with_port_busy(info: &Path, mark: u64) -> bool {
         || fresh.contains("address already in use")
 }
 
+/// Cria o Launchfile da branch activa só quando ele ainda não existe.
+pub async fn ensure_branch_launchfile(
+    meta: &Path,
+    workspace: &Path,
+    app: &store::AppEntry,
+    on_progress: &impl Fn(u32, &str),
+) -> Result<PathBuf, String> {
+    let project = install_dir(workspace, app);
+    if !project.is_dir() {
+        return Err("Esta app não está instalada.".into());
+    }
+    let launch_dir = store::active_launch_dir(meta, workspace, app)?;
+    if !crate::launcher::launchfile::exists(&launch_dir) {
+        let token = store::deepseek_token_of(meta);
+        let branch = store::active_branch_name(meta, workspace, app);
+        crate::launcher::deepseek::ensure_launchfile(&project, &launch_dir, &token, &branch, on_progress)
+            .await?;
+    }
+    Ok(launch_dir)
+}
+
 pub async fn generate_launchfile(
     meta: &Path,
     workspace: &Path,
@@ -300,9 +329,11 @@ pub async fn generate_launchfile(
     if !project.is_dir() {
         return Err("Esta app não está instalada.".into());
     }
-    let info = store::ensure_launch_info(workspace, app)?;
+    let launch_dir = store::active_launch_dir(meta, workspace, app)?;
+    let branch = store::active_branch_name(meta, workspace, app);
     let token = store::deepseek_token_of(meta);
-    crate::launcher::deepseek::generate_launchfile(&project, &info, &token, on_progress).await?;
+    crate::launcher::deepseek::generate_launchfile(&project, &launch_dir, &token, &branch, on_progress)
+        .await?;
     on_progress(100, "Launchfile gerado");
     Ok(())
 }
@@ -426,6 +457,17 @@ pub fn open_folder(meta: &Path, workspace: &Path, repository: &str) -> Result<()
     let apps = load_apps(meta);
     let app = find_app(&apps, repository)?;
     let dir = store::app_dir(workspace, app);
+    reveal_dir(&dir)
+}
+
+pub fn open_launch_dir(meta: &Path, workspace: &Path, repository: &str) -> Result<(), String> {
+    let apps = load_apps(meta);
+    let app = find_app(&apps, repository)?;
+    let dir = store::active_launch_dir(meta, workspace, app)?;
+    reveal_dir(&dir)
+}
+
+fn reveal_dir(dir: &Path) -> Result<(), String> {
     if !dir.is_dir() {
         return Err("A pasta ainda não existe.".into());
     }
@@ -447,7 +489,7 @@ pub fn open_folder(meta: &Path, workspace: &Path, repository: &str) -> Result<()
     Ok(())
 }
 
-pub fn desktop_shortcut(root: &Path, repository: &str) -> Result<String, String> {
+pub fn desktop_shortcut(root: &Path, repository: &str, org_id: &str) -> Result<String, String> {
     if cfg!(target_os = "macos") {
         return Err("Atalhos no ambiente de trabalho não estão disponíveis no macOS.".into());
     }
@@ -459,7 +501,7 @@ pub fn desktop_shortcut(root: &Path, repository: &str) -> Result<String, String>
     #[cfg(windows)]
     {
         let link = desktop.join(format!("{}.lnk", app.name.replace(['\\', '/', ':', '*', '?', '"', '<', '>', '|'], " ")));
-        let args = format!("--run {}", app.name);
+        let args = shortcut_args(&app.name, org_id);
         let script = format!(
             "$s=(New-Object -ComObject WScript.Shell).CreateShortcut('{}'); $s.TargetPath='{}'; $s.Arguments='{}'; $s.WorkingDirectory='{}'; $s.Save()",
             link.display().to_string().replace('\'', "''"),
@@ -480,10 +522,10 @@ pub fn desktop_shortcut(root: &Path, repository: &str) -> Result<String, String>
     {
         let file = desktop.join(format!("{}.desktop", store::sanitize_folder(&app.name)));
         let contents = format!(
-            "[Desktop Entry]\nType=Application\nName={}\nExec=\"{}\" --run {}\nPath={}\nTerminal=false\n",
+            "[Desktop Entry]\nType=Application\nName={}\nExec=\"{}\" {}\nPath={}\nTerminal=false\n",
             app.name,
             exe.display(),
-            app.name,
+            shortcut_args(&app.name, org_id),
             exe.parent().unwrap_or(Path::new(".")).display()
         );
         fs::write(&file, contents).map_err(|err| err.to_string())?;
@@ -517,7 +559,7 @@ fn desktop_dir() -> Option<PathBuf> {
     }
 }
 
-pub fn steam_shortcut(root: &Path, repository: &str) -> Result<String, String> {
+pub fn steam_shortcut(root: &Path, repository: &str, org_id: &str) -> Result<String, String> {
     if cfg!(target_os = "macos") {
         return Err("Atalhos da Steam não estão disponíveis no macOS.".into());
     }
@@ -538,10 +580,18 @@ pub fn steam_shortcut(root: &Path, repository: &str) -> Result<String, String> {
     let Vdf::Map(top) = &mut shortcuts else {
         return Err("O ficheiro de atalhos da Steam não foi reconhecido.".into());
     };
-    let entry = steam_entry(&exe, &app.name);
+    let entry = steam_entry(&exe, &app.name, org_id);
+    let quoted_exe = format!("\"{}\"", exe.display());
     if let Some((_, Vdf::Map(items))) = top.iter_mut().find(|(key, _)| key == "shortcuts") {
-        let index = items.len().to_string();
-        items.push((index, entry));
+        if let Some((_, slot)) = items
+            .iter_mut()
+            .find(|(_, item)| steam_shortcut_matches(item, &app.name, &quoted_exe))
+        {
+            *slot = entry;
+        } else {
+            let index = items.len().to_string();
+            items.push((index, entry));
+        }
     } else {
         top.push(("shortcuts".into(), Vdf::Map(vec![("0".into(), entry)])));
     }
@@ -600,7 +650,27 @@ fn steam_config_dir() -> Option<PathBuf> {
     newest.map(|(_, path)| path)
 }
 
-fn steam_entry(exe: &Path, name: &str) -> Vdf {
+fn shortcut_args(name: &str, org_id: &str) -> String {
+    let safe = name.replace('"', "");
+    format!("--run \"{safe}\" --org {org_id}")
+}
+
+fn steam_shortcut_matches(entry: &Vdf, name: &str, quoted_exe: &str) -> bool {
+    let Vdf::Map(fields) = entry else {
+        return false;
+    };
+    let app_name = fields.iter().find_map(|(key, value)| match (key.as_str(), value) {
+        ("AppName", Vdf::Str(text)) => Some(text.as_str()),
+        _ => None,
+    });
+    let exe = fields.iter().find_map(|(key, value)| match (key.as_str(), value) {
+        ("Exe", Vdf::Str(text)) => Some(text.as_str()),
+        _ => None,
+    });
+    app_name == Some(name) && exe == Some(quoted_exe)
+}
+
+fn steam_entry(exe: &Path, name: &str, org_id: &str) -> Vdf {
     let quoted_exe = format!("\"{}\"", exe.display());
     let start = format!("\"{}\"", exe.parent().unwrap_or(Path::new(".")).display());
     let appid = (crc32(format!("{quoted_exe}{name}").as_bytes()) | 0x8000_0000) as i32;
@@ -608,7 +678,7 @@ fn steam_entry(exe: &Path, name: &str) -> Vdf {
         ("AppName".into(), Vdf::Str(name.into())),
         ("Exe".into(), Vdf::Str(quoted_exe)),
         ("StartDir".into(), Vdf::Str(start)),
-        ("LaunchOptions".into(), Vdf::Str(format!("--run {name}"))),
+        ("LaunchOptions".into(), Vdf::Str(shortcut_args(name, org_id))),
         ("appid".into(), Vdf::Int(appid)),
         ("IsHidden".into(), Vdf::Int(0)),
         ("AllowDesktopConfig".into(), Vdf::Int(1)),

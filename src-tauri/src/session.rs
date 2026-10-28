@@ -91,6 +91,14 @@ impl AppPaths {
             .ok_or_else(|| "Nenhuma organização activa.".into())
     }
 
+    pub fn active_org_id(&self) -> Result<String, String> {
+        let guard = self.active.lock().map_err(|_| "Sessão bloqueada.".to_string())?;
+        guard
+            .as_ref()
+            .map(|session| session.org_id.clone())
+            .ok_or_else(|| "Nenhuma organização activa.".into())
+    }
+
     /// Workspace da org: clones em `{appsRoot}/{orgSlug}/`.
     pub fn workspace_root(&self) -> Result<PathBuf, String> {
         let guard = self.active.lock().map_err(|_| "Sessão bloqueada.".to_string())?;

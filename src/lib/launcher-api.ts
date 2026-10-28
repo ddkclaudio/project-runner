@@ -29,6 +29,8 @@ export type AppView = AppEntry & {
   runningPid?: number | null;
   /** Nome do processo (ex. node.exe) enquanto corre. */
   runningProcessName?: string | null;
+  /** A pasta instalada é um clone git. */
+  gitClone?: boolean;
 };
 
 export type LibrarySnapshot = {
@@ -73,6 +75,13 @@ export type CloudflareConfig = {
   tunnelName?: string | null;
 };
 
+export type HostnameClaim = {
+  hostname: string;
+  folderName: string;
+  name: string;
+  repository: string;
+};
+
 export type CloudflareView = {
   config: CloudflareConfig;
   effectivePort?: number | null;
@@ -85,6 +94,8 @@ export type CloudflareView = {
   publicUrl?: string | null;
   pid?: number | null;
   mode?: CloudflareMode | null;
+  /** Hostnames named já reservados por apps desta org. */
+  hostnameClaims?: HostnameClaim[];
 };
 
 export type CloudflareSaveInput = {
@@ -93,6 +104,11 @@ export type CloudflareSaveInput = {
   portOverride?: number | null;
   hostname?: string | null;
   tunnelName?: string | null;
+};
+
+export type CloudflareZone = {
+  id: string;
+  name: string;
 };
 
 export type InstallResult = {
@@ -205,8 +221,12 @@ export function appLaunch(repository: string, executable?: string, force = false
   });
 }
 
+export type StopResult = {
+  tunnelStopped: boolean;
+};
+
 export function appStop(repository: string) {
-  return invoke<void>('app_stop', { repository });
+  return invoke<StopResult>('app_stop', { repository });
 }
 
 export function appBranches(repository: string) {
@@ -219,6 +239,10 @@ export function appSetBranch(repository: string, branch: string) {
 
 export function appOpenFolder(repository: string) {
   return invoke<void>('app_open_folder', { repository });
+}
+
+export function appOpenLaunchfileDir(repository: string) {
+  return invoke<void>('app_open_launchfile_dir', { repository });
 }
 
 export function appExecutables(repository: string) {
@@ -331,6 +355,10 @@ export function appCloudflareStop(repository: string) {
 
 export function appCloudflareStatus(repository: string) {
   return invoke<CloudflareView>('app_cloudflare_status', { repository });
+}
+
+export function appCloudflareZones() {
+  return invoke<CloudflareZone[]>('app_cloudflare_zones');
 }
 
 export function catalogLoad() {

@@ -7,11 +7,9 @@ import { Button } from '@/components/ui/Button';
 import { GridView } from '@/components/ui/GridView';
 import { ViewToolbar, type ViewMode } from '@/components/ui/ViewToolbar';
 import { FilterDropdown, type FilterOption } from '@/components/ui/FilterDropdown';
-import { Modal } from '@/components/ui/Modal';
-import { InlineAlert } from '@/components/ui/InlineAlert';
 import { libraryList, libraryRefresh, librarySetFilter, librarySetSort, settingsGet, settingsSave, type AppView } from '@/lib/launcher-api';
 import { isEditableTarget } from '@/lib/hotkeys';
-import { appId, ChoiceList, LibraryCard, useLibraryMutations } from '@/components/launcher/LibraryCard';
+import { appId, LibraryCard, useLibraryMutations } from '@/components/launcher/LibraryCard';
 import { LibraryListView } from '@/components/launcher/LibraryListView';
 import { useToast } from '@/components/ui/Toast';
 import { launcherError } from '@/lib/launcher-api';
@@ -57,9 +55,6 @@ export function HomePage() {
   const statusSynced = useRef(false);
   const [focus, setFocus] = useState(-1);
   const progressById = useAppProgressStore((s) => s.byId);
-  const clearProgress = useAppProgressStore((s) => s.clearProgress);
-  const [choice, setChoice] = useState<{ app: AppView; assets: string[]; warning?: string | null; confirm?: boolean } | null>(null);
-  const [exeChoice, setExeChoice] = useState<{ app: AppView; executables: string[] } | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -166,18 +161,15 @@ export function HomePage() {
   }, [apps.length, settings.data?.enableGamepadInput]);
 
   async function primary(app: AppView) {
-    if (app.status === 'installed') {
-      const result = await actions.launch(app);
-      if (result?.needsChoice) setExeChoice({ app, executables: result.executables });
+    if (app.running && app.status !== 'not_installed') {
+      await actions.restart(app);
       return;
     }
-    const result = await actions.install(app);
-    if (!result) return;
-    if (result.needsChoice || result.needsConfirm) {
-      setChoice({ app, assets: result.assets, warning: result.warning, confirm: result.needsConfirm });
-    } else {
-      clearProgress(appId(app));
+    if (app.status === 'installed') {
+      await actions.launch(app);
+      return;
     }
+    await actions.install(app);
   }
 
   async function changeSort(sortBy: string) {
@@ -295,32 +287,6 @@ export function HomePage() {
       ) : (
         <LibraryListView apps={apps} loading={listLoading} onPrimary={(item) => void primary(item)} onOpen={(item) => actions.open(item)} />
       )}
-      <Modal isOpen={Boolean(choice)} onClose={() => setChoice(null)} title="Escolher ficheiro">
-        <Modal.Content>
-          {choice?.warning ? <InlineAlert variant="warning">{choice.warning}</InlineAlert> : null}
-          <Modal.Text>{choice?.confirm ? 'Confirme para continuar a instalação.' : 'Há mais do que um ficheiro compatível.'}</Modal.Text>
-          <ChoiceList
-            options={choice?.assets ?? []}
-            onPick={(asset) => {
-              const app = choice?.app;
-              setChoice(null);
-              if (app) void actions.install(app, { assetName: asset, confirmWine: true });
-            }}
-          />
-        </Modal.Content>
-      </Modal>
-      <Modal isOpen={Boolean(exeChoice)} onClose={() => setExeChoice(null)} title="Escolher executável">
-        <Modal.Content>
-          <ChoiceList
-            options={exeChoice?.executables ?? []}
-            onPick={(executable) => {
-              const app = exeChoice?.app;
-              setExeChoice(null);
-              if (app) void actions.launch(app, executable);
-            }}
-          />
-        </Modal.Content>
-      </Modal>
     </PageShell>
   );
 }

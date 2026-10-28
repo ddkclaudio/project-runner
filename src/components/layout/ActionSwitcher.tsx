@@ -5,12 +5,14 @@ import {
   IconBrandGithub,
   IconBrandCloudflare,
   IconCloud,
+  IconDownload,
   IconExternalLink,
   IconFolder,
   IconLoader2,
   IconPlayerPlay,
   IconPlayerStop,
   IconPlayerSkipForward,
+  IconRefresh,
 } from '@tabler/icons-react';
 import { SwitcherDropdown, type SwitcherItem } from '@/components/ui/SwitcherDropdown';
 import { appId, useLibraryMutations } from '@/components/launcher/LibraryCard';
@@ -18,7 +20,6 @@ import {
   appCloudflareGet,
   appDetail,
   appSkipUpdate,
-  appStop,
   launcherError,
 } from '@/lib/launcher-api';
 import { useToast } from '@/components/ui/Toast';
@@ -59,33 +60,58 @@ export function ActionSwitcher({ repository }: { repository: string }) {
     },
   });
 
-  const cloudflareUrl =
-    cloudflare.data?.running && running ? cloudflare.data.publicUrl?.trim() || '' : '';
-  const tunnelRunning = Boolean(cloudflareUrl);
-  const cloudflareMode = cloudflare.data?.mode ?? cloudflare.data?.config?.mode;
-  const showQuickOpen =
-    tunnelRunning && (cloudflareMode === 'quick' || isQuickCloudflareUrl(cloudflareUrl));
-  const showDnsOpen =
-    tunnelRunning &&
-    (cloudflareMode === 'named' || (!isQuickCloudflareUrl(cloudflareUrl) && Boolean(cloudflareUrl)));
+  const tunnelRunning = Boolean(cloudflare.data?.running);
+  const configMode = cloudflare.data?.config?.mode;
+  const runtimeMode = cloudflare.data?.mode;
+  const cloudflareMode = runtimeMode ?? configMode;
+  const namedHostname = cloudflare.data?.config?.hostname?.trim() || '';
+  const livePublicUrl = tunnelRunning && running ? cloudflare.data?.publicUrl?.trim() || '' : '';
+  const quickUrl = livePublicUrl && isQuickCloudflareUrl(livePublicUrl) ? livePublicUrl : '';
+  const dnsUrl = (() => {
+    if (!tunnelRunning) return '';
+    if (livePublicUrl && !isQuickCloudflareUrl(livePublicUrl)) return livePublicUrl;
+    if (cloudflareMode === 'named' && namedHostname) {
+      return namedHostname.startsWith('http') ? namedHostname : `https://${namedHostname}`;
+    }
+    return '';
+  })();
+  const showQuickOpen = Boolean(running && tunnelRunning && quickUrl);
+  const showDnsOpen = Boolean(running && tunnelRunning && dnsUrl);
+  const restarting = Boolean(app && running && installed);
 
   const items: SwitcherItem[] = useMemo(() => {
-    if (!app || !installed) return [];
+    if (!app) return [];
+    const primaryLabel = actions.primaryLabel(app);
     const list: SwitcherItem[] = [
       {
         id: 'primary',
-        label: actions.primaryLabel(app),
-        searchText: 'lançar start descarregar atualizar instalar',
-        leading: <IconPlayerPlay size={14} aria-hidden="true" />,
+        label: primaryLabel,
+        searchText: 'lançar reiniciar start descarregar atualizar instalar',
+        leading: restarting || app.status === 'update' ? (
+          <IconRefresh size={14} aria-hidden="true" />
+        ) : app.status === 'not_installed' ? (
+          <IconDownload size={14} aria-hidden="true" />
+        ) : (
+          <IconPlayerPlay size={14} aria-hidden="true" />
+        ),
         disabled: busy,
       },
     ];
     if (running) {
       list.push({
         id: 'stop',
-        label: 'Stop',
+        label: 'Parar',
         searchText: 'stop parar',
         leading: <IconPlayerStop size={14} aria-hidden="true" />,
+        disabled: busy,
+      });
+    }
+    if (restarting && app.status === 'update') {
+      list.push({
+        id: 'update',
+        label: 'Atualizar',
+        searchText: 'atualizar update',
+        leading: <IconRefresh size={14} aria-hidden="true" />,
         disabled: busy,
       });
     }
@@ -97,7 +123,7 @@ export function ActionSwitcher({ repository }: { repository: string }) {
         leading: <IconExternalLink size={14} aria-hidden="true" />,
       });
     }
-    if (running && showQuickOpen) {
+    if (showQuickOpen) {
       list.push({
         id: 'open-cloudflare-quick',
         label: 'Abrir Cloudflare Quick',
@@ -105,7 +131,7 @@ export function ActionSwitcher({ repository }: { repository: string }) {
         leading: <IconBrandCloudflare size={14} aria-hidden="true" />,
       });
     }
-    if (running && showDnsOpen) {
+    if (showDnsOpen) {
       list.push({
         id: 'open-cloudflare-dns',
         label: 'Abrir Cloudflare DNS',
@@ -135,7 +161,7 @@ export function ActionSwitcher({ repository }: { repository: string }) {
       });
     }
     return list;
-  }, [app, actions, busy, installed, openAppUrl, running, showDnsOpen, showQuickOpen]);
+  }, [app, actions, busy, openAppUrl, restarting, running, showDnsOpen, showQuickOpen]);
 
   const selectedId = busy ? 'primary' : running ? 'stop' : 'primary';
 
@@ -155,32 +181,32 @@ export function ActionSwitcher({ repository }: { repository: string }) {
             toast.error('Já em curso…');
             return;
           }
+          if (running && app.status !== 'not_installed') {
+            void actions.restart(app);
+            return;
+          }
           if (app.status === 'installed') void actions.launch(app);
           else void actions.install(app);
           return;
         }
+        if (itemId === 'update') {
+          void actions.install(app);
+          return;
+        }
         if (itemId === 'stop') {
-          void appStop(appId(app))
-            .then(() =>
-              Promise.all([
-                queryClient.invalidateQueries({ queryKey: ['launcher'] }),
-                queryClient.invalidateQueries({ queryKey: ['launcher', 'cloudflare'] }),
-              ]),
-            )
-            .then(() => toast.success('App e túnel Cloudflare parados.'))
-            .catch((err) => toast.error(launcherError(err)));
+          void actions.stop(app);
           return;
         }
         if (itemId === 'open-browser' && openAppUrl) {
           void openUrl(openAppUrl).catch((err) => toast.error(launcherError(err)));
           return;
         }
-        if (itemId === 'open-cloudflare-quick' && cloudflareUrl) {
-          void openUrl(cloudflareUrl).catch((err) => toast.error(launcherError(err)));
+        if (itemId === 'open-cloudflare-quick' && quickUrl) {
+          void openUrl(quickUrl).catch((err) => toast.error(launcherError(err)));
           return;
         }
-        if (itemId === 'open-cloudflare-dns' && cloudflareUrl) {
-          void openUrl(cloudflareUrl).catch((err) => toast.error(launcherError(err)));
+        if (itemId === 'open-cloudflare-dns' && dnsUrl) {
+          void openUrl(dnsUrl).catch((err) => toast.error(launcherError(err)));
           return;
         }
         if (itemId === 'open-folder') {
@@ -197,7 +223,7 @@ export function ActionSwitcher({ repository }: { repository: string }) {
             .catch((err) => toast.error(launcherError(err)));
         }
       }}
-      getEmptyMessage={() => (installed ? 'Sem acções.' : 'Instale a app para ver acções.')}
+      getEmptyMessage={() => 'Sem acções.'}
       trigger={
         <>
           {busy ? (

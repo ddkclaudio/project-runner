@@ -61,7 +61,48 @@
   margin-top: auto;
 }
 
+.cfCardHead {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-bottom: var(--space-1);
+}
+
+.cfCardHead > :first-child {
+  flex: 1;
+  min-width: 0;
+}
+
+.hostnameRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  min-width: 0;
+}
+
+.hostnameRow > :first-child {
+  flex: 1 1 40%;
+  min-width: 0;
+}
+
+.hostnameDot {
+  flex: 0 0 auto;
+  color: var(--text-muted);
+  font-weight: 600;
+  user-select: none;
+}
+
+.hostnameRow > :last-child {
+  flex: 1 1 55%;
+  min-width: 0;
+}
+
 .progress {
+  align-self: stretch;
+  width: 100%;
+  max-width: none;
   height: 6px;
   border-radius: 99px;
   background: var(--bg-muted);
@@ -77,9 +118,12 @@
 .appProgressHost {
   display: flex;
   flex-direction: column;
+  align-self: stretch;
   gap: 8px;
   margin: 12px 0 4px;
-  max-width: 420px;
+  width: 100%;
+  max-width: none;
+  min-width: 0;
 }
 
 .appProgressPhase {
@@ -349,11 +393,42 @@
   margin-bottom: var(--space-5);
 }
 
+.overviewPanelHead {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-bottom: var(--space-3);
+}
+
 .overviewPanelTitle {
   margin: 0 0 var(--space-3);
   font-size: var(--font-md);
   font-weight: 600;
   color: var(--text-secondary);
+}
+
+.overviewPanelHead .overviewPanelTitle {
+  margin: 0;
+}
+
+.overviewPanelLink {
+  font-size: var(--font-base);
+  font-weight: 500;
+  color: var(--brand-green, #3ecf8e);
+  text-decoration: none;
+}
+
+.overviewPanelLink:hover {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.overviewPanelActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
 }
 
 .overviewRunning {

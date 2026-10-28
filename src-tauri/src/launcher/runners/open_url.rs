@@ -27,8 +27,8 @@ mod tests {
             port: Some(3000),
             url: Some("http://localhost:3000/react-gh-pages".into()),
             cwd: Some(".".into()),
-            install: Some("npm install".into()),
-            start: "npm start".into(),
+            pre_start: vec!["npm install".into()],
+            start: vec!["npm start".into()],
             env: BTreeMap::new(),
         };
         launchfile::write(&dir, &doc).unwrap();

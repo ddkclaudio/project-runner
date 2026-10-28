@@ -1,3 +1,5 @@
+import { readStoredTimezone } from '@/hooks/useAccountLocalPrefs';
+
 /** Format a number as a USD currency string */
 export function formatCurrency(value: number): string {
   return `$${value.toLocaleString('en-US')}`;
@@ -28,19 +30,32 @@ export function computeTotal(
 }
 
 /**
- * Format an ISO date string as "DD Mon YY HH:MM:SS"
- * e.g. "2026-04-15T10:07:43Z" → "15 Apr 26 10:07:43"
+ * Format an ISO date in the account timezone.
+ * e.g. "2026-04-15T10:07:43Z" → "15 abr 26 07:07:43" in America/Sao_Paulo.
  */
-export function formatDate(iso?: string): string {
+export function formatDate(iso?: string, timeZone?: string): string {
   if (!iso) return '-';
   const d = new Date(iso);
-  const day = String(d.getUTCDate()).padStart(2, '0');
-  const mon = d.toLocaleString('en', { month: 'short', timeZone: 'UTC' });
-  const yr = String(d.getUTCFullYear()).slice(2);
-  const hh = String(d.getUTCHours()).padStart(2, '0');
-  const mm = String(d.getUTCMinutes()).padStart(2, '0');
-  const ss = String(d.getUTCSeconds()).padStart(2, '0');
-  return `${day} ${mon} ${yr} ${hh}:${mm}:${ss}`;
+  if (Number.isNaN(d.getTime())) return iso;
+  const zone = timeZone?.trim() || readStoredTimezone();
+  try {
+    const parts = new Intl.DateTimeFormat('pt-PT', {
+      timeZone: zone,
+      day: '2-digit',
+      month: 'short',
+      year: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hourCycle: 'h23',
+    }).formatToParts(d);
+    const pick = (type: Intl.DateTimeFormatPartTypes) => parts.find((part) => part.type === type)?.value ?? '';
+    const month = pick('month').replace('.', '');
+    return `${pick('day')} ${month} ${pick('year')} ${pick('hour')}:${pick('minute')}:${pick('second')}`;
+  } catch {
+    if (zone === 'America/Sao_Paulo') return iso;
+    return formatDate(iso, 'America/Sao_Paulo');
+  }
 }
 
 /**

@@ -1,4 +1,4 @@
-use crate::launcher::cloudflare::{self, CloudflareSaveInput, CloudflareView};
+use crate::launcher::cloudflare::{self, CloudflareSaveInput, CloudflareView, CloudflareZone};
 use crate::launcher::install::{self, InstallResult};
 use crate::launcher::launch::{self, LaunchResult};
 use crate::launcher::runners::{self, LaunchConfigSave, LaunchConfigView};
@@ -11,6 +11,12 @@ use serde::Serialize;
 use serde_json::Value;
 use std::path::PathBuf;
 use tauri::{AppHandle, Emitter, Manager, State};
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StopResult {
+    pub tunnel_stopped: bool,
+}
 
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -129,7 +135,12 @@ pub fn library_save(paths: State<'_, AppPaths>, entry: AppEntry, previous: Optio
 
 #[tauri::command]
 pub fn library_remove(paths: State<'_, AppPaths>, repository: String) -> Result<(), String> {
-    store::remove_app(&paths.org_root()?, &repository)
+    let (meta, workspace) = roots(&paths)?;
+    let apps = store::load_apps(&meta);
+    if let Ok(app) = store::find_app(&apps, &repository) {
+        store::halt_app(&meta, &workspace, app);
+    }
+    store::remove_app(&meta, &repository)
 }
 
 #[tauri::command]
@@ -252,16 +263,17 @@ pub async fn app_generate_launchfile(
 }
 
 #[tauri::command]
-pub fn app_stop(paths: State<'_, AppPaths>, repository: String) -> Result<(), String> {
+pub fn app_stop(paths: State<'_, AppPaths>, repository: String) -> Result<StopResult, String> {
     let (meta, workspace) = roots(&paths)?;
     let apps = store::load_apps(&meta);
     let app = store::find_app(&apps, &repository)?.clone();
+    let tunnel_stopped = cloudflare::tunnel_is_running(&meta, &app);
     crate::launcher::activity_log::info("stop", &format!("folder={}", app.folder_name));
     match runtime::stop(&meta, &app.folder_name) {
         Ok(()) => {
             // Parar túnel Cloudflare e limpar URL pública com a app.
             if let Ok(info) = store::ensure_launch_info(&workspace, &app) {
-                match cloudflare::stop_tunnel(&meta, &info, &app) {
+                match cloudflare::stop_tunnel(&meta, &workspace, &info, &app) {
                     Ok(_) => crate::launcher::activity_log::info(
                         "cloudflare",
                         &format!("stop com a app folder={}", app.folder_name),
@@ -273,7 +285,7 @@ pub fn app_stop(paths: State<'_, AppPaths>, repository: String) -> Result<(), St
                 }
             }
             crate::launcher::activity_log::info("stop", &format!("ok folder={}", app.folder_name));
-            Ok(())
+            Ok(StopResult { tunnel_stopped })
         }
         Err(err) => {
             crate::launcher::activity_log::error("stop", &err, None);
@@ -286,6 +298,12 @@ pub fn app_stop(paths: State<'_, AppPaths>, repository: String) -> Result<(), St
 pub fn app_open_folder(paths: State<'_, AppPaths>, repository: String) -> Result<(), String> {
     let (meta, workspace) = roots(&paths)?;
     launch::open_folder(&meta, &workspace, &repository)
+}
+
+#[tauri::command]
+pub fn app_open_launchfile_dir(paths: State<'_, AppPaths>, repository: String) -> Result<(), String> {
+    let (meta, workspace) = roots(&paths)?;
+    launch::open_launch_dir(&meta, &workspace, &repository)
 }
 
 #[tauri::command]
@@ -312,8 +330,8 @@ pub fn app_launch_config_get(
     if !project.is_dir() {
         return Err("Esta app não está instalada.".into());
     }
-    let info = store::ensure_launch_info(&workspace, app)?;
-    runners::get_launch_config(&info)
+    let launch_dir = store::active_launch_dir(&meta, &workspace, app)?;
+    runners::get_launch_config(&launch_dir)
 }
 
 #[tauri::command]
@@ -329,25 +347,25 @@ pub fn app_launch_config_save(
     if !project.is_dir() {
         return Err("Esta app não está instalada.".into());
     }
-    let info = store::ensure_launch_info(&workspace, app)?;
-    runners::save_launch_config(&info, input)
+    let launch_dir = store::active_launch_dir(&meta, &workspace, app)?;
+    runners::save_launch_config(&launch_dir, input)
 }
 
-fn cloudflare_paths(
+fn cloudflare_paths_full(
     paths: &AppPaths,
     repository: &str,
-) -> Result<(PathBuf, PathBuf, AppEntry), String> {
+) -> Result<(PathBuf, PathBuf, PathBuf, AppEntry), String> {
     let (meta, workspace) = roots(paths)?;
     let apps = store::load_apps(&meta);
     let app = store::find_app(&apps, repository)?.clone();
     let info = store::ensure_launch_info(&workspace, &app)?;
-    Ok((meta, info, app))
+    Ok((meta, workspace, info, app))
 }
 
 #[tauri::command]
 pub fn app_cloudflare_get(paths: State<'_, AppPaths>, repository: String) -> Result<CloudflareView, String> {
-    let (meta, info, app) = cloudflare_paths(&paths, &repository)?;
-    Ok(cloudflare::view(&meta, &info, &app))
+    let (meta, workspace, info, app) = cloudflare_paths_full(&paths, &repository)?;
+    Ok(cloudflare::view(&meta, &workspace, &info, &app))
 }
 
 #[tauri::command]
@@ -356,9 +374,9 @@ pub fn app_cloudflare_save(
     repository: String,
     input: CloudflareSaveInput,
 ) -> Result<CloudflareView, String> {
-    let (meta, info, app) = cloudflare_paths(&paths, &repository)?;
-    cloudflare::save_config(&info, input)?;
-    Ok(cloudflare::view(&meta, &info, &app))
+    let (meta, workspace, info, app) = cloudflare_paths_full(&paths, &repository)?;
+    cloudflare::save_config(&meta, &workspace, &info, &app, input)?;
+    Ok(cloudflare::view(&meta, &workspace, &info, &app))
 }
 
 #[tauri::command]
@@ -366,20 +384,26 @@ pub async fn app_cloudflare_start(
     paths: State<'_, AppPaths>,
     repository: String,
 ) -> Result<CloudflareView, String> {
-    let (meta, info, app) = cloudflare_paths(&paths, &repository)?;
-    cloudflare::start(&meta, &info, &app).await
+    let (meta, workspace, info, app) = cloudflare_paths_full(&paths, &repository)?;
+    cloudflare::start(&meta, &workspace, &info, &app).await
 }
 
 #[tauri::command]
 pub fn app_cloudflare_stop(paths: State<'_, AppPaths>, repository: String) -> Result<CloudflareView, String> {
-    let (meta, info, app) = cloudflare_paths(&paths, &repository)?;
-    cloudflare::stop_tunnel(&meta, &info, &app)
+    let (meta, workspace, info, app) = cloudflare_paths_full(&paths, &repository)?;
+    cloudflare::stop_tunnel(&meta, &workspace, &info, &app)
 }
 
 #[tauri::command]
 pub fn app_cloudflare_status(paths: State<'_, AppPaths>, repository: String) -> Result<CloudflareView, String> {
-    let (meta, info, app) = cloudflare_paths(&paths, &repository)?;
-    Ok(cloudflare::view(&meta, &info, &app))
+    let (meta, workspace, info, app) = cloudflare_paths_full(&paths, &repository)?;
+    Ok(cloudflare::view(&meta, &workspace, &info, &app))
+}
+
+#[tauri::command]
+pub async fn app_cloudflare_zones(paths: State<'_, AppPaths>) -> Result<Vec<CloudflareZone>, String> {
+    let meta = paths.org_root()?;
+    cloudflare::list_zones(&meta).await
 }
 
 #[tauri::command]
@@ -435,13 +459,39 @@ pub async fn app_branches(paths: State<'_, AppPaths>, repository: String) -> Res
 }
 
 #[tauri::command]
-pub fn app_set_branch(paths: State<'_, AppPaths>, repository: String, branch: String) -> Result<AppView, String> {
+pub async fn app_set_branch(
+    app: AppHandle,
+    paths: State<'_, AppPaths>,
+    repository: String,
+    branch: String,
+) -> Result<AppView, String> {
     let (meta, workspace) = roots(&paths)?;
     let apps = store::load_apps(&meta);
-    let app = store::find_app(&apps, &repository)?;
-    runtime::set_selected_branch(&meta, &app.folder_name, &branch)?;
+    let entry = store::find_app(&apps, &repository)?.clone();
+    let dir = store::install_dir(&workspace, &entry);
+    if !dir.join(".git").is_dir() {
+        return Err("Esta instalação não é um clone git.".into());
+    }
+    let progress_key = entry.folder_name.clone();
+    if runtime::is_running(&meta, &entry.folder_name) {
+        runtime::stop(&meta, &entry.folder_name)?;
+        store::halt_app(&meta, &workspace, &entry);
+    }
+    emit(&app, &progress_key, 4, "A mudar de branch…");
+    install::checkout_branch(&dir, &branch)?;
+    runtime::set_selected_branch(&meta, &entry.folder_name, &branch)?;
+    let info = store::ensure_launch_info(&workspace, &entry)?;
+    let launch_dir = store::branch_launch_dir(&info, &branch);
+    if !crate::launcher::launchfile::exists(&launch_dir) {
+        let handle = app.clone();
+        let key = progress_key.clone();
+        launch::generate_launchfile(&meta, &workspace, &repository, &|percent, phase| {
+            emit(&handle, &key, percent.max(8), phase);
+        })
+        .await?;
+    }
     let snap = store::snapshot(&meta, &workspace)?;
-    app_view_by_key(snap, &app.folder_name)
+    app_view_by_key(snap, &entry.folder_name)
 }
 
 #[tauri::command]
@@ -460,12 +510,14 @@ pub fn app_changelog(paths: State<'_, AppPaths>, repository: String) -> Result<S
 
 #[tauri::command]
 pub fn app_shortcut_desktop(paths: State<'_, AppPaths>, repository: String) -> Result<String, String> {
-    launch::desktop_shortcut(&paths.org_root()?, &repository)
+    let org_id = paths.active_org_id()?;
+    launch::desktop_shortcut(&paths.org_root()?, &repository, &org_id)
 }
 
 #[tauri::command]
 pub fn app_shortcut_steam(paths: State<'_, AppPaths>, repository: String) -> Result<String, String> {
-    launch::steam_shortcut(&paths.org_root()?, &repository)
+    let org_id = paths.active_org_id()?;
+    launch::steam_shortcut(&paths.org_root()?, &repository, &org_id)
 }
 
 #[tauri::command]

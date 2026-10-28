@@ -93,6 +93,12 @@ export function ProfileSettingsPage() {
     setDraft(rest);
   }, [settings.data]);
 
+  const cloudflareDirty = Boolean(
+    settings.data &&
+      (draft.cloudflareApiToken.trim() !== (settings.data.cloudflareApiToken ?? '').trim() ||
+        draft.cloudflaredPath.trim() !== (settings.data.cloudflaredPath ?? '').trim()),
+  );
+
   async function saveDeepseek(event: React.FormEvent) {
     event.preventDefault();
     setBusy(true);
@@ -100,7 +106,7 @@ export function ProfileSettingsPage() {
     try {
       await settingsSave({ ...draft, deepseekApiToken: draft.deepseekApiToken.trim() });
       await queryClient.invalidateQueries({ queryKey: ['launcher', 'settings'] });
-      toast.success('Token DeepSeek guardado.');
+      toast.success('Token DeepSeek salvo.');
     } catch (err) {
       setError(launcherError(err));
     } finally {
@@ -110,6 +116,7 @@ export function ProfileSettingsPage() {
 
   async function saveCloudflare(event: React.FormEvent) {
     event.preventDefault();
+    if (!cloudflareDirty) return;
     setBusy(true);
     setError(null);
     try {
@@ -119,7 +126,7 @@ export function ProfileSettingsPage() {
         cloudflaredPath: draft.cloudflaredPath.trim(),
       });
       await queryClient.invalidateQueries({ queryKey: ['launcher', 'settings'] });
-      toast.success('Definições Cloudflare guardadas.');
+      toast.success('Definições Cloudflare salvas.');
     } catch (err) {
       setError(launcherError(err));
     } finally {
@@ -134,7 +141,7 @@ export function ProfileSettingsPage() {
     try {
       await settingsSave(draft);
       await queryClient.invalidateQueries({ queryKey: ['launcher'] });
-      toast.success('Definições guardadas.');
+      toast.success('Definições salvas.');
     } catch (err) {
       setError(launcherError(err));
     } finally {
@@ -216,10 +223,7 @@ export function ProfileSettingsPage() {
         <FormRow label="Username">
           <Input value={prefs.username} onChange={(event) => patchPrefs({ username: event.target.value })} />
         </FormRow>
-        <FormRow label="Telefone">
-          <Input value={prefs.phone} onChange={(event) => patchPrefs({ phone: event.target.value })} />
-        </FormRow>
-        <FormCard.Footer right={<Button type="submit" variant="secondary" disabled={busy}>Guardar perfil</Button>} />
+        <FormCard.Footer right={<Button type="submit" variant="secondary" disabled={busy}>Salvar perfil</Button>} />
       </FormCard>
 
       <FormCard onSubmit={(event) => void saveDeepseek(event)} aria-label="DeepSeek" style={{ marginTop: 20 }}>
@@ -236,13 +240,13 @@ export function ProfileSettingsPage() {
             autoComplete="off"
           />
           <FormCard.Hint>
-            Sem token, o Start bloqueia se a app ainda não tiver Launchfile. Obtenha a chave em platform.deepseek.com.
+            Sem token, o arranque bloqueia se a app ainda não tiver Launchfile. Obtenha a chave em platform.deepseek.com.
           </FormCard.Hint>
         </FormRow>
         <FormCard.Footer
           right={
             <Button type="submit" variant="secondary" disabled={busy || settings.isLoading}>
-              Guardar token
+              Salvar token
             </Button>
           }
         />
@@ -251,7 +255,7 @@ export function ProfileSettingsPage() {
       <FormCard onSubmit={(event) => void saveCloudflare(event)} aria-label="Cloudflare" style={{ marginTop: 20 }}>
         <FormCard.Header
           title="Cloudflare"
-          subtitle="Token e caminho do cloudflared para túneis Quick e com domínio nas apps."
+          subtitle="Credenciais globais desta organização — usadas por todas as apps. Modo Quick/DNS e hostname escolhem-se em cada app."
         />
         <FormRow label="Token da API">
           <Input
@@ -262,11 +266,12 @@ export function ProfileSettingsPage() {
             autoComplete="off"
           />
           <FormCard.Hint>
-            Obter em{' '}
+            Custom Token em{' '}
             <a href="https://dash.cloudflare.com/profile/api-tokens" target="_blank" rel="noreferrer">
               dash.cloudflare.com/profile/api-tokens
             </a>
-            . Necessário para Domínio (Tunnel Edit + Zone DNS Edit). Quick não precisa de token.
+            : <strong>Account → Cloudflare Tunnel → Edit</strong>, <strong>Zone → DNS → Edit</strong>,{' '}
+            <strong>Zone → Zone → Read</strong>. Quick (trycloudflare) não precisa de token; Domínio sim.
           </FormCard.Hint>
         </FormRow>
         <FormRow label="Caminho cloudflared">
@@ -276,14 +281,17 @@ export function ProfileSettingsPage() {
             placeholder="Vazio = detectar automaticamente (where/which)"
           />
           <FormCard.Hint>
-            Opcional. Se vazio, o Painel procura com <code>where cloudflared</code> (Windows) ou pastas comuns.
+            Binário do agente de túnel. Se vazio, o Painel tenta <code>where cloudflared</code> (Windows) ou pastas
+            comuns. Necessário para Quick e Domínio.
           </FormCard.Hint>
         </FormRow>
         <FormCard.Footer
           right={
-            <Button type="submit" variant="secondary" disabled={busy || settings.isLoading}>
-              Guardar Cloudflare
-            </Button>
+            cloudflareDirty ? (
+              <Button type="submit" variant="secondary" disabled={busy || settings.isLoading}>
+                Salvar Cloudflare
+              </Button>
+            ) : null
           }
         />
       </FormCard>
@@ -327,7 +335,7 @@ export function ProfileSettingsPage() {
                 Usar predefinida (AppData)
               </Button>
               <Button type="submit" variant="secondary" disabled={busy}>
-                Guardar pasta
+                Salvar pasta
               </Button>
             </div>
           }
@@ -337,7 +345,7 @@ export function ProfileSettingsPage() {
       <FormCard aria-label="Log de actividade" style={{ marginTop: 20 }}>
         <FormCard.Header
           title="Log de actividade"
-          subtitle="Navegações, Start/Stop, force de porta e erros com stack — útil para diagnosticar falhas."
+          subtitle="Navegações, Lançar/Parar, force de porta e erros com stack — útil para diagnosticar falhas."
         />
         <FormRow label="Ficheiro">
           <Input value={activityLog.data ?? 'A carregar…'} readOnly />
@@ -497,20 +505,10 @@ export function ProfileSettingsPage() {
           checked={draft.enableGamepadInput}
           onChange={(enableGamepadInput) => patchDraft({ enableGamepadInput })}
         />
-        <FormRow label="Linux / Windows">
-          <Input
-            value={draft.linuxWindowsLaunchCommand}
-            onChange={(event) => patchDraft({ linuxWindowsLaunchCommand: event.target.value })}
-          />
-          <FormCard.Hint>
-            {'{exe}'}, {'{gamePath}'} e {'{exeDir}'}
-          </FormCard.Hint>
-        </FormRow>
-
         <FormCard.Footer
           right={
             <Button type="submit" variant="secondary" disabled={busy || settings.isLoading}>
-              Guardar definições
+              Salvar definições
             </Button>
           }
         />

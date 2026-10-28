@@ -106,7 +106,7 @@ export function ResetPasswordForm() {
                 />
               </div>
               <Button type="submit" variant="secondary" size="lg" loading={loading} style={{ width: '100%' }}>
-                Guardar senha
+                Salvar senha
               </Button>
             </>
           )}

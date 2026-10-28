@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import { IconEye, IconPlus } from '@tabler/icons-react';
+import { Modal } from '@/components/ui/Modal';
 import { PageShell } from '@/components/ui/PageShell';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
@@ -47,14 +48,30 @@ export function CatalogPage({ mode }: { mode: 'remote' | 'files' }) {
   const queryClient = useQueryClient();
   const fileRef = useRef<HTMLInputElement>(null);
   const [raw, setRaw] = useState('');
+  const [pendingImport, setPendingImport] = useState<string | null>(null);
+  const [importBusy, setImportBusy] = useState(false);
 
-  async function onImport(file: File) {
+  function askImport(text: string) {
+    if (!text.trim()) {
+      toast.error('O JSON está vazio.');
+      return;
+    }
+    setPendingImport(text);
+  }
+
+  async function confirmImport() {
+    if (pendingImport == null) return;
+    setImportBusy(true);
     try {
-      const count = await libraryImport(await file.text());
+      const count = await libraryImport(pendingImport);
       await queryClient.invalidateQueries({ queryKey: ['launcher', 'library'] });
-      toast.success(`${count} apps importadas.`);
+      toast.success(`${count} apps importadas. A biblioteca anterior foi substituída.`);
+      setPendingImport(null);
+      setRaw('');
     } catch (err) {
       toast.error(launcherError(err));
+    } finally {
+      setImportBusy(false);
     }
   }
 
@@ -92,12 +109,7 @@ export function CatalogPage({ mode }: { mode: 'remote' | 'files' }) {
           aria-label="Importar e exportar biblioteca"
           onSubmit={(event) => {
             event.preventDefault();
-            void libraryImport(raw)
-              .then(async (count) => {
-                await queryClient.invalidateQueries({ queryKey: ['launcher', 'library'] });
-                toast.success(`${count} apps importadas.`);
-              })
-              .catch((err) => toast.error(launcherError(err)));
+            askImport(raw);
           }}
         >
           <FormCard.Header title="Biblioteca JSON" />
@@ -117,7 +129,9 @@ export function CatalogPage({ mode }: { mode: 'remote' | 'files' }) {
                   hidden
                   onChange={(event) => {
                     const file = event.target.files?.[0];
-                    if (file) void onImport(file);
+                    event.target.value = '';
+                    if (!file) return;
+                    void file.text().then((text) => askImport(text)).catch(() => toast.error('Não foi possível ler o ficheiro.'));
                   }}
                 />
                 <Button type="button" onClick={() => void onExport()}>
@@ -135,6 +149,27 @@ export function CatalogPage({ mode }: { mode: 'remote' | 'files' }) {
             }
           />
         </FormCard>
+        <Modal
+          isOpen={pendingImport != null}
+          onClose={() => {
+            if (!importBusy) setPendingImport(null);
+          }}
+          title="Substituir a biblioteca"
+        >
+          <Modal.Content>
+            <Modal.Text>
+              Importar este JSON substitui a biblioteca inteira. As apps que não estiverem no ficheiro deixam de aparecer.
+            </Modal.Text>
+          </Modal.Content>
+          <Modal.Footer>
+            <Button type="button" disabled={importBusy} onClick={() => setPendingImport(null)}>
+              Cancelar
+            </Button>
+            <Button type="button" variant="danger" disabled={importBusy} loading={importBusy} onClick={() => void confirmImport()}>
+              Importar
+            </Button>
+          </Modal.Footer>
+        </Modal>
       </PageShell>
     );
   }
@@ -232,7 +267,9 @@ function RemoteCatalog() {
       items.push({
         label: 'Abrir',
         icon: <IconEye size={15} />,
-        onClick: () => openByRepo(row.repository),
+        onClick: () => {
+          openByRepo(row.repository);
+        },
       });
     }
     return items;
@@ -254,7 +291,7 @@ function RemoteCatalog() {
       await settingsSave({ ...rest, githubApiToken: token.trim() });
       tokenSynced.current = false;
       await queryClient.invalidateQueries({ queryKey: ['launcher'] });
-      toast.success('Token guardado.');
+      toast.success('Token salvo.');
     } catch (err) {
       toast.error(launcherError(err));
     }
@@ -294,7 +331,7 @@ function RemoteCatalog() {
             }
             right={
               <Button type="submit" variant="secondary" disabled={!token.trim()}>
-                Guardar token
+                Salvar token
               </Button>
             }
           />

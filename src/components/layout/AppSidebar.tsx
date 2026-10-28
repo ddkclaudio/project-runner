@@ -1,10 +1,12 @@
 import { IconHome, IconBooks, IconSettings, IconComponents, IconLayoutSidebarLeftCollapse, IconLayoutSidebarLeftExpand, IconLayoutDashboard, IconVersions, IconTerminal2, IconLink, IconNotes, IconAdjustments, IconCloud } from '@tabler/icons-react';
 import { useLocation } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
 import { NavMenuItem } from '@/components/ui/NavMenuItem';
 import { useLayoutNav } from '@/hooks/useLayoutNav';
 import { SidebarMobileHeader } from './SidebarMobileHeader';
 import { SidebarMobileBody } from './SidebarMobileBody';
-import { appHref } from '@/lib/launcher-api';
+import { appCloudflareGet, appHref } from '@/lib/launcher-api';
+import { useOrg } from '@/contexts/OrgContext';
 import { cx } from '@/utils';
 import styles from './Sidebar.module.css';
 
@@ -69,12 +71,24 @@ export function LibrarySidebar() {
 
 /** `folder` = pasta da app (identidade); `appHref` trata string sem `/` como pasta. */
 export function AppMenuSidebar({ repository: folder }: { repository: string }) {
+  const { activeOrg } = useOrg();
+  const cloudflare = useQuery({
+    queryKey: ['launcher', 'cloudflare', activeOrg?.id, folder],
+    queryFn: () => appCloudflareGet(folder),
+    enabled: Boolean(activeOrg?.id && folder),
+    staleTime: 10_000,
+  });
+  /** Túnel só faz sentido se o Launchfile (ou URL) define uma porta local. */
+  const showCloudflare = Boolean(cloudflare.data?.effectivePort);
+
   const items: NavItem[] = [
     { label: 'Visão geral', href: appHref(folder), Icon: IconLayoutDashboard, exact: true },
     { label: 'Versões', href: appHref(folder, 'versions'), Icon: IconVersions, exact: true },
     { label: 'Executável', href: appHref(folder, 'executable'), Icon: IconTerminal2, exact: true },
     { label: 'Atalhos', href: appHref(folder, 'shortcuts'), Icon: IconLink, exact: true },
-    { label: 'Cloudflare', href: appHref(folder, 'cloudflare'), Icon: IconCloud, exact: true },
+    ...(showCloudflare
+      ? [{ label: 'Cloudflare', href: appHref(folder, 'cloudflare'), Icon: IconCloud, exact: true } satisfies NavItem]
+      : []),
     { label: 'Changelog', href: appHref(folder, 'changelog'), Icon: IconNotes, exact: true },
     { label: 'Configuração', href: appHref(folder, 'settings'), Icon: IconAdjustments, exact: true },
   ];

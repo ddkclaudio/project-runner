@@ -35,7 +35,11 @@ export function ProfileMenuContent({
       <DropdownMenuHeader
         avatar={<UserAvatar key={user?.photoURL ?? 'none'} src={user?.photoURL} alt={displayName} size="md" />}
         name={displayName}
-        email={user?.email ?? ''}
+        email={
+          prefs.username
+            ? `${prefs.username}${user?.email ? ` · ${user.email}` : ''}`
+            : (user?.email ?? '')
+        }
       />
 
       <DropdownMenuSeparator />

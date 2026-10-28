@@ -67,6 +67,15 @@ struct TunnelRuntime {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct HostnameClaim {
+    pub hostname: String,
+    pub folder_name: String,
+    pub name: String,
+    pub repository: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CloudflareView {
     pub config: CloudflareConfig,
     pub effective_port: Option<u16>,
@@ -80,6 +89,8 @@ pub struct CloudflareView {
     pub public_url: Option<String>,
     pub pid: Option<u32>,
     pub mode: Option<TunnelMode>,
+    /// Hostnames Cloudflare (modo domínio) já reservados por apps desta org.
+    pub hostname_claims: Vec<HostnameClaim>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -90,6 +101,13 @@ pub struct CloudflareSaveInput {
     pub port_override: Option<u16>,
     pub hostname: Option<String>,
     pub tunnel_name: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CloudflareZone {
+    pub id: String,
+    pub name: String,
 }
 
 fn folder_key(app: &AppEntry) -> String {
@@ -146,16 +164,87 @@ pub fn load_config(info: &Path) -> CloudflareConfig {
         .unwrap_or_default()
 }
 
-pub fn save_config(info: &Path, input: CloudflareSaveInput) -> Result<CloudflareConfig, String> {
+/// Hostnames named já guardados em `cloudflare.json` das apps da org.
+pub fn list_hostname_claims(meta: &Path, workspace: &Path) -> Vec<HostnameClaim> {
+    let apps = store::load_apps(meta);
+    let mut claims = Vec::new();
+    for app in apps {
+        let info = store::launch_info_dir(workspace, &app);
+        let host = load_config(&info)
+            .hostname
+            .map(|h| h.trim().to_string())
+            .filter(|h| !h.is_empty());
+        let Some(hostname) = host else {
+            continue;
+        };
+        claims.push(HostnameClaim {
+            hostname,
+            folder_name: folder_key(&app),
+            name: app.name.clone(),
+            repository: app.repository.clone(),
+        });
+    }
+    claims.sort_by(|a, b| {
+        a.hostname
+            .to_lowercase()
+            .cmp(&b.hostname.to_lowercase())
+            .then_with(|| a.folder_name.to_lowercase().cmp(&b.folder_name.to_lowercase()))
+    });
+    claims
+}
+
+pub fn hostname_conflict(
+    meta: &Path,
+    workspace: &Path,
+    hostname: &str,
+    exclude_folder: &str,
+) -> Option<HostnameClaim> {
+    let want = hostname.trim().to_lowercase();
+    if want.is_empty() {
+        return None;
+    }
+    list_hostname_claims(meta, workspace)
+        .into_iter()
+        .find(|claim| {
+            claim.hostname.eq_ignore_ascii_case(&want)
+                && !claim.folder_name.eq_ignore_ascii_case(exclude_folder)
+        })
+}
+
+fn conflict_error(hostname: &str, owner: &HostnameClaim) -> String {
+    format!(
+        "O hostname «{hostname}» já está em uso pela app «{}» (pasta {}). Abre Cloudflare dessa app para o libertar ou escolhe outro subdomínio.",
+        owner.name, owner.folder_name
+    )
+}
+
+pub fn save_config(
+    meta: &Path,
+    workspace: &Path,
+    info: &Path,
+    app: &AppEntry,
+    input: CloudflareSaveInput,
+) -> Result<CloudflareConfig, String> {
+    let folder = folder_key(app);
+    let hostname = input
+        .hostname
+        .as_ref()
+        .map(|h| h.trim().to_string())
+        .filter(|h| !h.is_empty());
+    if let Some(ref host) = hostname {
+        if let Some(owner) = hostname_conflict(meta, workspace, host, &folder) {
+            let err = conflict_error(host, &owner);
+            activity_log::warn("cloudflare", &format!("save blocked folder={folder}: {err}"));
+            return Err(err);
+        }
+    }
+
     fs::create_dir_all(info).map_err(|err| err.to_string())?;
     let config = CloudflareConfig {
         mode: input.mode,
         start_with_app: input.start_with_app,
         port_override: input.port_override.filter(|p| *p > 0),
-        hostname: input
-            .hostname
-            .map(|h| h.trim().to_string())
-            .filter(|h| !h.is_empty()),
+        hostname,
         tunnel_name: input
             .tunnel_name
             .map(|n| n.trim().to_string())
@@ -188,9 +277,9 @@ fn port_from_url(raw: &str) -> Option<u16> {
     None
 }
 
-/// Porta da app: Launchfile → open_url.txt (mesma porta em que a app corre).
-fn resolve_port(info: &Path, _config: &CloudflareConfig) -> Option<u16> {
-    if let Ok(doc) = launchfile::read(info) {
+/// Porta da app: Launchfile da branch → open_url.txt (mesma porta em que a app corre).
+fn resolve_port(launch_dir: &Path, info: &Path) -> Option<u16> {
+    if let Ok(doc) = launchfile::read(launch_dir) {
         if let Some(port) = launchfile::effective_port(&doc) {
             return Some(port);
         }
@@ -323,6 +412,10 @@ fn pid_alive(pid: u32) -> bool {
     }
 }
 
+pub fn tunnel_is_running(meta: &Path, app: &AppEntry) -> bool {
+    runtime_of(meta, &folder_key(app)).is_some()
+}
+
 fn runtime_of(meta: &Path, folder: &str) -> Option<TunnelRuntime> {
     let map = load_tunnels(meta);
     let entry = map.get(folder)?;
@@ -423,7 +516,7 @@ fn spawn_cloudflared(bin: &str, args: &[&str]) -> Result<std::process::Child, St
         .map_err(|err| format!("Falha ao iniciar cloudflared: {err}"))
 }
 
-pub fn view(meta: &Path, info: &Path, app: &AppEntry) -> CloudflareView {
+pub fn view(meta: &Path, workspace: &Path, info: &Path, app: &AppEntry) -> CloudflareView {
     let config = load_config(info);
     let (bin, detected) = cloudflared_bin(meta);
     let available = cloudflared_available(&bin);
@@ -441,9 +534,10 @@ pub fn view(meta: &Path, info: &Path, app: &AppEntry) -> CloudflareView {
             }
         }
     }
+    let launch_dir = store::active_launch_dir(meta, workspace, app).unwrap_or_else(|_| info.to_path_buf());
     CloudflareView {
         config: config.clone(),
-        effective_port: resolve_port(info, &config),
+        effective_port: resolve_port(&launch_dir, info),
         cloudflared_available: available,
         cloudflared_path: bin,
         cloudflared_detected: detected,
@@ -452,10 +546,16 @@ pub fn view(meta: &Path, info: &Path, app: &AppEntry) -> CloudflareView {
         public_url: runtime.as_ref().and_then(|r| r.public_url.clone()),
         pid: runtime.as_ref().map(|r| r.pid),
         mode: runtime.as_ref().map(|r| r.mode.clone()),
+        hostname_claims: list_hostname_claims(meta, workspace),
     }
 }
 
-pub fn stop_tunnel(meta: &Path, info: &Path, app: &AppEntry) -> Result<CloudflareView, String> {
+pub fn stop_tunnel(
+    meta: &Path,
+    workspace: &Path,
+    info: &Path,
+    app: &AppEntry,
+) -> Result<CloudflareView, String> {
     let folder = folder_key(app);
     if let Some(runtime) = runtime_of(meta, &folder) {
         activity_log::info(
@@ -470,11 +570,21 @@ pub fn stop_tunnel(meta: &Path, info: &Path, app: &AppEntry) -> Result<Cloudflar
     if let Ok(mut map) = pending_urls().lock() {
         map.remove(&folder);
     }
-    Ok(view(meta, info, app))
+    Ok(view(meta, workspace, info, app))
 }
 
-pub async fn start(meta: &Path, info: &Path, app: &AppEntry) -> Result<CloudflareView, String> {
+pub async fn start(
+    meta: &Path,
+    workspace: &Path,
+    info: &Path,
+    app: &AppEntry,
+) -> Result<CloudflareView, String> {
     let folder = folder_key(app);
+    if !crate::launcher::runtime::is_running(meta, &app.folder_name) {
+        let err = "A app tem de estar a correr para iniciar o túnel.".to_string();
+        activity_log::warn("cloudflare", &format!("start blocked folder={folder}: {err}"));
+        return Err(err);
+    }
     if runtime_of(meta, &folder).is_some() {
         let err = "Já existe um túnel a correr para esta app. Pare-o primeiro.".to_string();
         activity_log::warn("cloudflare", &format!("start blocked folder={folder}: {err}"));
@@ -482,7 +592,17 @@ pub async fn start(meta: &Path, info: &Path, app: &AppEntry) -> Result<Cloudflar
     }
 
     let config = load_config(info);
-    let port = match resolve_port(info, &config) {
+    if config.mode == TunnelMode::Named {
+        if let Some(ref host) = config.hostname {
+            if let Some(owner) = hostname_conflict(meta, workspace, host, &folder) {
+                let err = conflict_error(host, &owner);
+                activity_log::warn("cloudflare", &format!("start blocked folder={folder}: {err}"));
+                return Err(err);
+            }
+        }
+    }
+    let launch_dir = store::active_launch_dir(meta, workspace, app).unwrap_or_else(|_| info.to_path_buf());
+    let port = match resolve_port(&launch_dir, info) {
         Some(port) => port,
         None => {
             let err = "Defina a porta (Launchfile ou override) antes de iniciar o túnel.".to_string();
@@ -506,8 +626,8 @@ pub async fn start(meta: &Path, info: &Path, app: &AppEntry) -> Result<Cloudflar
     );
 
     let result = match config.mode {
-        TunnelMode::Quick => start_quick(meta, info, app, &bin, port).await,
-        TunnelMode::Named => start_named(meta, info, app, &bin, port, &config).await,
+        TunnelMode::Quick => start_quick(meta, workspace, info, app, &bin, port).await,
+        TunnelMode::Named => start_named(meta, workspace, info, app, &bin, port, &config).await,
     };
     match &result {
         Ok(view) => activity_log::info(
@@ -525,6 +645,7 @@ pub async fn start(meta: &Path, info: &Path, app: &AppEntry) -> Result<Cloudflar
 
 async fn start_quick(
     meta: &Path,
+    workspace: &Path,
     info: &Path,
     app: &AppEntry,
     bin: &str,
@@ -596,7 +717,7 @@ async fn start_quick(
             ),
         );
     }
-    Ok(view(meta, info, app))
+    Ok(view(meta, workspace, info, app))
 }
 
 fn tail_file(path: &Path, max_lines: usize) -> String {
@@ -610,6 +731,7 @@ fn tail_file(path: &Path, max_lines: usize) -> String {
 
 async fn start_named(
     meta: &Path,
+    workspace: &Path,
     info: &Path,
     app: &AppEntry,
     bin: &str,
@@ -629,6 +751,9 @@ async fn start_named(
     }
 
     let folder = folder_key(app);
+    if let Some(owner) = hostname_conflict(meta, workspace, hostname, &folder) {
+        return Err(conflict_error(hostname, &owner));
+    }
     let tunnel_name = config
         .tunnel_name
         .as_deref()
@@ -727,7 +852,7 @@ async fn start_named(
     };
     record_runtime(meta, &folder, &runtime)?;
     activity_log::info("cloudflare", &format!("named url folder={folder} {public}"));
-    Ok(view(meta, info, app))
+    Ok(view(meta, workspace, info, app))
 }
 
 fn sanitize_name(raw: &str) -> String {
@@ -774,18 +899,98 @@ async fn cf_api(token: &str, method: reqwest::Method, url: &str, body: Option<Va
 }
 
 async fn cf_account_id(token: &str) -> Result<String, String> {
-    let value = cf_api(
+    // Preferir /accounts; muitos tokens de Tunnel+DNS não têm Account Settings Read —
+    // nesse caso tiramos o account id da lista de zonas (já funciona com Zone Read).
+    if let Ok(value) = cf_api(
         token,
         reqwest::Method::GET,
         "https://api.cloudflare.com/client/v4/accounts?per_page=1",
         None,
     )
-    .await?;
-    value
-        .pointer("/result/0/id")
+    .await
+    {
+        if let Some(id) = value
+            .pointer("/result/0/id")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
+        {
+            return Ok(id.to_string());
+        }
+    }
+
+    let zones = cf_api(
+        token,
+        reqwest::Method::GET,
+        "https://api.cloudflare.com/client/v4/zones?per_page=1",
+        None,
+    )
+    .await
+    .map_err(|err| {
+        format!(
+            "{err} Não foi possível obter a conta Cloudflare. Verifique o token (Tunnel Edit + Zone DNS Edit + Zone Read)."
+        )
+    })?;
+
+    zones
+        .pointer("/result/0/account/id")
         .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
         .map(|s| s.to_string())
-        .ok_or_else(|| "Não foi possível obter a conta Cloudflare. Verifique o token.".to_string())
+        .ok_or_else(|| {
+            "Não foi possível obter a conta Cloudflare a partir das zonas. Confirme o token e que existe pelo menos um domínio na conta.".to_string()
+        })
+}
+
+/// Lista zonas DNS da conta (requer Zone → Zone → Read no token).
+pub async fn list_zones(meta: &Path) -> Result<Vec<CloudflareZone>, String> {
+    let token = store::cloudflare_token_of(meta);
+    if token.trim().is_empty() {
+        let err = "Configure o token da API Cloudflare em Credenciais antes de listar domínios.".to_string();
+        activity_log::warn("cloudflare", &err);
+        return Err(err);
+    }
+
+    let value = match cf_api(
+        token.trim(),
+        reqwest::Method::GET,
+        "https://api.cloudflare.com/client/v4/zones?per_page=50",
+        None,
+    )
+    .await
+    {
+        Ok(value) => value,
+        Err(err) => {
+            let msg = format!(
+                "{err} Para listar domínios o token precisa de Zone → Zone → Read (além de Tunnel Edit e DNS Edit)."
+            );
+            activity_log::error("cloudflare", "zones list failed", Some(&msg));
+            return Err(msg);
+        }
+    };
+
+    let mut zones: Vec<CloudflareZone> = value
+        .get("result")
+        .and_then(|r| r.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|z| {
+                    let id = z.get("id")?.as_str()?.to_string();
+                    let name = z.get("name")?.as_str()?.to_string();
+                    if id.is_empty() || name.is_empty() {
+                        return None;
+                    }
+                    Some(CloudflareZone { id, name })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
+    zones.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    activity_log::info(
+        "cloudflare",
+        &format!("zones list ok count={}", zones.len()),
+    );
+    Ok(zones)
 }
 
 async fn create_tunnel(token: &str, account_id: &str, name: &str) -> Result<(String, Value), String> {

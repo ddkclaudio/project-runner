@@ -13,6 +13,7 @@ import { ActionSwitcher } from './ActionSwitcher';
 import { SidebarCatalog, SidebarSettings } from './SectionNav';
 import { SidebarComponents } from './SidebarComponents';
 import { ForcePortModal } from '@/components/launcher/ForcePortModal';
+import { InstallChoiceModal } from '@/components/launcher/InstallChoiceModal';
 import { Topbar, TopbarBrand, TopbarMenuButton, TopbarRightControls, TopbarSeparator } from '@/components/ui/Topbar';
 import { TopbarActionButton } from '@/components/ui/TopbarActionButton';
 import { launcherBoot, settingsGet } from '@/lib/launcher-api';
@@ -197,6 +198,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         </main>
       </div>
       <ForcePortModal />
+      <InstallChoiceModal />
     </div>
   );
 }

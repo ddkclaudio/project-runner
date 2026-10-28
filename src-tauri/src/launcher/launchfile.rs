@@ -13,8 +13,10 @@ pub struct LaunchfileDoc {
     pub port: Option<u16>,
     pub url: Option<String>,
     pub cwd: Option<String>,
-    pub install: Option<String>,
-    pub start: String,
+    /// Passos que terminam antes do arranque (instalar dependências, etc.).
+    pub pre_start: Vec<String>,
+    /// Passos de arranque. O último fica vivo; os anteriores terminam.
+    pub start: Vec<String>,
     pub env: BTreeMap<String, String>,
 }
 
@@ -49,10 +51,37 @@ pub fn write_raw(root: &Path, raw: &str) -> Result<LaunchfileDoc, String> {
 }
 
 pub fn validate(doc: &LaunchfileDoc) -> Result<(), String> {
-    if doc.start.trim().is_empty() {
+    if lasting_start(doc).is_empty() {
         return Err("Launchfile sem commands.start.".into());
     }
     Ok(())
+}
+
+pub fn finished_steps(items: &[String]) -> Vec<String> {
+    items
+        .iter()
+        .map(|item| item.trim().to_string())
+        .filter(|item| !item.is_empty())
+        .collect()
+}
+
+/// Comando que permanece em execução: a última entrada não vazia de `start`.
+pub fn lasting_start(doc: &LaunchfileDoc) -> String {
+    doc.start
+        .iter()
+        .rev()
+        .find(|item| !item.trim().is_empty())
+        .map(|item| item.trim().to_string())
+        .unwrap_or_default()
+}
+
+/// Passos de `start` que terminam antes do processo que fica vivo.
+pub fn start_setup(doc: &LaunchfileDoc) -> Vec<String> {
+    let steps = finished_steps(&doc.start);
+    if steps.len() <= 1 {
+        return Vec::new();
+    }
+    steps[..steps.len() - 1].to_vec()
 }
 
 /// Porta efectiva: campo `port` ou `env.PORT` / `env.PORTA`.
@@ -85,23 +114,6 @@ pub fn open_url_of(doc: &LaunchfileDoc) -> Option<String> {
     None
 }
 
-pub fn needs_install(root: &Path, doc: &LaunchfileDoc) -> bool {
-    let Some(install) = doc.install.as_ref().map(|item| item.trim()).filter(|item| !item.is_empty()) else {
-        return false;
-    };
-    let _ = install;
-    match doc.runtime.to_lowercase().as_str() {
-        "node" => !root.join("node_modules").is_dir(),
-        "python" => {
-            !root.join(".venv").is_dir()
-                && !root.join("venv").is_dir()
-                && !root.join(".venv").join("Scripts").is_dir()
-        }
-        "rust" => true,
-        _ => true,
-    }
-}
-
 pub fn template_raw(name: &str) -> String {
     format!(
         r#"# Launchfile — manifesto de arranque do Painel
@@ -113,8 +125,10 @@ port: 3000
 url: http://localhost:3000
 cwd: .
 commands:
-  install: "npm install"
-  start: "npm start"
+  pre-start:
+    - "npm install"
+  start:
+    - "npm start"
 env:
   PORT: "3000"
 "#
@@ -149,15 +163,8 @@ pub fn serialize(doc: &LaunchfileDoc) -> String {
         .unwrap_or(".");
     out.push_str(&format!("cwd: {}\n", yaml_scalar(cwd)));
     out.push_str("commands:\n");
-    if let Some(install) = doc
-        .install
-        .as_ref()
-        .map(|item| item.trim())
-        .filter(|item| !item.is_empty())
-    {
-        out.push_str(&format!("  install: {}\n", yaml_quoted(install)));
-    }
-    out.push_str(&format!("  start: {}\n", yaml_quoted(doc.start.trim())));
+    write_list(&mut out, "pre-start", &doc.pre_start);
+    write_list(&mut out, "start", &doc.start);
     if !doc.env.is_empty() {
         out.push_str("env:\n");
         for (key, value) in &doc.env {
@@ -176,6 +183,7 @@ pub fn parse(raw: &str) -> Result<LaunchfileDoc, String> {
         ..LaunchfileDoc::default()
     };
     let mut section = Section::Root;
+    let mut list_target = CommandList::None;
     for line in raw.lines() {
         let trimmed = line.trim();
         if trimmed.is_empty() || trimmed.starts_with('#') {
@@ -183,6 +191,7 @@ pub fn parse(raw: &str) -> Result<LaunchfileDoc, String> {
         }
         let indent = line.len() - line.trim_start().len();
         if indent == 0 {
+            list_target = CommandList::None;
             if trimmed == "commands:" {
                 section = Section::Commands;
                 continue;
@@ -203,9 +212,21 @@ pub fn parse(raw: &str) -> Result<LaunchfileDoc, String> {
                     }
                     "url" => doc.url = Some(unquote(value)).filter(|item| !item.is_empty()),
                     "cwd" => doc.cwd = Some(unquote(value)).filter(|item| !item.is_empty()),
-                    "start" => doc.start = unquote(value),
+                    "start" => push_step(&mut doc.start, value),
                     _ => {}
                 }
+            }
+            continue;
+        }
+        if let Some(item) = trimmed.strip_prefix("- ") {
+            let item = unquote(item.trim());
+            if item.is_empty() {
+                continue;
+            }
+            match list_target {
+                CommandList::PreStart => doc.pre_start.push(item),
+                CommandList::Start => doc.start.push(item),
+                CommandList::None => {}
             }
             continue;
         }
@@ -213,15 +234,26 @@ pub fn parse(raw: &str) -> Result<LaunchfileDoc, String> {
             Section::Commands => {
                 if let Some((key, value)) = split_kv(trimmed) {
                     match key {
-                        "install" => {
-                            doc.install = Some(unquote(value)).filter(|item| !item.is_empty());
+                        "install" | "pre-start" => {
+                            list_target = if open_list(&mut doc.pre_start, value) {
+                                CommandList::PreStart
+                            } else {
+                                CommandList::None
+                            };
                         }
-                        "start" => doc.start = unquote(value),
-                        _ => {}
+                        "start" => {
+                            list_target = if open_list(&mut doc.start, value) {
+                                CommandList::Start
+                            } else {
+                                CommandList::None
+                            };
+                        }
+                        _ => list_target = CommandList::None,
                     }
                 }
             }
             Section::Env => {
+                list_target = CommandList::None;
                 if let Some((key, value)) = split_kv(trimmed) {
                     if !key.is_empty() {
                         doc.env.insert(key.to_string(), unquote(value));
@@ -239,6 +271,44 @@ enum Section {
     Root,
     Commands,
     Env,
+}
+
+enum CommandList {
+    None,
+    PreStart,
+    Start,
+}
+
+/// `true` quando o valor está vazio e os próximos `- item` pertencem a esta lista.
+fn open_list(list: &mut Vec<String>, value: &str) -> bool {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return true;
+    }
+    if unquote(trimmed) == "[]" {
+        return false;
+    }
+    push_step(list, trimmed);
+    false
+}
+
+fn push_step(list: &mut Vec<String>, value: &str) {
+    let item = unquote(value);
+    if !item.is_empty() && item != "[]" {
+        list.push(item);
+    }
+}
+
+fn write_list(out: &mut String, key: &str, items: &[String]) {
+    let items = finished_steps(items);
+    if items.is_empty() {
+        out.push_str(&format!("  {key}: []\n"));
+        return;
+    }
+    out.push_str(&format!("  {key}:\n"));
+    for item in items {
+        out.push_str(&format!("    - {}\n", yaml_quoted(&item)));
+    }
 }
 
 fn split_kv(line: &str) -> Option<(&str, &str)> {
@@ -277,7 +347,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn roundtrip_minimal() {
+    fn legacy_install_and_start_become_lists() {
         let raw = r#"
 version: launch/v1
 name: demo
@@ -293,12 +363,50 @@ env:
   PORT: "3000"
 "#;
         let doc = parse(raw).unwrap();
-        assert_eq!(doc.start, "npm start");
-        assert_eq!(doc.install.as_deref(), Some("npm install"));
+        assert_eq!(doc.start, vec!["npm start".to_string()]);
+        assert_eq!(doc.pre_start, vec!["npm install".to_string()]);
         assert_eq!(doc.port, Some(3000));
         assert_eq!(doc.url.as_deref(), Some("http://localhost:3000/react-gh-pages"));
         assert_eq!(doc.env.get("PORT").map(String::as_str), Some("3000"));
         let again = parse(&serialize(&doc)).unwrap();
         assert_eq!(again.start, doc.start);
+        assert_eq!(again.pre_start, doc.pre_start);
+    }
+
+    #[test]
+    fn parses_command_lists_and_empty_pre_start() {
+        let raw = r#"
+version: launch/v1
+name: pages
+runtime: node
+kind: site
+port: 3000
+commands:
+  pre-start: []
+  start:
+    - "npx --yes serve -l 3000 --no-clipboard ."
+"#;
+        let doc = parse(raw).unwrap();
+        assert!(doc.pre_start.is_empty());
+        assert_eq!(doc.start.len(), 1);
+        assert_eq!(start_setup(&doc).len(), 0);
+        assert_eq!(lasting_start(&doc), "npx --yes serve -l 3000 --no-clipboard .");
+    }
+
+    #[test]
+    fn start_setup_is_every_step_but_the_last() {
+        let raw = r#"
+commands:
+  pre-start:
+    - "npm install"
+    - "npm run build"
+  start:
+    - "npm run migrate"
+    - "npm start"
+"#;
+        let doc = parse(raw).unwrap();
+        assert_eq!(doc.pre_start.len(), 2);
+        assert_eq!(start_setup(&doc), vec!["npm run migrate".to_string()]);
+        assert_eq!(lasting_start(&doc), "npm start");
     }
 }

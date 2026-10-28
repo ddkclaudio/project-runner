@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import ReactMarkdown from 'react-markdown';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import { open as openDialog } from '@tauri-apps/plugin-dialog';
-import { IconCopy, IconDownload, IconExternalLink, IconFolder, IconPhoto, IconX } from '@tabler/icons-react';
+import { IconCopy, IconDownload, IconExternalLink, IconFolder, IconPhoto, IconRefresh, IconX } from '@tabler/icons-react';
 import { PageShell } from '@/components/ui/PageShell';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
@@ -21,7 +21,7 @@ import { DataTable, type TableColumn } from '@/components/ui/DataTable';
 import { RowActions } from '@/components/ui/RowActions';
 import { ItemCard, gridCardStyles as gc } from '@/components/ui/ItemCard';
 import { useToast } from '@/components/ui/Toast';
-import { appIconSrc, appId, ChoiceList, useLibraryMutations } from '@/components/launcher/LibraryCard';
+import { appIconSrc, appId, useLibraryMutations } from '@/components/launcher/LibraryCard';
 import { AppProgressBar } from '@/components/launcher/AppProgressBar';
 import { useListingView } from '@/components/launcher/useListingView';
 import { formatDate } from '@/utils';
@@ -31,11 +31,12 @@ import {
   appCloudflareGet,
   appCloudflareSave,
   appCloudflareStart,
-  appCloudflareStatus,
   appCloudflareStop,
+  appCloudflareZones,
   appDeleteInstall,
   appDetail,
   appGenerateLaunchfile,
+  appOpenLaunchfileDir,
   appLaunchConfigGet,
   appLaunchConfigSave,
   appReleases,
@@ -45,11 +46,11 @@ import {
   launcherError,
   libraryRemove,
   librarySave,
-  settingsGet,
-  settingsSave,
+  appHref,
   statusLabel,
   type AppView,
   type CloudflareMode,
+  type CloudflareZone,
   type LaunchField,
   type ReleaseInfo,
 } from '@/lib/launcher-api';
@@ -116,27 +117,47 @@ export function AppPage() {
 }
 
 function Overview({ app }: { app: AppView }) {
+  const toast = useToast();
   const actions = useLibraryMutations();
-  const queryClient = useQueryClient();
-  const progress = useAppProgressStore((s) => s.byId[appId(app)]);
-  const [choice, setChoice] = useState<string[] | null>(null);
-  const [confirmWine, setConfirmWine] = useState(false);
-  const [warning, setWarning] = useState<string | null>(null);
+  const { activeOrg } = useOrg();
+  const id = appId(app);
+  const progress = useAppProgressStore((s) => s.byId[id]);
   const iconSrc = appIconSrc(app);
   const initial = (app.name.trim().charAt(0) || '?').toUpperCase();
 
-  async function primary(assetName?: string, wine = false) {
-    if (app.status === 'installed' && !assetName) {
-      const result = await actions.launch(app);
-      if (result?.needsChoice) setChoice(result.executables);
+  const cloudflare = useQuery({
+    queryKey: ['launcher', 'cloudflare', activeOrg?.id, id],
+    queryFn: () => appCloudflareGet(id),
+    enabled: Boolean(activeOrg?.id),
+    refetchInterval: (query) => {
+      const data = query.state.data;
+      if (!data?.running) return 10000;
+      return data.publicUrl ? 5000 : 1500;
+    },
+  });
+  const cf = cloudflare.data;
+  const cfMode = cf?.mode ?? cf?.config?.mode ?? 'quick';
+  const cfHostname = cf?.config?.hostname?.trim() || '';
+  const cfLiveUrl = cf?.running ? cf.publicUrl?.trim() || '' : '';
+  const cfActionUrl = cf?.running
+    ? cfLiveUrl ||
+      (cfMode === 'named' && cfHostname
+        ? cfHostname.startsWith('http')
+          ? cfHostname
+          : `https://${cfHostname}`
+        : '')
+    : '';
+
+  async function runPrimary() {
+    if (app.running && app.status !== 'not_installed') {
+      await actions.restart(app);
       return;
     }
-    const result = await actions.install(app, { assetName, confirmWine: wine });
-    if (!result) return;
-    setWarning(result.warning ?? null);
-    setConfirmWine(result.needsConfirm);
-    setChoice(result.needsChoice || result.needsConfirm ? result.assets : null);
-    await queryClient.invalidateQueries({ queryKey: ['launcher', 'app', appId(app)] });
+    if (app.status === 'installed') {
+      await actions.launch(app);
+      return;
+    }
+    await actions.install(app);
   }
 
   const stats: { label: string; value: string; mono?: boolean }[] = [
@@ -165,12 +186,24 @@ function Overview({ app }: { app: AppView }) {
               tone={app.status === 'update' ? 'warning' : app.status === 'installed' ? 'success' : 'muted'}
             />
             {app.running ? <StatusBadge label="Em execução" tone="success" /> : <StatusBadge label="Parada" tone="muted" />}
+            {cf?.running ? (
+              <StatusBadge
+                label={cfMode === 'named' ? 'Cloudflare DNS' : 'Cloudflare Quick'}
+                tone="success"
+              />
+            ) : null}
             {app.manuallyHidden ? <StatusBadge label="Oculta" tone="warning" /> : null}
           </div>
         </div>
       </header>
 
       {progress ? <AppProgressBar progress={progress} /> : null}
+
+      <div className={styles.actions}>
+        <Button type="button" disabled={Boolean(progress)} onClick={() => void runPrimary()}>
+          {actions.primaryLabel(app)}
+        </Button>
+      </div>
 
       <div className={styles.overviewStats} role="list" aria-label="Indicadores">
         {stats.map((stat) => (
@@ -199,7 +232,7 @@ function Overview({ app }: { app: AppView }) {
             </p>
             {app.openUrl ? (
               <p className={styles.overviewRunningLine}>
-                <strong>URL</strong>
+                <strong>URL local</strong>
                 {' · '}
                 {app.openUrl}
               </p>
@@ -208,25 +241,108 @@ function Overview({ app }: { app: AppView }) {
         </section>
       ) : null}
 
+      {cf?.effectivePort != null ? (
+      <section className={styles.overviewPanel} aria-label="Cloudflare">
+        <div className={styles.overviewPanelHead}>
+          <h2 className={styles.overviewPanelTitle}>Cloudflare</h2>
+          <Link className={styles.overviewPanelLink} to={appHref(app, 'cloudflare')}>
+            Configurar
+          </Link>
+        </div>
+        <div className={styles.overviewRunning}>
+          <p className={styles.overviewRunningLine}>
+            <strong>Modo</strong>
+            {' · '}
+            {cfMode === 'named' ? 'Domínio (DNS)' : 'Quick (trycloudflare.com)'}
+          </p>
+          <p className={styles.overviewRunningLine}>
+            <strong>Túnel</strong>
+            {' · '}
+            {cf?.running ? (cfLiveUrl ? 'Em execução' : 'A obter URL…') : 'Parado'}
+            {cf?.pid != null ? (
+              <>
+                {' '}
+                <span className={styles.overviewStatValueMono}>(PID {cf.pid})</span>
+              </>
+            ) : null}
+          </p>
+          {cfMode === 'named' && cfHostname ? (
+            <p className={styles.overviewRunningLine}>
+              <strong>Hostname</strong>
+              {' · '}
+              <span className={styles.overviewStatValueMono}>{cfHostname}</span>
+            </p>
+          ) : null}
+          {cf?.config?.startWithApp ? (
+            <p className={styles.overviewRunningLine}>
+              <strong>Com a app</strong>
+              {' · '}
+              Arranca automaticamente no launch
+            </p>
+          ) : null}
+          {cf?.effectivePort != null ? (
+            <p className={styles.overviewRunningLine}>
+              <strong>Porta</strong>
+              {' · '}
+              {cf.effectivePort}
+            </p>
+          ) : null}
+          {cf?.running && cfActionUrl ? (
+            <p className={styles.overviewRunningLine}>
+              <strong>URL pública</strong>
+              {' · '}
+              <span className={styles.overviewStatValueMono}>{cfActionUrl}</span>
+            </p>
+          ) : (
+            <p className={styles.overviewRunningLine}>
+              <strong>URL pública</strong>
+              {' · '}
+              {cfMode === 'named'
+                ? cfHostname
+                  ? 'Inicie o túnel para publicar o hostname'
+                  : 'Configure o hostname na secção Cloudflare'
+                : 'Inicie o túnel Quick para obter o link'}
+            </p>
+          )}
+          {!cf?.cloudflaredAvailable ? (
+            <p className={styles.overviewRunningLine}>
+              <strong>cloudflared</strong>
+              {' · '}
+              Não encontrado neste PC
+            </p>
+          ) : null}
+        </div>
+        {cf?.running && cfActionUrl ? (
+          <div className={styles.overviewPanelActions}>
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={() => {
+                void navigator.clipboard
+                  .writeText(cfActionUrl)
+                  .then(() => toast.success('URL Cloudflare copiada.'))
+                  .catch(() => toast.error('Não foi possível copiar.'));
+              }}
+            >
+              Copiar URL
+            </Button>
+            <Button
+              type="button"
+              onClick={() => void openUrl(cfActionUrl).catch((err) => toast.error(launcherError(err)))}
+            >
+              Abrir
+            </Button>
+          </div>
+        ) : null}
+      </section>
+      ) : null}
+
       {app.installPath ? (
         <section className={styles.overviewPanel} aria-label="Localização">
           <h2 className={styles.overviewPanelTitle}>No disco</h2>
           <p className={`${styles.overviewRunningLine} ${styles.overviewStatValueMono}`}>{app.installPath}</p>
         </section>
       ) : null}
-
-      <Modal isOpen={Boolean(choice)} onClose={() => setChoice(null)} title={confirmWine ? 'Confirmar instalação' : 'Escolher ficheiro'}>
-        <Modal.Content>
-          {warning ? <InlineAlert variant="warning">{warning}</InlineAlert> : null}
-          <ChoiceList
-            options={choice ?? []}
-            onPick={(asset) => {
-              setChoice(null);
-              void primary(asset, true);
-            }}
-          />
-        </Modal.Content>
-      </Modal>
     </PageShell>
   );
 }
@@ -237,8 +353,35 @@ function iconFileName(path: string | null | undefined) {
   return parts[parts.length - 1] || path;
 }
 
+function defaultSubdomain(app: AppView) {
+  const raw = (app.folderName || app.name || 'app').trim().toLowerCase();
+  const cleaned = raw
+    .replace(/[^a-z0-9-]+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-+|-+$/g, '');
+  return cleaned || 'app';
+}
+
+function splitHostname(hostname: string, zones: CloudflareZone[]) {
+  const host = hostname.trim().toLowerCase();
+  if (!host) return { subdomain: '', zone: '' };
+  const sorted = [...zones].sort((a, b) => b.name.length - a.name.length);
+  for (const z of sorted) {
+    const zone = z.name.toLowerCase();
+    if (host === zone) return { subdomain: '', zone: z.name };
+    const suffix = `.${zone}`;
+    if (host.endsWith(suffix)) {
+      return { subdomain: host.slice(0, -suffix.length), zone: z.name };
+    }
+  }
+  const dot = host.indexOf('.');
+  if (dot <= 0) return { subdomain: host, zone: '' };
+  return { subdomain: host.slice(0, dot), zone: hostname.trim().slice(dot + 1) };
+}
+
 function CloudflareTunnel({ app }: { app: AppView }) {
   const toast = useToast();
+  const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { activeOrg } = useOrg();
   const id = appId(app);
@@ -249,30 +392,39 @@ function CloudflareTunnel({ app }: { app: AppView }) {
     refetchInterval: (query) => {
       const data = query.state.data;
       if (!data?.running) return false;
-      // Enquanto corre sem URL, poll rápido para mostrar o link trycloudflare.
       return data.publicUrl ? 4000 : 1000;
     },
     enabled: Boolean(activeOrg?.id),
   });
-  const settings = useQuery({
-    queryKey: ['launcher', 'settings', activeOrg?.id],
-    queryFn: settingsGet,
-    enabled: Boolean(activeOrg?.id),
-  });
   const view = detail.data;
+
+  useEffect(() => {
+    if (!detail.isFetched || !view) return;
+    if (view.effectivePort == null) {
+      navigate(appHref(app), { replace: true });
+    }
+  }, [app, detail.isFetched, navigate, view]);
   const [mode, setMode] = useState<CloudflareMode>('quick');
   const [startWithApp, setStartWithApp] = useState(false);
-  const [hostname, setHostname] = useState('');
-  const [tunnelName, setTunnelName] = useState('');
-  const [apiToken, setApiToken] = useState('');
-  const [cloudflaredPath, setCloudflaredPath] = useState('');
+  const [subdomain, setSubdomain] = useState('');
+  const [zoneName, setZoneName] = useState('');
   const [busy, setBusy] = useState(false);
   const synced = useRef(false);
-  const settingsSynced = useRef(false);
+  const hostPartsSynced = useRef(false);
+  const pendingHostname = useRef('');
+
+  const hasToken = Boolean(view?.hasApiToken);
+  const zones = useQuery({
+    queryKey: ['launcher', 'cloudflare-zones', activeOrg?.id],
+    queryFn: () => appCloudflareZones(),
+    enabled: Boolean(activeOrg?.id && mode === 'named' && hasToken),
+    retry: false,
+  });
 
   useEffect(() => {
     synced.current = false;
-    settingsSynced.current = false;
+    hostPartsSynced.current = false;
+    pendingHostname.current = '';
   }, [id]);
 
   useEffect(() => {
@@ -280,54 +432,90 @@ function CloudflareTunnel({ app }: { app: AppView }) {
     synced.current = true;
     setMode(view.config.mode);
     setStartWithApp(Boolean(view.config.startWithApp));
-    setHostname(view.config.hostname ?? '');
-    setTunnelName(view.config.tunnelName ?? '');
-  }, [view]);
+    pendingHostname.current = view.config.hostname?.trim() || '';
+    setSubdomain(defaultSubdomain(app));
+  }, [view, app]);
 
   useEffect(() => {
-    if (!settings.data || settingsSynced.current) return;
-    settingsSynced.current = true;
-    setApiToken(settings.data.cloudflareApiToken ?? '');
-    const savedPath = settings.data.cloudflaredPath?.trim() ?? '';
-    setCloudflaredPath(savedPath);
-  }, [settings.data]);
+    if (hostPartsSynced.current || !synced.current) return;
+    if (mode === 'named' && hasToken && zones.isLoading) return;
 
-  // Preencher caminho detectado se o campo estiver vazio.
-  useEffect(() => {
-    if (!view?.cloudflaredDetected) return;
-    setCloudflaredPath((current) => current.trim() || view.cloudflaredDetected || '');
-  }, [view?.cloudflaredDetected]);
+    hostPartsSynced.current = true;
+    const zoneList = zones.data ?? [];
+    const host = pendingHostname.current;
+    if (host) {
+      const parts = splitHostname(host, zoneList);
+      setSubdomain(parts.subdomain || defaultSubdomain(app));
+      if (parts.zone) setZoneName(parts.zone);
+    } else {
+      setSubdomain(defaultSubdomain(app));
+      if (zoneList.length === 1) setZoneName(zoneList[0].name);
+    }
+  }, [app, hasToken, mode, zones.data, zones.isLoading]);
 
-  async function persistCredentials() {
-    const current = settings.data;
-    if (!current) return;
-    const { dataDir: _d, appVersion: _v, ...rest } = current;
-    await settingsSave({
-      ...rest,
-      cloudflareApiToken: apiToken.trim(),
-      cloudflaredPath: cloudflaredPath.trim(),
-    });
-    await queryClient.invalidateQueries({ queryKey: ['launcher', 'settings'] });
-    await detail.refetch();
-  }
+  const composedHostname = useMemo(() => {
+    const sub = subdomain.trim().replace(/^\.+|\.+$/g, '');
+    const zone = zoneName.trim();
+    if (!sub || !zone) return '';
+    return `${sub}.${zone}`.toLowerCase();
+  }, [subdomain, zoneName]);
+
+  const hostnameConflict = useMemo(() => {
+    if (mode !== 'named' || !composedHostname) return null;
+    const claims = view?.hostnameClaims ?? [];
+    const selfFolder = (app.folderName || '').trim().toLowerCase();
+    return (
+      claims.find(
+        (claim) =>
+          claim.hostname.trim().toLowerCase() === composedHostname &&
+          claim.folderName.trim().toLowerCase() !== selfFolder,
+      ) ?? null
+    );
+  }, [app.folderName, composedHostname, mode, view?.hostnameClaims]);
+
+  const publicUrl = view?.running ? view.publicUrl?.trim() || '' : '';
+  const tunnelLabel = view?.running ? (publicUrl ? 'Em execução' : 'A obter URL…') : 'Parado';
+  const tunnelTone: StatusTone = view?.running ? 'success' : 'muted';
+  const canStart =
+    Boolean(app.running) &&
+    Boolean(view?.cloudflaredAvailable) &&
+    view?.effectivePort != null &&
+    !(mode === 'named' && (Boolean(hostnameConflict) || !composedHostname || !hasToken));
+
+  const dirty = useMemo(() => {
+    if (!view) return false;
+    const savedMode = view.config.mode;
+    const savedStart = Boolean(view.config.startWithApp);
+    const savedHost = (view.config.hostname ?? '').trim().toLowerCase();
+    const nextHost = mode === 'named' ? composedHostname : '';
+    return mode !== savedMode || startWithApp !== savedStart || nextHost !== savedHost;
+  }, [composedHostname, mode, startWithApp, view]);
 
   async function persistConfig() {
+    if (mode === 'named' && !composedHostname) {
+      throw new Error('Escolha o subdomínio e o domínio Cloudflare.');
+    }
+    if (hostnameConflict) {
+      throw new Error(
+        `O hostname «${composedHostname}» já está em uso pela app «${hostnameConflict.name}».`,
+      );
+    }
     await appCloudflareSave(id, {
       mode,
       startWithApp,
       portOverride: null,
-      hostname: hostname.trim() || null,
-      tunnelName: tunnelName.trim() || null,
+      hostname: mode === 'named' ? composedHostname : null,
+      tunnelName: null,
     });
   }
 
   async function save() {
+    if (!dirty) return;
     setBusy(true);
     try {
-      await persistCredentials();
       await persistConfig();
       await detail.refetch();
-      toast.success('Configuração Cloudflare guardada.');
+      toast.success('Configuração do túnel salva.');
     } catch (err) {
       toast.error(launcherError(err));
     } finally {
@@ -338,14 +526,14 @@ function CloudflareTunnel({ app }: { app: AppView }) {
   async function start() {
     setBusy(true);
     try {
-      await persistCredentials();
       await persistConfig();
       const next = await appCloudflareStart(id);
+      await queryClient.invalidateQueries({ queryKey: ['launcher', 'cloudflare'] });
       await detail.refetch();
       if (next.publicUrl) {
         toast.success(`URL pública: ${next.publicUrl}`);
       } else {
-        toast.success('Túnel a iniciar… a URL aparece assim que o Cloudflare a publicar.');
+        toast.success('Túnel a iniciar… a URL aparece no switcher e na visão geral.');
       }
     } catch (err) {
       toast.error(launcherError(err));
@@ -360,7 +548,7 @@ function CloudflareTunnel({ app }: { app: AppView }) {
       await appCloudflareStop(id);
       await queryClient.invalidateQueries({ queryKey: ['launcher', 'cloudflare'] });
       await detail.refetch();
-      toast.success('Túnel parado. URL pública limpa.');
+      toast.success('Túnel parado.');
     } catch (err) {
       toast.error(launcherError(err));
     } finally {
@@ -368,303 +556,169 @@ function CloudflareTunnel({ app }: { app: AppView }) {
     }
   }
 
-  async function refreshStatus() {
-    try {
-      await appCloudflareStatus(id);
-      await detail.refetch();
-    } catch (err) {
-      toast.error(launcherError(err));
-    }
+  if (detail.isFetched && view && view.effectivePort == null) {
+    return (
+      <PageShell>
+        <p className={styles.meta}>Esta app não usa porta — a redirecionar…</p>
+      </PageShell>
+    );
   }
-
-  // URL só conta enquanto o túnel corre — ao parar some do ecrã e do estado.
-  const publicUrl = view?.running ? view.publicUrl?.trim() || '' : '';
-  const appPort = view?.effectivePort;
 
   return (
     <PageShell>
-      <PageShell.Heading subtitle="Expõe a porta da app (Launchfile) via túnel Cloudflare. A URL pública aparece aqui para acederes ao site.">
+      <PageShell.Heading subtitle="Quick ou domínio próprio para esta app. Credenciais globais nas definições de perfil.">
         Cloudflare
       </PageShell.Heading>
 
-      <div style={{ marginTop: 12 }}>
-        <InlineAlert variant="info">
-          <strong>Quick</strong> (recomendado para testar): não precisa de token — só do programa{' '}
-          <code>cloudflared</code>. Gera uma URL <code>*.trycloudflare.com</code>.
-          <br />
-          <strong>Domínio</strong>: precisa de token da API Cloudflare + hostname no teu domínio.
-        </InlineAlert>
-      </div>
-
       {!view?.cloudflaredAvailable ? (
-        <InlineAlert variant="warning">
-          cloudflared não encontrado. Instale-o (
-          <a href="https://developers.cloudflare.com/cloudflare-one/connections/connect-apps/install-and-setup/installation/" target="_blank" rel="noreferrer">
-            instalação
-          </a>
-          ) ou indique o caminho completo abaixo.
-        </InlineAlert>
-      ) : null}
-
-      {publicUrl ? (
-        <FormCard aria-label="URL pública do túnel" style={{ marginTop: 16 }}>
-          <FormCard.Header title="URL pública" subtitle="Acede ao site por este endereço Cloudflare." />
-          <FormRow label="Link">
-            <Input
-              value={publicUrl}
-              readOnly
-              rightIcon={<IconCopy size={16} aria-hidden="true" />}
-              rightIconLabel="Copiar URL"
-              onRightIconClick={() => {
-                void navigator.clipboard
-                  .writeText(publicUrl)
-                  .then(() => toast.success('URL copiada.'))
-                  .catch(() => toast.error('Não foi possível copiar.'));
-              }}
-            />
-          </FormRow>
-          <FormCard.Footer
-            right={
-              <div className={styles.actions}>
-                <Button
-                  type="button"
-                  variant="secondary"
-                  leftIcon={<IconExternalLink size={14} />}
-                  onClick={() => void openUrl(publicUrl).catch((err) => toast.error(launcherError(err)))}
-                >
-                  Abrir no browser
-                </Button>
-              </div>
-            }
-          />
-        </FormCard>
-      ) : null}
-
-      <FormCard
-        onSubmit={(event) => {
-          event.preventDefault();
-          void save();
-        }}
-        aria-label="Credenciais Cloudflare"
-        style={{ marginTop: 16 }}
-      >
-        <FormCard.Header
-          title="Credenciais"
-          subtitle="Guardadas nas definições da organização. Quick não exige token; Domínio sim."
-        />
-        <FormRow label="Token da API">
-          <Input
-            type="password"
-            value={apiToken}
-            onChange={(event) => setApiToken(event.target.value)}
-            placeholder={mode === 'named' ? 'Obrigatório para Domínio…' : 'Opcional no modo Quick'}
-            autoComplete="off"
-          />
-          <FormCard.Hint>
-            Obter token:{' '}
-            <a href="https://dash.cloudflare.com/profile/api-tokens" target="_blank" rel="noreferrer">
-              dash.cloudflare.com/profile/api-tokens
-            </a>
-            {' · '}
-            <button
-              type="button"
-              className={styles.linkBtn}
-              onClick={() =>
-                void openUrl('https://dash.cloudflare.com/profile/api-tokens').catch((err) =>
-                  toast.error(launcherError(err)),
-                )
-              }
-            >
-              Abrir no browser
-            </button>
-            . Para Domínio: Create Token → permissões Account.Cloudflare Tunnel (Edit) + Zone.DNS (Edit).
-          </FormCard.Hint>
-        </FormRow>
-        <FormRow label="Caminho cloudflared">
-          <Input
-            value={cloudflaredPath}
-            onChange={(event) => setCloudflaredPath(event.target.value)}
-            placeholder={
-              view?.cloudflaredDetected
-                ? view.cloudflaredDetected
-                : view?.cloudflaredAvailable
-                  ? view.cloudflaredPath
-                  : 'Não encontrado — instale ou indique o .exe'
-            }
-          />
-          <FormCard.Hint>
-            {view?.cloudflaredDetected
-              ? `Detectado automaticamente: ${view.cloudflaredDetected}`
-              : view?.cloudflaredAvailable
-                ? `A usar: ${view.cloudflaredPath}`
-                : 'Não encontrado no PATH. Instale o cloudflared ou cole o caminho completo do executável.'}{' '}
-            <button
-              type="button"
-              className={styles.linkBtn}
-              onClick={() => {
-                void detail.refetch().then((res) => {
-                  const detected = res.data?.cloudflaredDetected || res.data?.cloudflaredPath;
-                  if (res.data?.cloudflaredAvailable && detected) {
-                    setCloudflaredPath(detected);
-                    toast.success(`cloudflared encontrado: ${detected}`);
-                  } else {
-                    toast.error('cloudflared não encontrado. Instale-o e tente de novo.');
-                  }
-                });
-              }}
-            >
-              Procurar de novo
-            </button>
-            {' · '}
+        <div style={{ marginTop: 12 }}>
+          <InlineAlert variant="warning">
+            cloudflared não encontrado. Instale-o (
             <a
               href="https://developers.cloudflare.com/cloudflare-one/connections/connect-apps/install-and-setup/installation/"
               target="_blank"
               rel="noreferrer"
             >
-              Como instalar
+              instalação
             </a>
-          </FormCard.Hint>
-        </FormRow>
-        <FormCard.Footer
-          right={
-            <div className={styles.actions}>
-              <Button
-                type="button"
-                variant="secondary"
-                disabled={busy}
-                onClick={() => {
-                  const detected = view?.cloudflaredDetected || (view?.cloudflaredAvailable ? view.cloudflaredPath : '');
-                  if (detected) {
-                    setCloudflaredPath(detected);
-                    toast.success(`Caminho preenchido: ${detected}`);
-                  } else {
-                    void detail.refetch().then((res) => {
-                      const path = res.data?.cloudflaredDetected || res.data?.cloudflaredPath;
-                      if (res.data?.cloudflaredAvailable && path) {
-                        setCloudflaredPath(path);
-                        toast.success(`Caminho preenchido: ${path}`);
-                      } else {
-                        toast.error('cloudflared não encontrado.');
-                      }
-                    });
-                  }
-                }}
-              >
-                Usar detectado
-              </Button>
-              <Button type="submit" variant="secondary" disabled={busy || settings.isLoading}>
-                Guardar credenciais
-              </Button>
-            </div>
-          }
-        />
-      </FormCard>
+            ) ou defina o caminho em{' '}
+            <Link to="/settings/profile">Definições de perfil</Link>.
+          </InlineAlert>
+        </div>
+      ) : null}
 
       <FormCard
         onSubmit={(event) => {
           event.preventDefault();
           void save();
         }}
-        aria-label="Configuração do túnel"
+        aria-label="Túnel Cloudflare"
         style={{ marginTop: 16 }}
       >
-        <FormCard.Header title="Túnel" subtitle="Usa automaticamente a porta do Launchfile da app." />
+        <div className={styles.cfCardHead}>
+          <FormCard.Header
+            title="Túnel Cloudflare"
+            subtitle="Quick ou domínio próprio. A URL aparece no switcher e na visão geral."
+          />
+          <StatusBadge label={tunnelLabel} tone={tunnelTone} />
+        </div>
+
         <FormRow label="Modo">
           <Select
             value={mode}
             onChange={(value) => setMode(value as CloudflareMode)}
             options={[
-              { value: 'quick', label: 'Quick (*.trycloudflare.com) — sem token' },
-              { value: 'named', label: 'Domínio Cloudflare — precisa de token' },
+              { value: 'quick', label: 'Quick (*.trycloudflare.com)' },
+              { value: 'named', label: 'Domínio Cloudflare (DNS)' },
             ]}
           />
         </FormRow>
-        <FormRow label="Porta da app">
-          <Input value={appPort != null ? String(appPort) : '—'} readOnly disabled />
-          <FormCard.Hint>
-            {appPort != null
-              ? `Mesma porta do Launchfile / app em execução (${appPort}).`
-              : 'Sem porta no Launchfile — configure o Executável da app primeiro.'}
-          </FormCard.Hint>
-        </FormRow>
+
         {mode === 'named' ? (
-          <>
-            <FormRow label="Hostname">
+          <FormRow label="Hostname">
+            {!hasToken ? (
+              <div style={{ marginBottom: 8 }}>
+                <InlineAlert variant="warning">
+                  Falta o token da API Cloudflare.{' '}
+                  <Link to="/settings/profile">Configurar em Definições de perfil</Link>
+                </InlineAlert>
+              </div>
+            ) : null}
+            <div className={styles.hostnameRow}>
               <Input
-                value={hostname}
-                onChange={(event) => setHostname(event.target.value)}
-                placeholder="app.meudominio.com"
+                value={subdomain}
+                onChange={(event) => setSubdomain(event.target.value)}
+                placeholder={defaultSubdomain(app)}
+                aria-label="Subdomínio"
               />
-            </FormRow>
-            <FormRow label="Nome do túnel">
-              <Input
-                value={tunnelName}
-                onChange={(event) => setTunnelName(event.target.value)}
-                placeholder={`painel-${app.folderName || 'app'}`}
+              <span className={styles.hostnameDot} aria-hidden="true">
+                .
+              </span>
+              <Select
+                value={zoneName}
+                onChange={setZoneName}
+                disabled={!hasToken || zones.isLoading || Boolean(zones.error) || (zones.data?.length ?? 0) === 0}
+                searchable
+                searchPlaceholder="Buscar domínio…"
+                placeholder={
+                  !hasToken
+                    ? 'Token em falta…'
+                    : zones.isLoading
+                      ? 'A carregar domínios…'
+                      : zones.error
+                        ? 'Falha ao listar zonas'
+                        : (zones.data?.length ?? 0) === 0
+                          ? 'Sem domínios na conta'
+                          : 'Escolher domínio…'
+                }
+                aria-label="Domínio Cloudflare"
+                options={(zones.data ?? []).map((z) => ({ value: z.name, label: z.name }))}
               />
-              <FormCard.Hint>Opcional. Na primeira execução cria o túnel na conta Cloudflare.</FormCard.Hint>
-            </FormRow>
-          </>
+            </div>
+            <FormCard.Hint>
+              {composedHostname
+                ? `https://${composedHostname}`
+                : 'Subdomínio à esquerda e domínio da conta à direita.'}
+              {zones.error ? (
+                <>
+                  {' '}
+                  O token precisa de <strong>Zone → Zone → Read</strong>.{' '}
+                  <Link to="/settings/profile">Editar nas definições</Link>.
+                </>
+              ) : null}
+            </FormCard.Hint>
+            {hostnameConflict ? (
+              <div style={{ marginTop: 8 }}>
+                <InlineAlert variant="warning">
+                  Este hostname já está na app <strong>{hostnameConflict.name}</strong>.{' '}
+                  <Link
+                    to={appHref(
+                      {
+                        repository: hostnameConflict.repository,
+                        folderName: hostnameConflict.folderName,
+                      },
+                      'cloudflare',
+                    )}
+                  >
+                    Abrir Cloudflare de {hostnameConflict.name}
+                  </Link>
+                </InlineAlert>
+              </div>
+            ) : null}
+          </FormRow>
         ) : null}
+
         <FormRow label="Com a app">
           <PreferenceToggleRow
             title="Iniciar com a app"
-            description="Quando a app arranca, o túnel Cloudflare também é iniciado e a URL pública aparece aqui."
+            description="Ao lançar a app, o túnel também arranca. A URL fica no switcher e na visão geral."
             checked={startWithApp}
             onChange={setStartWithApp}
           />
         </FormRow>
-        <FormCard.Footer
-          right={
-            <Button type="submit" variant="secondary" disabled={busy || detail.isLoading}>
-              Guardar
-            </Button>
-          }
-        />
-      </FormCard>
 
-      <FormCard aria-label="Estado do túnel" style={{ marginTop: 20 }}>
-        <FormCard.Header
-          title="Estado"
-          subtitle={
-            view?.running
-              ? publicUrl
-                ? 'Túnel em execução'
-                : 'Túnel a ligar… à espera da URL Cloudflare'
-              : 'Túnel parado'
-          }
-        />
-        <FormRow label="Estado">
-          <StatusBadge
-            label={view?.running ? (publicUrl ? 'Em execução' : 'A obter URL…') : 'Parado'}
-            tone={view?.running ? 'success' : 'muted'}
-          />
-        </FormRow>
-        {!publicUrl ? (
-          <FormRow label="URL pública">
-            <Input
-              value=""
-              readOnly
-              placeholder={view?.running ? 'A aguardar URL do Cloudflare…' : 'Inicie o túnel para obter o link'}
-            />
-          </FormRow>
+        {!view?.running && !app.running ? (
+          <p className={styles.meta}>Inicie a app antes do túnel.</p>
         ) : null}
+
         <FormCard.Footer
           right={
             <div className={styles.actions}>
-              <Button type="button" variant="secondary" disabled={busy} onClick={() => void refreshStatus()}>
-                Actualizar
-              </Button>
+              {dirty ? (
+                <Button
+                  type="submit"
+                  variant="secondary"
+                  disabled={busy || detail.isLoading || Boolean(hostnameConflict)}
+                >
+                  Salvar
+                </Button>
+              ) : null}
               {view?.running ? (
                 <Button type="button" disabled={busy} onClick={() => void stop()}>
                   Parar
                 </Button>
               ) : (
-                <Button
-                  type="button"
-                  disabled={busy || !view?.cloudflaredAvailable || appPort == null}
-                  onClick={() => void start()}
-                >
+                <Button type="button" disabled={busy || !canStart} onClick={() => void start()}>
                   Iniciar
                 </Button>
               )}
@@ -682,6 +736,8 @@ function AppSettings({ app }: { app: AppView }) {
   const queryClient = useQueryClient();
   const actions = useLibraryMutations();
   const [name, setName] = useState(app.name);
+  const [pendingDanger, setPendingDanger] = useState<'delete' | 'remove' | null>(null);
+  const [dangerBusy, setDangerBusy] = useState(false);
   const hasIcon = Boolean(app.iconPath);
 
   useEffect(() => {
@@ -690,7 +746,18 @@ function AppSettings({ app }: { app: AppView }) {
 
   async function saveEntry() {
     try {
-      await librarySave({ ...app, name, folderName: app.folderName, appIconUrl: null }, appId(app));
+      await librarySave(
+        {
+          name,
+          repository: app.repository,
+          folderName: app.folderName,
+          installPath: app.configuredInstallPath ?? null,
+          appIconUrl: app.appIconUrl ?? null,
+          preferredVersion: app.preferredVersion ?? null,
+          skippedUpdateVersion: app.skippedUpdateVersion ?? null,
+        },
+        appId(app),
+      );
       await queryClient.invalidateQueries({ queryKey: ['launcher'] });
       toast.success('Entrada actualizada.');
     } catch (err) {
@@ -708,7 +775,7 @@ function AppSettings({ app }: { app: AppView }) {
       if (typeof selected !== 'string' || !selected) return;
       await appSetIcon(appId(app), selected);
       await queryClient.invalidateQueries({ queryKey: ['launcher'] });
-      toast.success('Ícone guardado.');
+      toast.success('Ícone salvo.');
     } catch (err) {
       toast.error(launcherError(err));
     }
@@ -778,7 +845,7 @@ function AppSettings({ app }: { app: AppView }) {
             onRightIconClick={() => void actions.openFolder(app)}
           />
         </FormRow>
-        <FormCard.Footer right={<Button type="submit" variant="secondary">Guardar entrada</Button>} />
+        <FormCard.Footer right={<Button type="submit" variant="secondary">Salvar entrada</Button>} />
       </FormCard>
 
       <PageShell.Section className={styles.blockGap}>
@@ -787,15 +854,7 @@ function AppSettings({ app }: { app: AppView }) {
             title="Apagar a instalação"
             description="Remove a pasta instalada e mantém a entrada na biblioteca."
             action={
-              <Button
-                variant="danger"
-                onClick={() =>
-                  void appDeleteInstall(appId(app))
-                    .then(() => queryClient.invalidateQueries({ queryKey: ['launcher'] }))
-                    .then(() => toast.success('Instalação apagada.'))
-                    .catch((err) => toast.error(launcherError(err)))
-                }
-              >
+              <Button variant="danger" onClick={() => setPendingDanger('delete')}>
                 Apagar pasta
               </Button>
             }
@@ -805,15 +864,65 @@ function AppSettings({ app }: { app: AppView }) {
           title="Remover da biblioteca"
           description="Tira a entrada de apps.json. A pasta instalada fica no disco."
           action={
-            <Button
-              variant="danger"
-              onClick={() => void libraryRemove(appId(app)).then(() => navigate('/')).catch((err) => toast.error(launcherError(err)))}
-            >
+            <Button variant="danger" onClick={() => setPendingDanger('remove')}>
               Remover
             </Button>
           }
         />
       </PageShell.Section>
+
+      <Modal
+        isOpen={pendingDanger != null}
+        onClose={() => {
+          if (!dangerBusy) setPendingDanger(null);
+        }}
+        title={pendingDanger === 'delete' ? 'Apagar a instalação' : 'Remover da biblioteca'}
+      >
+        <Modal.Content>
+          <Modal.Text>
+            {pendingDanger === 'delete'
+              ? 'A pasta instalada será apagada. A entrada continua na biblioteca. Se a app estiver a correr, ela é parada primeiro.'
+              : 'A entrada sai da biblioteca. A pasta no disco fica. Se a app estiver a correr, ela é parada primeiro.'}
+          </Modal.Text>
+        </Modal.Content>
+        <Modal.Footer>
+          <Button type="button" disabled={dangerBusy} onClick={() => setPendingDanger(null)}>
+            Cancelar
+          </Button>
+          <Button
+            type="button"
+            variant="danger"
+            disabled={dangerBusy}
+            loading={dangerBusy}
+            onClick={() => {
+              void (async () => {
+                setDangerBusy(true);
+                try {
+                  if (app.running) {
+                    const stopped = await actions.stop(app);
+                    if (!stopped) return;
+                  }
+                  if (pendingDanger === 'delete') {
+                    await appDeleteInstall(appId(app));
+                    await queryClient.invalidateQueries({ queryKey: ['launcher'] });
+                    toast.success('Instalação apagada.');
+                  } else {
+                    await libraryRemove(appId(app));
+                    navigate('/');
+                  }
+                  setPendingDanger(null);
+                } catch (err) {
+                  toast.error(launcherError(err));
+                } finally {
+                  setDangerBusy(false);
+                }
+              })();
+            }}
+          >
+            {pendingDanger === 'delete' ? 'Apagar pasta' : 'Remover'}
+          </Button>
+        </Modal.Footer>
+      </Modal>
     </PageShell>
   );
 }
@@ -858,11 +967,11 @@ function Versions({ app }: { app: AppView }) {
             return (
               <div className={styles.cardHost}>
                 <ItemCard
-                  aria-label={`Instalar ${release.tag}`}
+                  aria-label={`Descarregar ${release.tag}`}
                   onClick={() => install(release)}
                   actions={{
                     label: `Ações para ${release.tag}`,
-                    items: [{ label: 'Instalar', icon: <IconDownload size={15} />, onClick: () => install(release) }],
+                    items: [{ label: 'Descarregar', icon: <IconDownload size={15} />, onClick: () => install(release) }],
                   }}
                 >
                   <div className={gc.body}>
@@ -936,7 +1045,7 @@ function ReleaseList({
       rowActions={(row) => (
         <RowActions
           label={`Ações para ${row.tag}`}
-          items={[{ label: 'Instalar', icon: <IconDownload size={15} />, onClick: () => onInstall(row) }]}
+          items={[{ label: 'Descarregar', icon: <IconDownload size={15} />, onClick: () => onInstall(row) }]}
         />
       )}
     />
@@ -965,7 +1074,7 @@ function Executable({ app }: { app: AppView }) {
       await queryClient.invalidateQueries({ queryKey: ['launcher'] });
       await queryClient.invalidateQueries({ queryKey: ['launcher', 'launch-config', appId(app)] });
       await queryClient.invalidateQueries({ queryKey: ['launcher', 'exe', appId(app)] });
-      toast.success('Configuração guardada.');
+      toast.success('Configuração salva.');
     } catch (err) {
       toast.error(launcherError(err));
     } finally {
@@ -999,9 +1108,17 @@ function Executable({ app }: { app: AppView }) {
     }
   }
 
+  async function openLaunchDir() {
+    try {
+      await appOpenLaunchfileDir(appId(app));
+    } catch (err) {
+      toast.error(launcherError(err));
+    }
+  }
+
   return (
     <PageShell>
-      <PageShell.Heading subtitle="Manifesto Launchfile — install, start, porta e URL.">
+      <PageShell.Heading subtitle="Manifesto Launchfile — pre-start, start, porta e URL.">
         Executável{' '}
         {config.data ? <StatusBadge label={config.data.runnerLabel} tone="info" /> : null}
       </PageShell.Heading>
@@ -1015,13 +1132,70 @@ function Executable({ app }: { app: AppView }) {
         onFieldsChange={setFields}
         onSaveFields={() => void saveFields()}
         onGenerateDeepseek={() => void generateWithDeepseek()}
+        onOpenFolder={() => void openLaunchDir()}
       />
     </PageShell>
   );
 }
 
+function httpPort(value: string): string | null {
+  const match = value.trim().match(/^https?:\/\/[^/\s:]+:(\d+)(?=\/|$)/i);
+  return match?.[1] ?? null;
+}
+
+function linkedPorts(previous: string, next: string): { oldPort: string; newPort: string } | null {
+  const prev = previous.trim();
+  const nextTrim = next.trim();
+  if (!prev || prev === nextTrim) return null;
+  if (/^\d+$/.test(prev) && /^\d+$/.test(nextTrim)) {
+    return { oldPort: prev, newPort: nextTrim };
+  }
+  const oldUrlPort = httpPort(prev);
+  const newUrlPort = httpPort(nextTrim);
+  if (oldUrlPort && newUrlPort && oldUrlPort !== newUrlPort) {
+    return { oldPort: oldUrlPort, newPort: newUrlPort };
+  }
+  return null;
+}
+
+function replacePortToken(value: string, oldPort: string, newPort: string): string {
+  if (value.trim() === oldPort) return newPort;
+  const colon = new RegExp(`:${oldPort}(?!\\d)`, 'g');
+  const standalone = new RegExp(`(^|[\\s=])${oldPort}(?!\\d)`, 'g');
+  return value.replace(colon, `:${newPort}`).replace(standalone, `$1${newPort}`);
+}
+
+function propagateLaunchValue(fields: LaunchField[], key: string, value: string): LaunchField[] {
+  const previous = fields.find((item) => item.key === key)?.value ?? '';
+  const ports = linkedPorts(previous, value);
+  return fields.map((item) => {
+    if (item.key === key) return { ...item, value };
+    if (!ports) return item;
+    return { ...item, value: replacePortToken(item.value, ports.oldPort, ports.newPort) };
+  });
+}
+
 function isTruthyLaunchValue(value: string) {
   return ['true', 'yes', 'on', '1'].includes(value.trim().toLowerCase());
+}
+
+const LAUNCH_KINDS = ['site', 'api', 'desktop', 'cli'] as const;
+
+function LaunchKindSelect({ value, onChange }: { value: string; onChange: (value: string) => void }) {
+  const current = value.trim().toLowerCase();
+  const known = LAUNCH_KINDS.some((kind) => kind === current);
+  const options = [
+    ...(known ? [] : [{ value, label: 'Tipo desconhecido' }]),
+    ...LAUNCH_KINDS.map((kind) => ({ value: kind, label: kind })),
+  ];
+  return (
+    <Select
+      aria-label="Tipo"
+      value={known ? current : value}
+      onChange={onChange}
+      options={options}
+    />
+  );
 }
 
 function LaunchFieldControl({
@@ -1034,6 +1208,10 @@ function LaunchFieldControl({
   onError: (message: string) => void;
 }) {
   const type = (field.fieldType || 'text').toLowerCase();
+
+  if (field.key === 'kind') {
+    return <LaunchKindSelect value={field.value} onChange={onChange} />;
+  }
 
   if (type === 'boolean') {
     return (
@@ -1083,6 +1261,7 @@ function LaunchConfigForm({
   onFieldsChange,
   onSaveFields,
   onGenerateDeepseek,
+  onOpenFolder,
 }: {
   loaded?: Awaited<ReturnType<typeof appLaunchConfigGet>>;
   fields: LaunchField[];
@@ -1090,16 +1269,16 @@ function LaunchConfigForm({
   onFieldsChange: (fields: LaunchField[]) => void;
   onSaveFields: () => void;
   onGenerateDeepseek: () => void;
+  onOpenFolder: () => void;
 }) {
   const toast = useToast();
   if (!loaded) return null;
 
   const working = fields.length ? fields : loaded.fields;
-  const coreFields = working.filter((field) => field.key !== 'hint' && !field.key.startsWith('env.'));
-  const envFields = working.filter((field) => field.key.startsWith('env.'));
+  const visibleFields = working.filter((field) => field.key !== 'hint');
 
   function patchField(key: string, value: string) {
-    onFieldsChange(working.map((item) => (item.key === key ? { ...item, value } : item)));
+    onFieldsChange(propagateLaunchValue(working, key, value));
   }
 
   return (
@@ -1108,12 +1287,36 @@ function LaunchConfigForm({
         <FormCard.Header
           title="Launchfile"
           subtitle={
-            loaded.relativePath
-              ? `Ficheiro: ${loaded.relativePath}. Sem ficheiro, o Start (ou o botão abaixo) usa o DeepSeek.`
+            loaded.configPath
+              ? 'O DeepSeek só corre ao trocar de branch se este ficheiro ainda não existir. Para o reescrever, usa o ícone de regenerar.'
               : 'O DeepSeek cria o Launchfile se ainda não existir (token em Perfil).'
           }
+          actions={
+            <>
+              <Button
+                type="button"
+                variant="ghost"
+                disabled={busy}
+                aria-label="Abrir pasta do Launchfile"
+                title="Abrir pasta do Launchfile"
+                onClick={onOpenFolder}
+                style={{ width: 28, padding: 0 }}
+                leftIcon={<IconFolder size={15} aria-hidden="true" />}
+              />
+              <Button
+                type="button"
+                variant="ghost"
+                disabled={busy}
+                aria-label="Regenerar com DeepSeek"
+                title="Regenerar com DeepSeek"
+                onClick={onGenerateDeepseek}
+                style={{ width: 28, padding: 0 }}
+                leftIcon={<IconRefresh size={15} aria-hidden="true" />}
+              />
+            </>
+          }
         />
-        {coreFields.map((field) => (
+        {visibleFields.map((field) => (
           <FormRow key={field.key} label={field.label}>
             <LaunchFieldControl
               field={field}
@@ -1122,33 +1325,14 @@ function LaunchConfigForm({
             />
           </FormRow>
         ))}
-        {envFields.length ? (
-          <>
-            <FormCard.Header title="Variáveis de ambiente" />
-            {envFields.map((field) => (
-              <FormRow key={field.key} label={field.label}>
-                <LaunchFieldControl
-                  field={field}
-                  onChange={(value) => patchField(field.key, value)}
-                  onError={(message) => toast.error(message)}
-                />
-              </FormRow>
-            ))}
-          </>
-        ) : null}
         {working.some((field) => field.key === 'hint') ? (
           <FormCard.Hint>{working.find((field) => field.key === 'hint')?.value}</FormCard.Hint>
         ) : null}
         <FormCard.Footer
           right={
-            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-              <Button type="button" disabled={busy} onClick={onGenerateDeepseek}>
-                Gerar com DeepSeek
-              </Button>
-              <Button type="button" variant="secondary" disabled={busy} onClick={onSaveFields}>
-                Guardar campos
-              </Button>
-            </div>
+            <Button type="button" variant="secondary" disabled={busy} onClick={onSaveFields}>
+              Salvar campos
+            </Button>
           }
         />
       </FormCard>

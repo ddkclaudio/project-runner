@@ -12,14 +12,35 @@ const MAX_SEARCH_HITS: usize = 40;
 const MAX_LIST_ENTRIES: usize = 200;
 
 const SYSTEM_PROMPT: &str = r#"You are a launch-config agent for the Painel desktop app.
-Explore the repository using tools only. Infer how to install dependencies and start the app.
-Produce a Launchfile (YAML) with:
+Explore the repository using tools only. Infer how this branch installs dependencies and starts.
+Painel runs one Launchfile. It does not use a Procfile, Docker as a type, or several long-running processes.
+
+Write YAML with:
 version: launch/v1
 name, runtime (node|python|rust|binary|other), kind (site|api|desktop|cli),
-optional port, url, cwd, commands.install, commands.start (required), optional env (no secrets).
+optional port, url, cwd (relative to the clone and must exist),
+commands.pre-start (always present; YAML list of commands that exit),
+commands.start (always present; YAML list; every item except the last must exit; the last stays running),
+optional env (no secrets).
+
+Launch kinds Painel can execute:
+- site: a dev server or static file server on a fixed port. Set port. If the HTML uses a path prefix, set url to that path.
+- api: an HTTP server on a fixed port.
+- desktop: an executable that stays open. Omit port unless it also listens for HTTP.
+- cli: a foreground command that stays running. Omit port when there is no HTTP server.
+
+pre-start is where dependencies are installed. The steps change with the language and framework (npm install, python -m venv plus pip install, cargo fetch). Use an empty list when nothing must be installed. Each step must succeed again on the next launch, so prefer npm install and do not use npm ci, which deletes node_modules every time.
+If start has several steps, only the last stays alive.
+
+Painel has a Cloudflare tunnel. The tunnel only needs the port the app listens on. Painel starts cloudflared; do not put cloudflared in start or pre-start.
+If kind is site or api and the app can listen for HTTP, set port to the fixed port the last start command actually uses. Without port the Cloudflare menu stays hidden.
+If the project already reads PORT (CRA, Vite, Next, Flask, uvicorn), put that same number in port and in env.PORT. Do not invent CLOUDFLARE_*, TUNNEL_*, hostname, or token variables.
+For desktop or cli with no HTTP server, omit port. Do not invent a port just so a tunnel exists.
+If index.html references an absolute subpath such as /repo-name/, serve the parent directory (cwd: ..) and set url to http://localhost:PORT/that-path/. Serving the folder itself at / makes those assets 404.
+
 Never invent file paths — list_dir / search / read_file first.
-For .env files, only use variable NAMES; never copy secret values into Launchfile.
-commands.start must be a plain command (e.g. npm start). Put variables under env:, never VAR=value prefixes in start.
+For .env files, only use variable NAMES; never copy secret values into the Launchfile.
+Each command is a plain shell command. Put variables under env:, never VAR=value prefixes.
 When ready, call write_launchfile or update_launchfile, then finish.
 "#;
 
@@ -27,28 +48,31 @@ pub async fn ensure_launchfile(
     project: &Path,
     info: &Path,
     token: &str,
+    branch: &str,
     on_progress: &impl Fn(u32, &str),
 ) -> Result<(), String> {
     if launchfile::exists(info) {
         let _ = launchfile::read(info)?;
         return Ok(());
     }
-    run_agent(project, info, token, false, on_progress).await
+    run_agent(project, info, token, branch, false, on_progress).await
 }
 
 pub async fn generate_launchfile(
     project: &Path,
     info: &Path,
     token: &str,
+    branch: &str,
     on_progress: &impl Fn(u32, &str),
 ) -> Result<(), String> {
-    run_agent(project, info, token, true, on_progress).await
+    run_agent(project, info, token, branch, true, on_progress).await
 }
 
 async fn run_agent(
     project: &Path,
     info: &Path,
     token: &str,
+    branch: &str,
     allow_update: bool,
     on_progress: &impl Fn(u32, &str),
 ) -> Result<(), String> {
@@ -75,7 +99,7 @@ async fn run_agent(
         json!({
             "role": "user",
             "content": format!(
-                "Repository root is ready. Explore the project files and {} a valid Launchfile (written under launch-info) so the app can install deps and start. Prefer reading README, package manifests, and env examples.",
+                "Repository root is ready. Current git branch: {branch}. Explore the files on this branch and {} a valid Launchfile so this branch can install dependencies and start. The commands must match the files that exist on this branch now. Do not keep npm start when package.json is absent. Always write commands.pre-start and commands.start as YAML lists. Prefer reading README, package manifests, index.html, and env examples.",
                 if allow_update && launchfile::exists(info) { "update" } else { "create" }
             )
         }),
@@ -218,7 +242,7 @@ fn tool_schemas() -> Value {
             "type": "function",
             "function": {
                 "name": "write_launchfile",
-                "description": "Create Launchfile at repo root with full YAML content.",
+                "description": "Create the Launchfile YAML for this branch. commands.pre-start and commands.start must be YAML lists.",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -232,7 +256,7 @@ fn tool_schemas() -> Value {
             "type": "function",
             "function": {
                 "name": "update_launchfile",
-                "description": "Replace Launchfile content at repo root.",
+                "description": "Replace the Launchfile YAML for this branch. commands.pre-start and commands.start must be YAML lists.",
                 "parameters": {
                     "type": "object",
                     "properties": {
