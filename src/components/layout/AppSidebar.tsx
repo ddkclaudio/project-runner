@@ -1,4 +1,4 @@
-import { IconHome, IconBooks, IconSettings, IconComponents, IconLayoutSidebarLeftCollapse, IconLayoutSidebarLeftExpand, IconLayoutDashboard, IconVersions, IconTerminal2, IconLink, IconNotes, IconAdjustments } from '@tabler/icons-react';
+import { IconHome, IconBooks, IconSettings, IconComponents, IconLayoutSidebarLeftCollapse, IconLayoutSidebarLeftExpand, IconLayoutDashboard, IconVersions, IconTerminal2, IconLink, IconNotes, IconAdjustments, IconCloud } from '@tabler/icons-react';
 import { useLocation } from 'react-router-dom';
 import { NavMenuItem } from '@/components/ui/NavMenuItem';
 import { useLayoutNav } from '@/hooks/useLayoutNav';
@@ -74,6 +74,7 @@ export function AppMenuSidebar({ repository: folder }: { repository: string }) {
     { label: 'Versões', href: appHref(folder, 'versions'), Icon: IconVersions, exact: true },
     { label: 'Executável', href: appHref(folder, 'executable'), Icon: IconTerminal2, exact: true },
     { label: 'Atalhos', href: appHref(folder, 'shortcuts'), Icon: IconLink, exact: true },
+    { label: 'Cloudflare', href: appHref(folder, 'cloudflare'), Icon: IconCloud, exact: true },
     { label: 'Changelog', href: appHref(folder, 'changelog'), Icon: IconNotes, exact: true },
     { label: 'Configuração', href: appHref(folder, 'settings'), Icon: IconAdjustments, exact: true },
   ];

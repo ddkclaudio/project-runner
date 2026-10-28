@@ -179,7 +179,7 @@ export function libraryMenu(
   ];
   if (app.running && app.openUrl) {
     items.push({
-      label: 'Abrir no browser',
+      label: 'Abrir',
       icon: <IconExternalLink size={15} />,
       onClick: () => void openUrl(app.openUrl!).catch(() => undefined),
     });

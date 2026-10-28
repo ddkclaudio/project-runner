@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import ReactMarkdown from 'react-markdown';
@@ -28,6 +28,11 @@ import { formatDate } from '@/utils';
 import {
   appChangelog,
   appClearIcon,
+  appCloudflareGet,
+  appCloudflareSave,
+  appCloudflareStart,
+  appCloudflareStatus,
+  appCloudflareStop,
   appDeleteInstall,
   appDetail,
   appGenerateLaunchfile,
@@ -40,12 +45,18 @@ import {
   launcherError,
   libraryRemove,
   librarySave,
+  settingsGet,
+  settingsSave,
   statusLabel,
   type AppView,
+  type CloudflareMode,
   type LaunchField,
   type ReleaseInfo,
 } from '@/lib/launcher-api';
 import { useAppProgressStore } from '@/stores/app-progress';
+import { useOrg } from '@/contexts/OrgContext';
+import { PreferenceToggleRow } from '@/components/ui/PreferenceToggleRow';
+import { Select } from '@/components/ui/Select';
 import styles from './library.module.css';
 
 function publishedLabel(value: string) {
@@ -61,18 +72,44 @@ function releaseState(app: AppView, tag: string): { label: string; tone: StatusT
 }
 
 export function AppPage() {
+  const navigate = useNavigate();
   const params = useParams();
+  const { activeOrg } = useOrg();
   const section = params.section ?? '';
   const appKey = params.folder
     ? decodeURIComponent(params.folder)
     : `${params.owner}/${params.repo}`;
-  const detail = useQuery({ queryKey: ['launcher', 'app', appKey], queryFn: () => appDetail(appKey) });
+  const detail = useQuery({
+    queryKey: ['launcher', 'app', activeOrg?.id, appKey],
+    queryFn: () => appDetail(appKey),
+    enabled: Boolean(activeOrg?.id),
+  });
   const app = detail.data;
-  if (detail.isLoading) return <PageShell><p className={styles.meta}>A carregar…</p></PageShell>;
-  if (!app) return <PageShell><InlineAlert>{launcherError(detail.error) || 'App não encontrada.'}</InlineAlert></PageShell>;
+
+  useEffect(() => {
+    if (!activeOrg?.id) return;
+    if (detail.isLoading || detail.isFetching) return;
+    if (!app) navigate('/', { replace: true });
+  }, [activeOrg?.id, app, detail.isFetching, detail.isLoading, navigate]);
+
+  if (detail.isLoading || !activeOrg?.id) {
+    return (
+      <PageShell>
+        <p className={styles.meta}>A carregar…</p>
+      </PageShell>
+    );
+  }
+  if (!app) {
+    return (
+      <PageShell>
+        <p className={styles.meta}>A redirecionar…</p>
+      </PageShell>
+    );
+  }
   if (section === 'versions') return <Versions app={app} />;
   if (section === 'executable') return <Executable app={app} />;
   if (section === 'shortcuts') return <Shortcuts app={app} />;
+  if (section === 'cloudflare') return <CloudflareTunnel app={app} />;
   if (section === 'changelog') return <Changelog app={app} />;
   if (section === 'settings') return <AppSettings app={app} />;
   return <Overview app={app} />;
@@ -198,6 +235,445 @@ function iconFileName(path: string | null | undefined) {
   if (!path) return '';
   const parts = path.split(/[/\\]/);
   return parts[parts.length - 1] || path;
+}
+
+function CloudflareTunnel({ app }: { app: AppView }) {
+  const toast = useToast();
+  const queryClient = useQueryClient();
+  const { activeOrg } = useOrg();
+  const id = appId(app);
+  const queryKey = ['launcher', 'cloudflare', activeOrg?.id, id] as const;
+  const detail = useQuery({
+    queryKey,
+    queryFn: () => appCloudflareGet(id),
+    refetchInterval: (query) => {
+      const data = query.state.data;
+      if (!data?.running) return false;
+      // Enquanto corre sem URL, poll rápido para mostrar o link trycloudflare.
+      return data.publicUrl ? 4000 : 1000;
+    },
+    enabled: Boolean(activeOrg?.id),
+  });
+  const settings = useQuery({
+    queryKey: ['launcher', 'settings', activeOrg?.id],
+    queryFn: settingsGet,
+    enabled: Boolean(activeOrg?.id),
+  });
+  const view = detail.data;
+  const [mode, setMode] = useState<CloudflareMode>('quick');
+  const [startWithApp, setStartWithApp] = useState(false);
+  const [hostname, setHostname] = useState('');
+  const [tunnelName, setTunnelName] = useState('');
+  const [apiToken, setApiToken] = useState('');
+  const [cloudflaredPath, setCloudflaredPath] = useState('');
+  const [busy, setBusy] = useState(false);
+  const synced = useRef(false);
+  const settingsSynced = useRef(false);
+
+  useEffect(() => {
+    synced.current = false;
+    settingsSynced.current = false;
+  }, [id]);
+
+  useEffect(() => {
+    if (!view || synced.current) return;
+    synced.current = true;
+    setMode(view.config.mode);
+    setStartWithApp(Boolean(view.config.startWithApp));
+    setHostname(view.config.hostname ?? '');
+    setTunnelName(view.config.tunnelName ?? '');
+  }, [view]);
+
+  useEffect(() => {
+    if (!settings.data || settingsSynced.current) return;
+    settingsSynced.current = true;
+    setApiToken(settings.data.cloudflareApiToken ?? '');
+    const savedPath = settings.data.cloudflaredPath?.trim() ?? '';
+    setCloudflaredPath(savedPath);
+  }, [settings.data]);
+
+  // Preencher caminho detectado se o campo estiver vazio.
+  useEffect(() => {
+    if (!view?.cloudflaredDetected) return;
+    setCloudflaredPath((current) => current.trim() || view.cloudflaredDetected || '');
+  }, [view?.cloudflaredDetected]);
+
+  async function persistCredentials() {
+    const current = settings.data;
+    if (!current) return;
+    const { dataDir: _d, appVersion: _v, ...rest } = current;
+    await settingsSave({
+      ...rest,
+      cloudflareApiToken: apiToken.trim(),
+      cloudflaredPath: cloudflaredPath.trim(),
+    });
+    await queryClient.invalidateQueries({ queryKey: ['launcher', 'settings'] });
+    await detail.refetch();
+  }
+
+  async function persistConfig() {
+    await appCloudflareSave(id, {
+      mode,
+      startWithApp,
+      portOverride: null,
+      hostname: hostname.trim() || null,
+      tunnelName: tunnelName.trim() || null,
+    });
+  }
+
+  async function save() {
+    setBusy(true);
+    try {
+      await persistCredentials();
+      await persistConfig();
+      await detail.refetch();
+      toast.success('Configuração Cloudflare guardada.');
+    } catch (err) {
+      toast.error(launcherError(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function start() {
+    setBusy(true);
+    try {
+      await persistCredentials();
+      await persistConfig();
+      const next = await appCloudflareStart(id);
+      await detail.refetch();
+      if (next.publicUrl) {
+        toast.success(`URL pública: ${next.publicUrl}`);
+      } else {
+        toast.success('Túnel a iniciar… a URL aparece assim que o Cloudflare a publicar.');
+      }
+    } catch (err) {
+      toast.error(launcherError(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function stop() {
+    setBusy(true);
+    try {
+      await appCloudflareStop(id);
+      await queryClient.invalidateQueries({ queryKey: ['launcher', 'cloudflare'] });
+      await detail.refetch();
+      toast.success('Túnel parado. URL pública limpa.');
+    } catch (err) {
+      toast.error(launcherError(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function refreshStatus() {
+    try {
+      await appCloudflareStatus(id);
+      await detail.refetch();
+    } catch (err) {
+      toast.error(launcherError(err));
+    }
+  }
+
+  // URL só conta enquanto o túnel corre — ao parar some do ecrã e do estado.
+  const publicUrl = view?.running ? view.publicUrl?.trim() || '' : '';
+  const appPort = view?.effectivePort;
+
+  return (
+    <PageShell>
+      <PageShell.Heading subtitle="Expõe a porta da app (Launchfile) via túnel Cloudflare. A URL pública aparece aqui para acederes ao site.">
+        Cloudflare
+      </PageShell.Heading>
+
+      <div style={{ marginTop: 12 }}>
+        <InlineAlert variant="info">
+          <strong>Quick</strong> (recomendado para testar): não precisa de token — só do programa{' '}
+          <code>cloudflared</code>. Gera uma URL <code>*.trycloudflare.com</code>.
+          <br />
+          <strong>Domínio</strong>: precisa de token da API Cloudflare + hostname no teu domínio.
+        </InlineAlert>
+      </div>
+
+      {!view?.cloudflaredAvailable ? (
+        <InlineAlert variant="warning">
+          cloudflared não encontrado. Instale-o (
+          <a href="https://developers.cloudflare.com/cloudflare-one/connections/connect-apps/install-and-setup/installation/" target="_blank" rel="noreferrer">
+            instalação
+          </a>
+          ) ou indique o caminho completo abaixo.
+        </InlineAlert>
+      ) : null}
+
+      {publicUrl ? (
+        <FormCard aria-label="URL pública do túnel" style={{ marginTop: 16 }}>
+          <FormCard.Header title="URL pública" subtitle="Acede ao site por este endereço Cloudflare." />
+          <FormRow label="Link">
+            <Input
+              value={publicUrl}
+              readOnly
+              rightIcon={<IconCopy size={16} aria-hidden="true" />}
+              rightIconLabel="Copiar URL"
+              onRightIconClick={() => {
+                void navigator.clipboard
+                  .writeText(publicUrl)
+                  .then(() => toast.success('URL copiada.'))
+                  .catch(() => toast.error('Não foi possível copiar.'));
+              }}
+            />
+          </FormRow>
+          <FormCard.Footer
+            right={
+              <div className={styles.actions}>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  leftIcon={<IconExternalLink size={14} />}
+                  onClick={() => void openUrl(publicUrl).catch((err) => toast.error(launcherError(err)))}
+                >
+                  Abrir no browser
+                </Button>
+              </div>
+            }
+          />
+        </FormCard>
+      ) : null}
+
+      <FormCard
+        onSubmit={(event) => {
+          event.preventDefault();
+          void save();
+        }}
+        aria-label="Credenciais Cloudflare"
+        style={{ marginTop: 16 }}
+      >
+        <FormCard.Header
+          title="Credenciais"
+          subtitle="Guardadas nas definições da organização. Quick não exige token; Domínio sim."
+        />
+        <FormRow label="Token da API">
+          <Input
+            type="password"
+            value={apiToken}
+            onChange={(event) => setApiToken(event.target.value)}
+            placeholder={mode === 'named' ? 'Obrigatório para Domínio…' : 'Opcional no modo Quick'}
+            autoComplete="off"
+          />
+          <FormCard.Hint>
+            Obter token:{' '}
+            <a href="https://dash.cloudflare.com/profile/api-tokens" target="_blank" rel="noreferrer">
+              dash.cloudflare.com/profile/api-tokens
+            </a>
+            {' · '}
+            <button
+              type="button"
+              className={styles.linkBtn}
+              onClick={() =>
+                void openUrl('https://dash.cloudflare.com/profile/api-tokens').catch((err) =>
+                  toast.error(launcherError(err)),
+                )
+              }
+            >
+              Abrir no browser
+            </button>
+            . Para Domínio: Create Token → permissões Account.Cloudflare Tunnel (Edit) + Zone.DNS (Edit).
+          </FormCard.Hint>
+        </FormRow>
+        <FormRow label="Caminho cloudflared">
+          <Input
+            value={cloudflaredPath}
+            onChange={(event) => setCloudflaredPath(event.target.value)}
+            placeholder={
+              view?.cloudflaredDetected
+                ? view.cloudflaredDetected
+                : view?.cloudflaredAvailable
+                  ? view.cloudflaredPath
+                  : 'Não encontrado — instale ou indique o .exe'
+            }
+          />
+          <FormCard.Hint>
+            {view?.cloudflaredDetected
+              ? `Detectado automaticamente: ${view.cloudflaredDetected}`
+              : view?.cloudflaredAvailable
+                ? `A usar: ${view.cloudflaredPath}`
+                : 'Não encontrado no PATH. Instale o cloudflared ou cole o caminho completo do executável.'}{' '}
+            <button
+              type="button"
+              className={styles.linkBtn}
+              onClick={() => {
+                void detail.refetch().then((res) => {
+                  const detected = res.data?.cloudflaredDetected || res.data?.cloudflaredPath;
+                  if (res.data?.cloudflaredAvailable && detected) {
+                    setCloudflaredPath(detected);
+                    toast.success(`cloudflared encontrado: ${detected}`);
+                  } else {
+                    toast.error('cloudflared não encontrado. Instale-o e tente de novo.');
+                  }
+                });
+              }}
+            >
+              Procurar de novo
+            </button>
+            {' · '}
+            <a
+              href="https://developers.cloudflare.com/cloudflare-one/connections/connect-apps/install-and-setup/installation/"
+              target="_blank"
+              rel="noreferrer"
+            >
+              Como instalar
+            </a>
+          </FormCard.Hint>
+        </FormRow>
+        <FormCard.Footer
+          right={
+            <div className={styles.actions}>
+              <Button
+                type="button"
+                variant="secondary"
+                disabled={busy}
+                onClick={() => {
+                  const detected = view?.cloudflaredDetected || (view?.cloudflaredAvailable ? view.cloudflaredPath : '');
+                  if (detected) {
+                    setCloudflaredPath(detected);
+                    toast.success(`Caminho preenchido: ${detected}`);
+                  } else {
+                    void detail.refetch().then((res) => {
+                      const path = res.data?.cloudflaredDetected || res.data?.cloudflaredPath;
+                      if (res.data?.cloudflaredAvailable && path) {
+                        setCloudflaredPath(path);
+                        toast.success(`Caminho preenchido: ${path}`);
+                      } else {
+                        toast.error('cloudflared não encontrado.');
+                      }
+                    });
+                  }
+                }}
+              >
+                Usar detectado
+              </Button>
+              <Button type="submit" variant="secondary" disabled={busy || settings.isLoading}>
+                Guardar credenciais
+              </Button>
+            </div>
+          }
+        />
+      </FormCard>
+
+      <FormCard
+        onSubmit={(event) => {
+          event.preventDefault();
+          void save();
+        }}
+        aria-label="Configuração do túnel"
+        style={{ marginTop: 16 }}
+      >
+        <FormCard.Header title="Túnel" subtitle="Usa automaticamente a porta do Launchfile da app." />
+        <FormRow label="Modo">
+          <Select
+            value={mode}
+            onChange={(value) => setMode(value as CloudflareMode)}
+            options={[
+              { value: 'quick', label: 'Quick (*.trycloudflare.com) — sem token' },
+              { value: 'named', label: 'Domínio Cloudflare — precisa de token' },
+            ]}
+          />
+        </FormRow>
+        <FormRow label="Porta da app">
+          <Input value={appPort != null ? String(appPort) : '—'} readOnly disabled />
+          <FormCard.Hint>
+            {appPort != null
+              ? `Mesma porta do Launchfile / app em execução (${appPort}).`
+              : 'Sem porta no Launchfile — configure o Executável da app primeiro.'}
+          </FormCard.Hint>
+        </FormRow>
+        {mode === 'named' ? (
+          <>
+            <FormRow label="Hostname">
+              <Input
+                value={hostname}
+                onChange={(event) => setHostname(event.target.value)}
+                placeholder="app.meudominio.com"
+              />
+            </FormRow>
+            <FormRow label="Nome do túnel">
+              <Input
+                value={tunnelName}
+                onChange={(event) => setTunnelName(event.target.value)}
+                placeholder={`painel-${app.folderName || 'app'}`}
+              />
+              <FormCard.Hint>Opcional. Na primeira execução cria o túnel na conta Cloudflare.</FormCard.Hint>
+            </FormRow>
+          </>
+        ) : null}
+        <FormRow label="Com a app">
+          <PreferenceToggleRow
+            title="Iniciar com a app"
+            description="Quando a app arranca, o túnel Cloudflare também é iniciado e a URL pública aparece aqui."
+            checked={startWithApp}
+            onChange={setStartWithApp}
+          />
+        </FormRow>
+        <FormCard.Footer
+          right={
+            <Button type="submit" variant="secondary" disabled={busy || detail.isLoading}>
+              Guardar
+            </Button>
+          }
+        />
+      </FormCard>
+
+      <FormCard aria-label="Estado do túnel" style={{ marginTop: 20 }}>
+        <FormCard.Header
+          title="Estado"
+          subtitle={
+            view?.running
+              ? publicUrl
+                ? 'Túnel em execução'
+                : 'Túnel a ligar… à espera da URL Cloudflare'
+              : 'Túnel parado'
+          }
+        />
+        <FormRow label="Estado">
+          <StatusBadge
+            label={view?.running ? (publicUrl ? 'Em execução' : 'A obter URL…') : 'Parado'}
+            tone={view?.running ? 'success' : 'muted'}
+          />
+        </FormRow>
+        {!publicUrl ? (
+          <FormRow label="URL pública">
+            <Input
+              value=""
+              readOnly
+              placeholder={view?.running ? 'A aguardar URL do Cloudflare…' : 'Inicie o túnel para obter o link'}
+            />
+          </FormRow>
+        ) : null}
+        <FormCard.Footer
+          right={
+            <div className={styles.actions}>
+              <Button type="button" variant="secondary" disabled={busy} onClick={() => void refreshStatus()}>
+                Actualizar
+              </Button>
+              {view?.running ? (
+                <Button type="button" disabled={busy} onClick={() => void stop()}>
+                  Parar
+                </Button>
+              ) : (
+                <Button
+                  type="button"
+                  disabled={busy || !view?.cloudflaredAvailable || appPort == null}
+                  onClick={() => void start()}
+                >
+                  Iniciar
+                </Button>
+              )}
+            </div>
+          }
+        />
+      </FormCard>
+    </PageShell>
+  );
 }
 
 function AppSettings({ app }: { app: AppView }) {

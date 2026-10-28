@@ -6,11 +6,17 @@ import { SwitcherDropdown } from '@/components/ui/SwitcherDropdown';
 import { libraryList } from '@/lib/launcher-api';
 import { parseAppRoute } from '@/lib/launcher-nav';
 import { resolveSwitcherNavigation } from '@/lib/contextSwitchers';
+import { useOrg } from '@/contexts/OrgContext';
 
 export function AppSwitcher({ pathname }: { pathname: string }) {
   const navigate = useNavigate();
+  const { activeOrg } = useOrg();
   const route = parseAppRoute(pathname);
-  const library = useQuery({ queryKey: ['launcher', 'library'], queryFn: libraryList });
+  const library = useQuery({
+    queryKey: ['launcher', 'library', activeOrg?.id],
+    queryFn: libraryList,
+    enabled: Boolean(activeOrg?.id),
+  });
   const items = useMemo(
     () =>
       (library.data?.apps ?? []).map((app) => ({

@@ -65,14 +65,18 @@ export function OrgProvider({ children }: { children: ReactNode }) {
     await queryClient.invalidateQueries({ queryKey: ['launcher'] });
   }, [queryClient]);
 
+  const clearLauncherCache = useCallback(() => {
+    queryClient.removeQueries({ queryKey: ['launcher'] });
+  }, [queryClient]);
+
   const switchOrg = useCallback(
     async (orgId: string) => {
       const next = await setActiveOrg(orgId);
       setActive(next);
       setOrgs(await listOrgs());
-      await invalidateLauncher();
+      clearLauncherCache();
     },
-    [invalidateLauncher],
+    [clearLauncherCache],
   );
 
   const create = useCallback(

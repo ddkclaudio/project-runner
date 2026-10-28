@@ -1,6 +1,7 @@
 pub mod activity_log;
 pub mod assets;
 pub mod cli;
+pub mod cloudflare;
 pub mod commands;
 pub mod deepseek;
 pub mod github;

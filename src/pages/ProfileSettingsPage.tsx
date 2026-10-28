@@ -34,6 +34,8 @@ const EMPTY: Draft = {
   appsPath: '',
   githubApiToken: '',
   deepseekApiToken: '',
+  cloudflareApiToken: '',
+  cloudflaredPath: '',
   platform: 'Auto',
   sortBy: 'LastPlayed',
   useGridView: true,
@@ -99,6 +101,25 @@ export function ProfileSettingsPage() {
       await settingsSave({ ...draft, deepseekApiToken: draft.deepseekApiToken.trim() });
       await queryClient.invalidateQueries({ queryKey: ['launcher', 'settings'] });
       toast.success('Token DeepSeek guardado.');
+    } catch (err) {
+      setError(launcherError(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function saveCloudflare(event: React.FormEvent) {
+    event.preventDefault();
+    setBusy(true);
+    setError(null);
+    try {
+      await settingsSave({
+        ...draft,
+        cloudflareApiToken: draft.cloudflareApiToken.trim(),
+        cloudflaredPath: draft.cloudflaredPath.trim(),
+      });
+      await queryClient.invalidateQueries({ queryKey: ['launcher', 'settings'] });
+      toast.success('Definições Cloudflare guardadas.');
     } catch (err) {
       setError(launcherError(err));
     } finally {
@@ -222,6 +243,46 @@ export function ProfileSettingsPage() {
           right={
             <Button type="submit" variant="secondary" disabled={busy || settings.isLoading}>
               Guardar token
+            </Button>
+          }
+        />
+      </FormCard>
+
+      <FormCard onSubmit={(event) => void saveCloudflare(event)} aria-label="Cloudflare" style={{ marginTop: 20 }}>
+        <FormCard.Header
+          title="Cloudflare"
+          subtitle="Token e caminho do cloudflared para túneis Quick e com domínio nas apps."
+        />
+        <FormRow label="Token da API">
+          <Input
+            type="password"
+            value={draft.cloudflareApiToken}
+            onChange={(event) => patchDraft({ cloudflareApiToken: event.target.value })}
+            placeholder="Cloudflare API token…"
+            autoComplete="off"
+          />
+          <FormCard.Hint>
+            Obter em{' '}
+            <a href="https://dash.cloudflare.com/profile/api-tokens" target="_blank" rel="noreferrer">
+              dash.cloudflare.com/profile/api-tokens
+            </a>
+            . Necessário para Domínio (Tunnel Edit + Zone DNS Edit). Quick não precisa de token.
+          </FormCard.Hint>
+        </FormRow>
+        <FormRow label="Caminho cloudflared">
+          <Input
+            value={draft.cloudflaredPath}
+            onChange={(event) => patchDraft({ cloudflaredPath: event.target.value })}
+            placeholder="Vazio = detectar automaticamente (where/which)"
+          />
+          <FormCard.Hint>
+            Opcional. Se vazio, o Painel procura com <code>where cloudflared</code> (Windows) ou pastas comuns.
+          </FormCard.Hint>
+        </FormRow>
+        <FormCard.Footer
+          right={
+            <Button type="submit" variant="secondary" disabled={busy || settings.isLoading}>
+              Guardar Cloudflare
             </Button>
           }
         />

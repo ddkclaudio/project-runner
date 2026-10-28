@@ -1,3 +1,4 @@
+use crate::launcher::cloudflare::{self, CloudflareSaveInput, CloudflareView};
 use crate::launcher::install::{self, InstallResult};
 use crate::launcher::launch::{self, LaunchResult};
 use crate::launcher::runners::{self, LaunchConfigSave, LaunchConfigView};
@@ -252,12 +253,25 @@ pub async fn app_generate_launchfile(
 
 #[tauri::command]
 pub fn app_stop(paths: State<'_, AppPaths>, repository: String) -> Result<(), String> {
-    let meta = paths.org_root()?;
+    let (meta, workspace) = roots(&paths)?;
     let apps = store::load_apps(&meta);
-    let app = store::find_app(&apps, &repository)?;
+    let app = store::find_app(&apps, &repository)?.clone();
     crate::launcher::activity_log::info("stop", &format!("folder={}", app.folder_name));
     match runtime::stop(&meta, &app.folder_name) {
         Ok(()) => {
+            // Parar túnel Cloudflare e limpar URL pública com a app.
+            if let Ok(info) = store::ensure_launch_info(&workspace, &app) {
+                match cloudflare::stop_tunnel(&meta, &info, &app) {
+                    Ok(_) => crate::launcher::activity_log::info(
+                        "cloudflare",
+                        &format!("stop com a app folder={}", app.folder_name),
+                    ),
+                    Err(err) => crate::launcher::activity_log::warn(
+                        "cloudflare",
+                        &format!("stop com a app falhou folder={}: {err}", app.folder_name),
+                    ),
+                }
+            }
             crate::launcher::activity_log::info("stop", &format!("ok folder={}", app.folder_name));
             Ok(())
         }
@@ -317,6 +331,55 @@ pub fn app_launch_config_save(
     }
     let info = store::ensure_launch_info(&workspace, app)?;
     runners::save_launch_config(&info, input)
+}
+
+fn cloudflare_paths(
+    paths: &AppPaths,
+    repository: &str,
+) -> Result<(PathBuf, PathBuf, AppEntry), String> {
+    let (meta, workspace) = roots(paths)?;
+    let apps = store::load_apps(&meta);
+    let app = store::find_app(&apps, repository)?.clone();
+    let info = store::ensure_launch_info(&workspace, &app)?;
+    Ok((meta, info, app))
+}
+
+#[tauri::command]
+pub fn app_cloudflare_get(paths: State<'_, AppPaths>, repository: String) -> Result<CloudflareView, String> {
+    let (meta, info, app) = cloudflare_paths(&paths, &repository)?;
+    Ok(cloudflare::view(&meta, &info, &app))
+}
+
+#[tauri::command]
+pub fn app_cloudflare_save(
+    paths: State<'_, AppPaths>,
+    repository: String,
+    input: CloudflareSaveInput,
+) -> Result<CloudflareView, String> {
+    let (meta, info, app) = cloudflare_paths(&paths, &repository)?;
+    cloudflare::save_config(&info, input)?;
+    Ok(cloudflare::view(&meta, &info, &app))
+}
+
+#[tauri::command]
+pub async fn app_cloudflare_start(
+    paths: State<'_, AppPaths>,
+    repository: String,
+) -> Result<CloudflareView, String> {
+    let (meta, info, app) = cloudflare_paths(&paths, &repository)?;
+    cloudflare::start(&meta, &info, &app).await
+}
+
+#[tauri::command]
+pub fn app_cloudflare_stop(paths: State<'_, AppPaths>, repository: String) -> Result<CloudflareView, String> {
+    let (meta, info, app) = cloudflare_paths(&paths, &repository)?;
+    cloudflare::stop_tunnel(&meta, &info, &app)
+}
+
+#[tauri::command]
+pub fn app_cloudflare_status(paths: State<'_, AppPaths>, repository: String) -> Result<CloudflareView, String> {
+    let (meta, info, app) = cloudflare_paths(&paths, &repository)?;
+    Ok(cloudflare::view(&meta, &info, &app))
 }
 
 #[tauri::command]

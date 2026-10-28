@@ -2,7 +2,7 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { IconAffiliate, IconArrowRight, IconPlus, IconUsers, IconTicket } from '@tabler/icons-react';
 import { SwitcherDropdown } from '@/components/ui/SwitcherDropdown';
 import { useOrg } from '@/contexts/OrgContext';
-import { resolveSwitcherNavigation } from '@/lib/contextSwitchers';
+import { resolveOrgSwitcherNavigation } from '@/lib/contextSwitchers';
 
 export function OrgSwitcher() {
   const navigate = useNavigate();
@@ -19,10 +19,11 @@ export function OrgSwitcher() {
       selectedId={activeOrg?.id ?? ''}
       loading={loading}
       onSelect={(id) => {
-        void switchOrg(id).then(() => {
-          const href = resolveSwitcherNavigation('org', id, pathname);
-          if (href) navigate(href);
-        });
+        void switchOrg(id)
+          .then(() => resolveOrgSwitcherNavigation(pathname))
+          .then((href) => {
+            if (href) navigate(href);
+          });
       }}
       getEmptyMessage={(query) => (query ? `Nenhum resultado para "${query}"` : 'Nenhuma organização ainda.')}
       actions={[

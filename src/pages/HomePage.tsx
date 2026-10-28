@@ -16,6 +16,7 @@ import { LibraryListView } from '@/components/launcher/LibraryListView';
 import { useToast } from '@/components/ui/Toast';
 import { launcherError } from '@/lib/launcher-api';
 import { useAppProgressStore } from '@/stores/app-progress';
+import { useOrg } from '@/contexts/OrgContext';
 
 type LibraryStatus = 'all' | 'installed' | 'not_installed' | 'update' | 'hidden';
 
@@ -38,9 +39,19 @@ export function HomePage() {
   const toast = useToast();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const { activeOrg } = useOrg();
   const actions = useLibraryMutations();
-  const library = useQuery({ queryKey: ['launcher', 'library'], queryFn: libraryList, refetchInterval: 3000 });
-  const settings = useQuery({ queryKey: ['launcher', 'settings'], queryFn: settingsGet });
+  const library = useQuery({
+    queryKey: ['launcher', 'library', activeOrg?.id],
+    queryFn: libraryList,
+    refetchInterval: 3000,
+    enabled: Boolean(activeOrg?.id),
+  });
+  const settings = useQuery({
+    queryKey: ['launcher', 'settings', activeOrg?.id],
+    queryFn: settingsGet,
+    enabled: Boolean(activeOrg?.id),
+  });
   const [query, setQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<LibraryStatus>('all');
   const statusSynced = useRef(false);

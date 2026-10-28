@@ -58,6 +58,8 @@ const QUIET_OK = new Set([
   'app_changelog',
   'app_launch_config_get',
   'app_executables',
+  'app_cloudflare_get',
+  'app_cloudflare_status',
   'log_write',
   'log_path',
   'log_open_folder',
@@ -87,6 +89,11 @@ function summarizeResult(cmd: string, result: Record<string, unknown>): string {
     if (result.started) return 'started';
     if (result.needsChoice) return 'needs_choice';
     return 'ok';
+  }
+  if (cmd === 'app_cloudflare_start' || cmd === 'app_cloudflare_stop') {
+    const url = typeof result.publicUrl === 'string' ? result.publicUrl : '';
+    const running = result.running === true ? 'running' : 'stopped';
+    return url ? `${running} ${url}` : running;
   }
   if (typeof result.message === 'string' && result.message.trim()) {
     return result.message.slice(0, 120);

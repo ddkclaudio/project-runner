@@ -44,6 +44,8 @@ export type PublicSettings = {
   appsPath: string;
   githubApiToken: string;
   deepseekApiToken: string;
+  cloudflareApiToken: string;
+  cloudflaredPath: string;
   platform: string;
   sortBy: string;
   useGridView: boolean;
@@ -59,6 +61,38 @@ export type PublicSettings = {
   painelUpdateRepository: string;
   dataDir: string;
   appVersion: string;
+};
+
+export type CloudflareMode = 'quick' | 'named';
+
+export type CloudflareConfig = {
+  mode: CloudflareMode;
+  startWithApp: boolean;
+  portOverride?: number | null;
+  hostname?: string | null;
+  tunnelName?: string | null;
+};
+
+export type CloudflareView = {
+  config: CloudflareConfig;
+  effectivePort?: number | null;
+  cloudflaredAvailable: boolean;
+  cloudflaredPath: string;
+  /** Caminho absoluto encontrado via where/which. */
+  cloudflaredDetected?: string | null;
+  hasApiToken: boolean;
+  running: boolean;
+  publicUrl?: string | null;
+  pid?: number | null;
+  mode?: CloudflareMode | null;
+};
+
+export type CloudflareSaveInput = {
+  mode: CloudflareMode;
+  startWithApp: boolean;
+  portOverride?: number | null;
+  hostname?: string | null;
+  tunnelName?: string | null;
 };
 
 export type InstallResult = {
@@ -277,6 +311,26 @@ export function settingsGet() {
 
 export function settingsSave(input: Omit<PublicSettings, 'dataDir' | 'appVersion'>) {
   return invoke<PublicSettings>('settings_save', { input });
+}
+
+export function appCloudflareGet(repository: string) {
+  return invoke<CloudflareView>('app_cloudflare_get', { repository });
+}
+
+export function appCloudflareSave(repository: string, input: CloudflareSaveInput) {
+  return invoke<CloudflareView>('app_cloudflare_save', { repository, input });
+}
+
+export function appCloudflareStart(repository: string) {
+  return invoke<CloudflareView>('app_cloudflare_start', { repository });
+}
+
+export function appCloudflareStop(repository: string) {
+  return invoke<CloudflareView>('app_cloudflare_stop', { repository });
+}
+
+export function appCloudflareStatus(repository: string) {
+  return invoke<CloudflareView>('app_cloudflare_status', { repository });
 }
 
 export function catalogLoad() {

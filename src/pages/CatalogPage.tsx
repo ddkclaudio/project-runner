@@ -30,6 +30,7 @@ import {
   settingsSave,
   type AppEntry,
 } from '@/lib/launcher-api';
+import { useOrg } from '@/contexts/OrgContext';
 import styles from './library.module.css';
 
 const TOKEN_URL = 'https://github.com/settings/tokens/new?description=Painel';
@@ -145,18 +146,19 @@ function RemoteCatalog() {
   const toast = useToast();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const { activeOrg } = useOrg();
   const { view, changeView, settings } = useListingView();
   const tokenReady = Boolean(settings.data?.githubApiToken.trim());
   const catalog = useQuery({
-    queryKey: ['launcher', 'catalog'],
+    queryKey: ['launcher', 'catalog', activeOrg?.id],
     queryFn: catalogLoad,
-    enabled: tokenReady,
+    enabled: tokenReady && Boolean(activeOrg?.id),
     retry: false,
   });
   const library = useQuery({
-    queryKey: ['launcher', 'library'],
+    queryKey: ['launcher', 'library', activeOrg?.id],
     queryFn: libraryList,
-    enabled: tokenReady,
+    enabled: tokenReady && Boolean(activeOrg?.id),
   });
   const [query, setQuery] = useState('');
   const [group, setGroup] = useState<string | null>(null);

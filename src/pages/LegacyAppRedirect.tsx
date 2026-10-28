@@ -2,11 +2,17 @@ import { Navigate, useParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { appHref, libraryList } from '@/lib/launcher-api';
 import { PageShell } from '@/components/ui/PageShell';
+import { useOrg } from '@/contexts/OrgContext';
 
 /** `/apps/:owner/:repo` → `/app/:folder` se o repo for único; senão biblioteca. */
 export function LegacyAppRedirect() {
   const { owner, repo, section } = useParams();
-  const library = useQuery({ queryKey: ['launcher', 'library'], queryFn: libraryList });
+  const { activeOrg } = useOrg();
+  const library = useQuery({
+    queryKey: ['launcher', 'library', activeOrg?.id],
+    queryFn: libraryList,
+    enabled: Boolean(activeOrg?.id),
+  });
   const key = `${owner ?? ''}/${repo ?? ''}`.toLowerCase();
 
   if (library.isLoading) {

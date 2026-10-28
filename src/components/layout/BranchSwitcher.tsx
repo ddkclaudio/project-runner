@@ -3,18 +3,22 @@ import { IconGitBranch } from '@tabler/icons-react';
 import { SwitcherDropdown } from '@/components/ui/SwitcherDropdown';
 import { appBranches, appDetail, appSetBranch, launcherError } from '@/lib/launcher-api';
 import { useToast } from '@/components/ui/Toast';
+import { useOrg } from '@/contexts/OrgContext';
 
 export function BranchSwitcher({ repository }: { repository: string }) {
   const toast = useToast();
   const queryClient = useQueryClient();
+  const { activeOrg } = useOrg();
   const detail = useQuery({
-    queryKey: ['launcher', 'app', repository],
+    queryKey: ['launcher', 'app', activeOrg?.id, repository],
     queryFn: () => appDetail(repository),
     refetchInterval: 3000,
+    enabled: Boolean(activeOrg?.id),
   });
   const branches = useQuery({
-    queryKey: ['launcher', 'branches', repository],
+    queryKey: ['launcher', 'branches', activeOrg?.id, repository],
     queryFn: () => appBranches(repository),
+    enabled: Boolean(activeOrg?.id),
   });
 
   const selected = detail.data?.selectedBranch || branches.data?.find((name) => name === 'main' || name === 'master') || branches.data?.[0] || 'main';

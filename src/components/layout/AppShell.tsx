@@ -1,8 +1,9 @@
 import { Fragment, useEffect, useRef } from 'react';
-import { useLocation } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { convertFileSrc } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
+import { IconArrowLeft } from '@tabler/icons-react';
 import { LayoutNavEffects, useLayoutNav } from '@/hooks/useLayoutNav';
 import { AppMenuSidebar, LibrarySidebar } from './AppSidebar';
 import { AppSwitcher } from './AppSwitcher';
@@ -13,9 +14,10 @@ import { SidebarCatalog, SidebarSettings } from './SectionNav';
 import { SidebarComponents } from './SidebarComponents';
 import { ForcePortModal } from '@/components/launcher/ForcePortModal';
 import { Topbar, TopbarBrand, TopbarMenuButton, TopbarRightControls, TopbarSeparator } from '@/components/ui/Topbar';
+import { TopbarActionButton } from '@/components/ui/TopbarActionButton';
 import { launcherBoot, settingsGet } from '@/lib/launcher-api';
 import { logInfo } from '@/lib/activity-log';
-import { parseContextStack, type SwitcherId } from '@/lib/contextSwitchers';
+import { backTarget, parseContextStack, type SwitcherId } from '@/lib/contextSwitchers';
 import { useOrg } from '@/contexts/OrgContext';
 import { useAppProgressStore, type AppProgressKind } from '@/stores/app-progress';
 import styles from './shell.module.css';
@@ -60,9 +62,11 @@ function SwitcherTrail({
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const { pathname } = useLocation();
+  const navigate = useNavigate();
   const { navOpen, toggleNav, closeNav } = useLayoutNav();
   const { activeOrg, loading: orgLoading } = useOrg();
   const stack = parseContextStack(pathname);
+  const back = backTarget(pathname);
   const settings = useQuery({
     queryKey: ['launcher', 'settings', activeOrg?.id],
     queryFn: settingsGet,
@@ -160,6 +164,16 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             <>
               <TopbarMenuButton open={navOpen} onClick={toggleNav} />
               <TopbarBrand />
+              {back ? (
+                <>
+                  <TopbarSeparator />
+                  <TopbarActionButton
+                    icon={<IconArrowLeft size={16} aria-hidden="true" />}
+                    label="Voltar"
+                    onClick={() => navigate(back)}
+                  />
+                </>
+              ) : null}
               <SwitcherTrail layers={stack.layers} repository={stack.repository} pathname={pathname} />
             </>
           }

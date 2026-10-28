@@ -68,6 +68,8 @@ pub struct SettingsInput {
     pub apps_path: String,
     pub github_api_token: String,
     pub deepseek_api_token: String,
+    pub cloudflare_api_token: String,
+    pub cloudflared_path: String,
     pub platform: String,
     pub sort_by: String,
     pub use_grid_view: bool,
@@ -89,6 +91,8 @@ pub struct PublicSettings {
     pub apps_path: String,
     pub github_api_token: String,
     pub deepseek_api_token: String,
+    pub cloudflare_api_token: String,
+    pub cloudflared_path: String,
     pub platform: String,
     pub sort_by: String,
     pub use_grid_view: bool,
@@ -397,6 +401,8 @@ pub fn public_settings(root: &Path) -> PublicSettings {
         apps_path: setting_str(&settings, "AppsPath"),
         github_api_token: setting_str(&settings, "GitHubApiToken"),
         deepseek_api_token: setting_str(&settings, "DeepSeekApiToken"),
+        cloudflare_api_token: setting_str(&settings, "CloudflareApiToken"),
+        cloudflared_path: setting_str(&settings, "CloudflaredPath"),
         platform: platform_of(&settings),
         sort_by: {
             let value = setting_str(&settings, "SortBy");
@@ -431,6 +437,8 @@ pub fn apply_settings(root: &Path, input: SettingsInput) -> Result<PublicSetting
     map.insert("AppsPath".into(), json!(input.apps_path.trim()));
     map.insert("GitHubApiToken".into(), json!(input.github_api_token.trim()));
     map.insert("DeepSeekApiToken".into(), json!(input.deepseek_api_token.trim()));
+    map.insert("CloudflareApiToken".into(), json!(input.cloudflare_api_token.trim()));
+    map.insert("CloudflaredPath".into(), json!(input.cloudflared_path.trim()));
     map.insert("Platform".into(), json!(input.platform.trim()));
     map.insert("SortBy".into(), json!(input.sort_by.trim()));
     map.insert("UseGridView".into(), json!(input.use_grid_view));
@@ -460,6 +468,14 @@ pub fn token_of(root: &Path) -> String {
 
 pub fn deepseek_token_of(root: &Path) -> String {
     setting_str(&load_settings(root), "DeepSeekApiToken")
+}
+
+pub fn cloudflare_token_of(root: &Path) -> String {
+    setting_str(&load_settings(root), "CloudflareApiToken")
+}
+
+pub fn cloudflared_path_of(root: &Path) -> String {
+    setting_str(&load_settings(root), "CloudflaredPath")
 }
 
 /// Pasta workspace da org: `{appsRoot}/{orgSlug}` (clones ficam aqui).

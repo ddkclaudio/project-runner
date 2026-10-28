@@ -227,6 +227,34 @@ pub async fn launch(
     if let Some(url) = &open_url {
         let _ = fs::write(info.join("open_url.txt"), url);
     }
+
+    let cf_cfg = crate::launcher::cloudflare::load_config(&info);
+    if cf_cfg.start_with_app {
+        on_progress(98, "A iniciar túnel Cloudflare…");
+        crate::launcher::activity_log::info(
+            "cloudflare",
+            &format!("start_with_app folder={runtime_key}"),
+        );
+        match crate::launcher::cloudflare::start(meta, &info, &app).await {
+            Ok(view) => {
+                crate::launcher::activity_log::info(
+                    "cloudflare",
+                    &format!(
+                        "start_with_app ok folder={runtime_key} url={}",
+                        view.public_url.as_deref().unwrap_or("(pendente)")
+                    ),
+                );
+            }
+            Err(err) => {
+                // Não falha o launch da app — só o túnel.
+                crate::launcher::activity_log::warn(
+                    "cloudflare",
+                    &format!("start_with_app falhou folder={runtime_key}: {err}"),
+                );
+            }
+        }
+    }
+
     let close = settings
         .get("CloseAfterLaunch")
         .and_then(|value| value.as_bool())
