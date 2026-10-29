@@ -1,5 +1,4 @@
-import { useEffect, useState } from 'react';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useState } from 'react';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import { IconExternalLink, IconFolder, IconRefresh } from '@tabler/icons-react';
 import { appId } from '@/components/launcher/LibraryCard';
@@ -15,52 +14,21 @@ import { StatusBadge } from '@/components/ui/StatusBadge';
 import { Textarea } from '@/components/ui/Textarea';
 import { useToast } from '@/components/ui/Toast';
 import {
-  appGenerateLaunchfile,
-  appLaunchConfigGet,
-  appLaunchConfigSave,
+  commit,
+  isLaunchConfigDirty,
+  launchFieldsDiffer,
+  patchField,
+  regenerateLaunchConfig,
+  useLaunchConfig,
+} from '@/lib/launch-config';
+import {
   appOpenLaunchfileDir,
   launcherError,
   type AppView,
+  type LaunchConfigView,
   type LaunchField,
 } from '@/lib/launcher-api';
 import { useAppProgressStore } from '@/stores/app-progress';
-
-function httpPort(value: string): string | null {
-  const match = value.trim().match(/^https?:\/\/[^/\s:]+:(\d+)(?=\/|$)/i);
-  return match?.[1] ?? null;
-}
-
-function linkedPorts(previous: string, next: string): { oldPort: string; newPort: string } | null {
-  const prev = previous.trim();
-  const nextTrim = next.trim();
-  if (!prev || prev === nextTrim) return null;
-  if (/^\d+$/.test(prev) && /^\d+$/.test(nextTrim)) {
-    return { oldPort: prev, newPort: nextTrim };
-  }
-  const oldUrlPort = httpPort(prev);
-  const newUrlPort = httpPort(nextTrim);
-  if (oldUrlPort && newUrlPort && oldUrlPort !== newUrlPort) {
-    return { oldPort: oldUrlPort, newPort: newUrlPort };
-  }
-  return null;
-}
-
-function replacePortToken(value: string, oldPort: string, newPort: string): string {
-  if (value.trim() === oldPort) return newPort;
-  const colon = new RegExp(`:${oldPort}(?!\\d)`, 'g');
-  const standalone = new RegExp(`(^|[\\s=])${oldPort}(?!\\d)`, 'g');
-  return value.replace(colon, `:${newPort}`).replace(standalone, `$1${newPort}`);
-}
-
-function propagateLaunchValue(fields: LaunchField[], key: string, value: string): LaunchField[] {
-  const previous = fields.find((item) => item.key === key)?.value ?? '';
-  const ports = linkedPorts(previous, value);
-  return fields.map((item) => {
-    if (item.key === key) return { ...item, value };
-    if (!ports) return item;
-    return { ...item, value: replacePortToken(item.value, ports.oldPort, ports.newPort) };
-  });
-}
 
 function isTruthyLaunchValue(value: string) {
   return ['true', 'yes', 'on', '1'].includes(value.trim().toLowerCase());
@@ -142,18 +110,20 @@ function LaunchFieldControl({
 }
 
 function LaunchConfigForm({
+  appId: launchId,
   loaded,
   fields,
   busy,
-  onFieldsChange,
+  showSave = true,
   onSaveFields,
   onGenerateDeepseek,
   onOpenFolder,
 }: {
-  loaded?: Awaited<ReturnType<typeof appLaunchConfigGet>>;
+  appId: string;
+  loaded?: LaunchConfigView;
   fields: LaunchField[];
   busy: boolean;
-  onFieldsChange: (fields: LaunchField[]) => void;
+  showSave?: boolean;
   onSaveFields: () => void;
   onGenerateDeepseek: () => void;
   onOpenFolder: () => void;
@@ -163,14 +133,7 @@ function LaunchConfigForm({
 
   const working = fields.length ? fields : loaded.fields;
   const visibleFields = working.filter((field) => field.key !== 'hint');
-  const dirty = loaded.fields.some((field) => {
-    const current = working.find((item) => item.key === field.key);
-    return (current?.value ?? '') !== field.value;
-  }) || working.some((field) => !loaded.fields.some((item) => item.key === field.key));
-
-  function patchField(key: string, value: string) {
-    onFieldsChange(propagateLaunchValue(working, key, value));
-  }
+  const dirty = launchFieldsDiffer(loaded.fields, working);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16, marginBottom: 20 }}>
@@ -211,7 +174,7 @@ function LaunchConfigForm({
           <FormRow key={field.key} label={field.label}>
             <LaunchFieldControl
               field={field}
-              onChange={(value) => patchField(field.key, value)}
+              onChange={(value) => patchField(launchId, field.key, value)}
               onError={(message) => toast.error(message)}
             />
           </FormRow>
@@ -219,7 +182,7 @@ function LaunchConfigForm({
         {working.some((field) => field.key === 'hint') ? (
           <FormCard.Hint>{working.find((field) => field.key === 'hint')?.value}</FormCard.Hint>
         ) : null}
-        {dirty ? (
+        {showSave && dirty ? (
           <FormCard.Footer
             right={
               <Button type="button" variant="secondary" disabled={busy} onClick={onSaveFields}>
@@ -233,28 +196,28 @@ function LaunchConfigForm({
   );
 }
 
-export function LaunchConfigPanel({ app, showHeading = false }: { app: AppView; showHeading?: boolean }) {
+export function LaunchConfigPanel({
+  app,
+  showHeading = false,
+  showSave = true,
+}: {
+  app: AppView;
+  showHeading?: boolean;
+  showSave?: boolean;
+}) {
+  const launchId = appId(app);
   const toast = useToast();
-  const queryClient = useQueryClient();
-  const [fields, setFields] = useState<LaunchField[]>([]);
+  const config = useLaunchConfig(launchId);
   const [configBusy, setConfigBusy] = useState(false);
-  const config = useQuery({
-    queryKey: ['launcher', 'launch-config', appId(app)],
-    queryFn: () => appLaunchConfigGet(appId(app)),
-  });
-
-  useEffect(() => {
-    if (!config.data) return;
-    setFields(config.data.fields.map((item) => ({ ...item })));
-  }, [config.data]);
+  const progress = useAppProgressStore((s) => s.byId[launchId]);
+  const setProgress = useAppProgressStore((s) => s.setProgress);
+  const clearProgress = useAppProgressStore((s) => s.clearProgress);
 
   async function saveFields() {
+    if (!isLaunchConfigDirty(launchId)) return;
     setConfigBusy(true);
     try {
-      await appLaunchConfigSave(appId(app), { fields });
-      await queryClient.invalidateQueries({ queryKey: ['launcher'] });
-      await queryClient.invalidateQueries({ queryKey: ['launcher', 'launch-config', appId(app)] });
-      await queryClient.invalidateQueries({ queryKey: ['launcher', 'exe', appId(app)] });
+      await commit(launchId);
       toast.success('Configuração salva.');
     } catch (err) {
       toast.error(launcherError(err));
@@ -263,35 +226,27 @@ export function LaunchConfigPanel({ app, showHeading = false }: { app: AppView; 
     }
   }
 
-  const progress = useAppProgressStore((s) => s.byId[appId(app)]);
-  const setProgress = useAppProgressStore((s) => s.setProgress);
-  const clearProgress = useAppProgressStore((s) => s.clearProgress);
-
   async function generateWithDeepseek() {
-    const id = appId(app);
-    if (useAppProgressStore.getState().isBusy(id) || configBusy) {
+    if (useAppProgressStore.getState().isBusy(launchId) || configBusy) {
       toast.error('Já em curso…');
       return;
     }
     setConfigBusy(true);
-    setProgress(id, { percent: 1, phase: 'DeepSeek a analisar…', kind: 'deepseek' });
+    setProgress(launchId, { percent: 1, phase: 'DeepSeek a analisar…', kind: 'deepseek' });
     try {
-      await appGenerateLaunchfile(id);
-      await queryClient.invalidateQueries({ queryKey: ['launcher'] });
-      await queryClient.invalidateQueries({ queryKey: ['launcher', 'launch-config', id] });
-      await queryClient.invalidateQueries({ queryKey: ['launcher', 'exe', id] });
+      await regenerateLaunchConfig(launchId);
       toast.success('Launchfile gerado com DeepSeek.');
     } catch (err) {
       toast.error(launcherError(err));
     } finally {
       setConfigBusy(false);
-      window.setTimeout(() => clearProgress(id), 700);
+      window.setTimeout(() => clearProgress(launchId), 700);
     }
   }
 
   async function openLaunchDir() {
     try {
-      await appOpenLaunchfileDir(appId(app));
+      await appOpenLaunchfileDir(launchId);
     } catch (err) {
       toast.error(launcherError(err));
     }
@@ -302,10 +257,11 @@ export function LaunchConfigPanel({ app, showHeading = false }: { app: AppView; 
       {config.error ? <InlineAlert>{launcherError(config.error)}</InlineAlert> : null}
       {progress ? <AppProgressBar progress={progress} /> : null}
       <LaunchConfigForm
+        appId={launchId}
         loaded={config.data}
-        fields={fields}
+        fields={config.fields}
         busy={configBusy || Boolean(progress)}
-        onFieldsChange={setFields}
+        showSave={showSave}
         onSaveFields={() => void saveFields()}
         onGenerateDeepseek={() => void generateWithDeepseek()}
         onOpenFolder={() => void openLaunchDir()}

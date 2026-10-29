@@ -95,6 +95,8 @@ export interface FlowCanvasProps<N extends Node = Node> {
   dragToSelect?: boolean;
   /** When true, shows fluid skeleton (holds ~500ms via useMinimumLoading) */
   loading?: boolean;
+  /** Distância, em coordenadas do fluxo, em que soltar perto de um handle ainda liga. */
+  connectionRadius?: number;
   className?: string;
 }
 
@@ -127,6 +129,7 @@ export function FlowCanvas<N extends Node = Node>({
   fill = false,
   dragToSelect = false,
   loading = false,
+  connectionRadius,
   className,
 }: FlowCanvasProps<N>) {
   const showSkeleton = useMinimumLoading(loading);
@@ -159,6 +162,7 @@ export function FlowCanvas<N extends Node = Node>({
         onNodeContextMenu={onNodeContextMenu}
         {...(deleteKeyCode !== undefined && { deleteKeyCode })}
         isValidConnection={isValidConnection}
+        {...(connectionRadius !== undefined && { connectionRadius })}
         nodeTypes={nodeTypes}
         edgeTypes={edgeTypes}
         selectNodesOnDrag={false}

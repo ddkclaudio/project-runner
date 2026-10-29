@@ -164,6 +164,9 @@ export function libraryList() {
   return invoke<LibrarySnapshot>('library_list');
 }
 
+/** Operação entre apps. Sem `kind`, o node é uma app. */
+export type CommunicationOpKind = 'increment' | 'decrement' | 'value' | 'get';
+
 export type CommunicationNode = {
   id: string;
   folderName: string;
@@ -173,12 +176,24 @@ export type CommunicationNode = {
   y: number;
   /** O Run flow inicia esta app quando ela está parada. */
   alwaysOn: boolean;
+  /** Ausente em node de app. `increment`, `decrement`, `value` ou `get` numa operação. */
+  kind?: CommunicationOpKind;
+  /** App ou operação de onde o valor sai. Só em node de operação. */
+  sourceNodeId?: string;
+  /** Campo da app de origem (`port`, `env.PORT`). Vazio quando a origem é outra operação. */
+  sourceField?: string;
+  /** Texto guardado por um node `value`. */
+  literal?: string;
+  /** Quanto somar ou subtrair. Só em incrementar e decrementar. Ausente vale 1. */
+  step?: string;
 };
 
 export type CommunicationEdge = {
   id: string;
   source: string;
   target: string;
+  /** Campo da app de destino. Ausente na aresta entre operações. */
+  targetField?: string;
 };
 
 export type CommunicationsGraph = {

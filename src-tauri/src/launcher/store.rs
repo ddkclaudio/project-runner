@@ -1283,6 +1283,8 @@ pub fn cache_age_ok(checked_at: i64, installed: bool, now: i64, force: bool) -> 
 
 const MAX_COMMUNICATION_NODES: usize = 200;
 const MAX_COMMUNICATION_EDGES: usize = 400;
+const MAX_COMMUNICATION_FIELD: usize = 200;
+const MAX_COMMUNICATION_LITERAL: usize = 2000;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -1300,6 +1302,25 @@ pub struct CommunicationNode {
     pub y: f64,
     #[serde(default)]
     pub always_on: bool,
+    /// `increment`, `decrement`, `value` ou `get`. Vazio ou desconhecido é node de app e não é gravado.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub kind: String,
+    /// App ou outra operação de onde o valor sai. Só em node de operação.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub source_node_id: String,
+    /// Campo da app de origem (`port`, `env.PORT`). Vazio quando a origem é outra operação.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub source_field: String,
+    /// Texto guardado por um node `value`.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub literal: String,
+    /// Quanto somar ou subtrair. Ausente num grafo antigo vale 1. Só em incrementar e decrementar.
+    #[serde(default = "default_step", skip_serializing_if = "String::is_empty")]
+    pub step: String,
+}
+
+fn default_step() -> String {
+    "1".into()
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -1308,6 +1329,9 @@ pub struct CommunicationEdge {
     pub id: String,
     pub source: String,
     pub target: String,
+    /// Campo da app de destino. Vazio na aresta entre operações e na ligação só visual entre apps.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub target_field: String,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -1337,6 +1361,17 @@ fn clip_line(value: &str, max: usize) -> String {
     out
 }
 
+/// Kind desconhecido ou vazio continua node de app. `get` copia o valor sem o alterar.
+fn op_kind(kind: &str) -> &'static str {
+    match kind.trim() {
+        "increment" => "increment",
+        "decrement" => "decrement",
+        "value" => "value",
+        "get" => "get",
+        _ => "",
+    }
+}
+
 pub fn empty_communications() -> CommunicationsGraph {
     CommunicationsGraph {
         nodes: Vec::new(),
@@ -1355,6 +1390,19 @@ pub fn sanitize_communications(graph: CommunicationsGraph) -> CommunicationsGrap
         if id.is_empty() || !seen_nodes.insert(id.clone()) || !node.x.is_finite() || !node.y.is_finite() {
             continue;
         }
+        let kind = op_kind(&node.kind).to_string();
+        let op = !kind.is_empty();
+        let literal = if kind == "value" {
+            clip_line(&node.literal, MAX_COMMUNICATION_LITERAL)
+        } else {
+            String::new()
+        };
+        let step = if kind == "increment" || kind == "decrement" {
+            let clipped = clip_line(&node.step, 80);
+            if clipped.is_empty() { "1".into() } else { clipped }
+        } else {
+            String::new()
+        };
         nodes.push(CommunicationNode {
             id,
             folder_name: clip_line(&node.folder_name, 300),
@@ -1363,7 +1411,36 @@ pub fn sanitize_communications(graph: CommunicationsGraph) -> CommunicationsGrap
             x: node.x,
             y: node.y,
             always_on: node.always_on,
+            kind,
+            source_node_id: if op {
+                clip_line(&node.source_node_id, 80)
+            } else {
+                String::new()
+            },
+            source_field: if op {
+                clip_line(&node.source_field, MAX_COMMUNICATION_FIELD)
+            } else {
+                String::new()
+            },
+            literal,
+            step,
         });
+    }
+    let app_ids: std::collections::HashSet<String> = nodes
+        .iter()
+        .filter(|node| node.kind.is_empty())
+        .map(|node| node.id.clone())
+        .collect();
+    let op_ids: std::collections::HashSet<String> = nodes
+        .iter()
+        .filter(|node| !node.kind.is_empty())
+        .map(|node| node.id.clone())
+        .collect();
+    for node in &mut nodes {
+        // sourceField só quando a origem é uma app. Operação encadeada não tem campo.
+        if !app_ids.contains(&node.source_node_id) {
+            node.source_field.clear();
+        }
     }
     let ids: std::collections::HashSet<String> = nodes.iter().map(|node| node.id.clone()).collect();
     let mut edges = Vec::new();
@@ -1385,7 +1462,18 @@ pub fn sanitize_communications(graph: CommunicationsGraph) -> CommunicationsGrap
         if !seen_edges.insert(id.clone()) || !pairs.insert((source.clone(), target.clone())) {
             continue;
         }
-        edges.push(CommunicationEdge { id, source, target });
+        // targetField só na aresta de uma operação para uma app.
+        let target_field = if op_ids.contains(&source) && app_ids.contains(&target) {
+            clip_line(&edge.target_field, MAX_COMMUNICATION_FIELD)
+        } else {
+            String::new()
+        };
+        edges.push(CommunicationEdge {
+            id,
+            source,
+            target,
+            target_field,
+        });
     }
     CommunicationsGraph { nodes, edges }
 }
@@ -1432,32 +1520,94 @@ mod tests {
 
     #[test]
     fn communications_drop_invalid_edges() {
-        let graph = sanitize_communications(CommunicationsGraph {
-            nodes: vec![CommunicationNode {
-                id: "a".into(),
-                folder_name: "hello".into(),
-                repository: "acme/hello".into(),
-                name: "Hello".into(),
-                x: 10.0,
-                y: 20.0,
-                always_on: false,
-            }],
-            edges: vec![
-                CommunicationEdge {
-                    id: "e1".into(),
-                    source: "a".into(),
-                    target: "a".into(),
-                },
-                CommunicationEdge {
-                    id: "e2".into(),
-                    source: "a".into(),
-                    target: "missing".into(),
-                },
+        let raw = r#"{
+            "nodes": [
+                {"id": "a", "folderName": "hello", "repository": "acme/hello", "name": "Hello", "x": 10, "y": 20},
+                {"id": "op", "kind": "increment", "sourceNodeId": "a", "sourceField": " port ", "literal": "3001", "x": 40, "y": 20},
+                {"id": "down", "kind": "decrement", "sourceNodeId": "a", "sourceField": "port", "literal": "nope", "x": 70, "y": 20},
+                {"id": "val", "kind": "value", "sourceNodeId": "op", "sourceField": "port", "literal": "4000", "x": 100, "y": 20},
+                {"id": "bad", "kind": "nope", "sourceNodeId": "a", "sourceField": "port", "literal": "1", "x": 0, "y": 40},
+                {"id": "empty", "kind": "", "x": 20, "y": 40}
             ],
-        });
-        assert!(graph.edges.is_empty());
-        assert_eq!(graph.nodes.len(), 1);
-        assert_eq!(graph.nodes[0].folder_name, "hello");
+            "edges": [
+                {"id": "e1", "source": "a", "target": "a"},
+                {"id": "e2", "source": "a", "target": "missing"},
+                {"id": "e3", "source": "op", "target": "a", "targetField": " env.PORT "},
+                {"id": "e4", "source": "val", "target": "op", "targetField": "port"},
+                {"id": "e5", "source": "a", "target": "bad", "targetField": "port"}
+            ]
+        }"#;
+        let parsed: CommunicationsGraph = serde_json::from_str(raw).unwrap();
+        let graph = sanitize_communications(parsed);
+        assert_eq!(graph.nodes.len(), 6);
+        assert!(graph.edges.iter().all(|edge| edge.id != "e1" && edge.id != "e2"));
+
+        let app = graph.nodes.iter().find(|node| node.id == "a").unwrap();
+        assert_eq!(app.folder_name, "hello");
+        assert!(app.kind.is_empty(), "kind ausente continua node de app");
+        assert!(app.source_node_id.is_empty());
+        assert!(app.source_field.is_empty());
+        assert!(app.literal.is_empty());
+        assert!(app.step.is_empty());
+
+        let empty = graph.nodes.iter().find(|node| node.id == "empty").unwrap();
+        assert!(empty.kind.is_empty(), "kind vazio continua node de app");
+
+        let bad = graph.nodes.iter().find(|node| node.id == "bad").unwrap();
+        assert!(bad.kind.is_empty(), "kind desconhecido continua node de app");
+        assert!(bad.source_node_id.is_empty());
+        assert!(bad.source_field.is_empty());
+        assert!(bad.literal.is_empty());
+
+        let op = graph.nodes.iter().find(|node| node.id == "op").unwrap();
+        assert_eq!(op.kind, "increment");
+        assert_eq!(op.source_node_id, "a");
+        assert_eq!(op.source_field, "port");
+        assert!(op.literal.is_empty());
+        assert_eq!(op.step, "1", "grafo antigo sem passo soma 1");
+
+        let down = graph.nodes.iter().find(|node| node.id == "down").unwrap();
+        assert_eq!(down.kind, "decrement");
+        assert_eq!(down.source_field, "port");
+        assert!(down.literal.is_empty());
+
+        let val = graph.nodes.iter().find(|node| node.id == "val").unwrap();
+        assert_eq!(val.kind, "value");
+        assert_eq!(val.source_node_id, "op");
+        assert!(val.source_field.is_empty(), "origem operação não guarda sourceField");
+        assert_eq!(val.literal, "4000");
+
+        let dest = graph.edges.iter().find(|edge| edge.id == "e3").unwrap();
+        assert_eq!(dest.target_field, "env.PORT");
+        let chain = graph.edges.iter().find(|edge| edge.id == "e4").unwrap();
+        assert!(chain.target_field.is_empty(), "aresta entre operações não tem targetField");
+        let visual = graph.edges.iter().find(|edge| edge.id == "e5").unwrap();
+        assert!(visual.target_field.is_empty(), "ligação entre apps não grava campo");
+
+        let saved = serde_json::to_value(&graph).unwrap();
+        let nodes = saved["nodes"].as_array().unwrap();
+        let saved_app = nodes.iter().find(|node| node["id"] == "a").unwrap();
+        assert!(saved_app.get("kind").is_none());
+        assert!(saved_app.get("sourceNodeId").is_none());
+        assert!(saved_app.get("sourceField").is_none());
+        assert!(saved_app.get("literal").is_none());
+        let saved_op = nodes.iter().find(|node| node["id"] == "op").unwrap();
+        assert_eq!(saved_op["kind"], "increment");
+        assert_eq!(saved_op["sourceNodeId"], "a");
+        assert_eq!(saved_op["sourceField"], "port");
+        assert!(saved_op.get("literal").is_none());
+        let saved_val = nodes.iter().find(|node| node["id"] == "val").unwrap();
+        assert_eq!(saved_val["kind"], "value");
+        assert_eq!(saved_val["literal"], "4000");
+        assert!(saved_val.get("sourceField").is_none());
+        let saved_edges = saved["edges"].as_array().unwrap();
+        let saved_dest = saved_edges.iter().find(|edge| edge["id"] == "e3").unwrap();
+        assert_eq!(saved_dest["targetField"], "env.PORT");
+        let saved_chain = saved_edges.iter().find(|edge| edge["id"] == "e4").unwrap();
+        assert!(saved_chain.get("targetField").is_none());
+
+        let again = sanitize_communications(serde_json::from_str(&serde_json::to_string(&graph).unwrap()).unwrap());
+        assert_eq!(serde_json::to_value(&again).unwrap(), saved);
     }
 
     #[test]
