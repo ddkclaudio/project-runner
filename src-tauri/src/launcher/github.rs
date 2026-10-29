@@ -2,6 +2,7 @@ use crate::launcher::store::{
     cache_age_ok, ensure_root, installed_version, load_apps, load_settings,
     load_version_cache, save_version_cache, token_of,
 };
+use serde::Serialize;
 use serde_json::{json, Value};
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -287,4 +288,138 @@ pub async fn fetch_catalog(root: &Path) -> Result<(String, Value, bool), String>
     }
     crate::launcher::store::save_settings(root, &settings)?;
     Ok((release.tag, value, false))
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GithubRepo {
+    pub account_id: String,
+    pub account_label: String,
+    pub name: String,
+    pub full_name: String,
+    pub avatar_url: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GithubRepoList {
+    pub repos: Vec<GithubRepo>,
+    pub warnings: Vec<String>,
+}
+
+async fn github_login(token: &str) -> Result<String, String> {
+    let http = client(30)?;
+    let response = auth(http.get("https://api.github.com/user"), token)
+        .header("Accept", "application/vnd.github+json")
+        .send()
+        .await
+        .map_err(|err| err.to_string())?;
+    let status = response.status();
+    let body = response.text().await.map_err(|err| err.to_string())?;
+    if status == reqwest::StatusCode::UNAUTHORIZED {
+        return Err("O GitHub recusou o token.".into());
+    }
+    map_status(status, &body)?;
+    let value: Value = serde_json::from_str(&body).map_err(|_| "A resposta do GitHub não é JSON.".to_string())?;
+    Ok(value
+        .get("login")
+        .and_then(|item| item.as_str())
+        .unwrap_or("")
+        .trim()
+        .to_string())
+}
+
+async fn repos_for_token(token: &str) -> Result<Vec<GithubRepo>, String> {
+    let http = client(60)?;
+    let mut repos = Vec::new();
+    for page in 1..=3 {
+        let url = format!(
+            "https://api.github.com/user/repos?per_page=100&page={page}&sort=updated&affiliation=owner,collaborator,organization_member"
+        );
+        let response = auth(http.get(&url), token)
+            .header("Accept", "application/vnd.github+json")
+            .send()
+            .await
+            .map_err(|err| err.to_string())?;
+        let status = response.status();
+        let body = response.text().await.map_err(|err| err.to_string())?;
+        if status == reqwest::StatusCode::UNAUTHORIZED {
+            return Err("O GitHub recusou o token.".into());
+        }
+        map_status(status, &body)?;
+        let value: Value = serde_json::from_str(&body).map_err(|_| "A resposta do GitHub não é JSON.".to_string())?;
+        let items = value.as_array().cloned().unwrap_or_default();
+        let count = items.len();
+        for item in items {
+            let name = item.get("name").and_then(|value| value.as_str()).unwrap_or("").trim().to_string();
+            let full_name = item
+                .get("full_name")
+                .and_then(|value| value.as_str())
+                .unwrap_or("")
+                .trim()
+                .to_string();
+            if name.is_empty() || full_name.is_empty() {
+                continue;
+            }
+            let avatar_url = item
+                .pointer("/owner/avatar_url")
+                .and_then(|value| value.as_str())
+                .unwrap_or("")
+                .trim()
+                .to_string();
+            repos.push(GithubRepo {
+                account_id: String::new(),
+                account_label: String::new(),
+                name,
+                full_name,
+                avatar_url,
+            });
+        }
+        if count < 100 {
+            break;
+        }
+    }
+    Ok(repos)
+}
+
+/// Repositórios de todas as contas GitHub. Uma conta que falhe não esconde as outras.
+pub async fn list_account_repos(root: &Path) -> Result<GithubRepoList, String> {
+    let accounts = crate::launcher::store::github_accounts(root);
+    if accounts.is_empty() {
+        return Err("Configure uma conta GitHub em Definições → GitHub.".into());
+    }
+    let mut logins = Vec::with_capacity(accounts.len());
+    let mut fetched = Vec::with_capacity(accounts.len());
+    for account in &accounts {
+        let token = account.token.trim();
+        if token.is_empty() {
+            logins.push(String::new());
+            fetched.push(Ok(Vec::new()));
+            continue;
+        }
+        logins.push(github_login(token).await.unwrap_or_default());
+        fetched.push(repos_for_token(token).await);
+    }
+    let labels = crate::launcher::store::account_labels(&accounts, &logins);
+    let mut repos = Vec::new();
+    let mut warnings = Vec::new();
+    for ((account, label), result) in accounts.iter().zip(labels.iter()).zip(fetched) {
+        match result {
+            Ok(items) => {
+                for mut item in items {
+                    item.account_id = account.id.clone();
+                    item.account_label = label.clone();
+                    repos.push(item);
+                }
+            }
+            Err(err) => warnings.push(format!("{label}: {err}")),
+        }
+    }
+    repos.sort_by(|a, b| {
+        a.full_name
+            .to_lowercase()
+            .cmp(&b.full_name.to_lowercase())
+            .then_with(|| a.account_label.to_lowercase().cmp(&b.account_label.to_lowercase()))
+    });
+    Ok(GithubRepoList { repos, warnings })
 }

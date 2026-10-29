@@ -287,8 +287,13 @@ function RemoteCatalog() {
     const current = settings.data;
     if (!current || token.trim() === current.githubApiToken.trim()) return;
     const { dataDir: _dataDir, appVersion: _appVersion, ...rest } = current;
+    const nextToken = token.trim();
+    const currentAccounts = rest.githubAccounts ?? [];
+    const githubAccounts = currentAccounts.length
+      ? currentAccounts.map((account, index) => (index === 0 ? { ...account, token: nextToken } : account))
+      : [{ id: 'legacy', label: '', token: nextToken }];
     try {
-      await settingsSave({ ...rest, githubApiToken: token.trim() });
+      await settingsSave({ ...rest, githubApiToken: nextToken, githubAccounts });
       tokenSynced.current = false;
       await queryClient.invalidateQueries({ queryKey: ['launcher'] });
       toast.success('Token salvo.');

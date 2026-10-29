@@ -42,11 +42,19 @@ export type LibrarySnapshot = {
   dataDir: string;
 };
 
+export type ServiceAccount = {
+  id: string;
+  label: string;
+  token: string;
+};
+
 export type PublicSettings = {
   appsPath: string;
   githubApiToken: string;
+  githubAccounts: ServiceAccount[];
   deepseekApiToken: string;
   cloudflareApiToken: string;
+  cloudflareAccounts: ServiceAccount[];
   cloudflaredPath: string;
   platform: string;
   sortBy: string;
@@ -73,6 +81,7 @@ export type CloudflareConfig = {
   portOverride?: number | null;
   hostname?: string | null;
   tunnelName?: string | null;
+  accountId?: string | null;
 };
 
 export type HostnameClaim = {
@@ -104,11 +113,32 @@ export type CloudflareSaveInput = {
   portOverride?: number | null;
   hostname?: string | null;
   tunnelName?: string | null;
+  accountId?: string | null;
 };
 
 export type CloudflareZone = {
   id: string;
   name: string;
+  accountId: string;
+  accountLabel: string;
+};
+
+export type CloudflareZoneList = {
+  zones: CloudflareZone[];
+  warnings: string[];
+};
+
+export type GithubRepo = {
+  accountId: string;
+  accountLabel: string;
+  name: string;
+  fullName: string;
+  avatarUrl: string;
+};
+
+export type GithubRepoList = {
+  repos: GithubRepo[];
+  warnings: string[];
 };
 
 export type InstallResult = {
@@ -407,7 +437,11 @@ export function appCloudflareStatus(repository: string) {
 }
 
 export function appCloudflareZones() {
-  return invoke<CloudflareZone[]>('app_cloudflare_zones');
+  return invoke<CloudflareZoneList>('app_cloudflare_zones');
+}
+
+export function githubRepos() {
+  return invoke<GithubRepoList>('github_repos');
 }
 
 export function catalogLoad() {

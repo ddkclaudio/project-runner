@@ -1,8 +1,10 @@
 use crate::launcher::version::is_newer;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -64,13 +66,28 @@ pub struct LibrarySnapshot {
     pub data_dir: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ServiceAccount {
+    #[serde(default)]
+    pub id: String,
+    #[serde(default)]
+    pub label: String,
+    #[serde(default)]
+    pub token: String,
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SettingsInput {
     pub apps_path: String,
     pub github_api_token: String,
+    #[serde(default)]
+    pub github_accounts: Vec<ServiceAccount>,
     pub deepseek_api_token: String,
     pub cloudflare_api_token: String,
+    #[serde(default)]
+    pub cloudflare_accounts: Vec<ServiceAccount>,
     pub cloudflared_path: String,
     pub platform: String,
     pub sort_by: String,
@@ -92,8 +109,10 @@ pub struct SettingsInput {
 pub struct PublicSettings {
     pub apps_path: String,
     pub github_api_token: String,
+    pub github_accounts: Vec<ServiceAccount>,
     pub deepseek_api_token: String,
     pub cloudflare_api_token: String,
+    pub cloudflare_accounts: Vec<ServiceAccount>,
     pub cloudflared_path: String,
     pub platform: String,
     pub sort_by: String,
@@ -399,11 +418,15 @@ pub fn platform_of(settings: &Value) -> String {
 
 pub fn public_settings(root: &Path) -> PublicSettings {
     let settings = load_settings(root);
+    let github_accounts = accounts_of(&settings, "GitHubAccounts", "GitHubApiToken");
+    let cloudflare_accounts = accounts_of(&settings, "CloudflareAccounts", "CloudflareApiToken");
     PublicSettings {
         apps_path: setting_str(&settings, "AppsPath"),
-        github_api_token: setting_str(&settings, "GitHubApiToken"),
+        github_api_token: first_token(&github_accounts),
+        github_accounts,
         deepseek_api_token: setting_str(&settings, "DeepSeekApiToken"),
-        cloudflare_api_token: setting_str(&settings, "CloudflareApiToken"),
+        cloudflare_api_token: first_token(&cloudflare_accounts),
+        cloudflare_accounts,
         cloudflared_path: setting_str(&settings, "CloudflaredPath"),
         platform: platform_of(&settings),
         sort_by: {
@@ -437,9 +460,16 @@ pub fn apply_settings(root: &Path, input: SettingsInput) -> Result<PublicSetting
     let volume = input.music_volume.clamp(0.0, 1.0);
     let opacity = input.background_opacity.clamp(0.0, 1.0);
     map.insert("AppsPath".into(), json!(input.apps_path.trim()));
-    map.insert("GitHubApiToken".into(), json!(input.github_api_token.trim()));
+    let github_accounts = reconcile_accounts(input.github_accounts, &input.github_api_token);
+    let cloudflare_accounts = reconcile_accounts(input.cloudflare_accounts, &input.cloudflare_api_token);
+    map.insert("GitHubAccounts".into(), serde_json::to_value(&github_accounts).unwrap_or(json!([])));
+    map.insert("GitHubApiToken".into(), json!(first_token(&github_accounts)));
     map.insert("DeepSeekApiToken".into(), json!(input.deepseek_api_token.trim()));
-    map.insert("CloudflareApiToken".into(), json!(input.cloudflare_api_token.trim()));
+    map.insert(
+        "CloudflareAccounts".into(),
+        serde_json::to_value(&cloudflare_accounts).unwrap_or(json!([])),
+    );
+    map.insert("CloudflareApiToken".into(), json!(first_token(&cloudflare_accounts)));
     map.insert("CloudflaredPath".into(), json!(input.cloudflared_path.trim()));
     map.insert("Platform".into(), json!(input.platform.trim()));
     map.insert("SortBy".into(), json!(input.sort_by.trim()));
@@ -465,7 +495,7 @@ pub fn apply_settings(root: &Path, input: SettingsInput) -> Result<PublicSetting
 }
 
 pub fn token_of(root: &Path) -> String {
-    setting_str(&load_settings(root), "GitHubApiToken")
+    first_token(&github_accounts(root))
 }
 
 pub fn deepseek_token_of(root: &Path) -> String {
@@ -473,7 +503,147 @@ pub fn deepseek_token_of(root: &Path) -> String {
 }
 
 pub fn cloudflare_token_of(root: &Path) -> String {
-    setting_str(&load_settings(root), "CloudflareApiToken")
+    first_token(&cloudflare_accounts(root))
+}
+
+pub fn cloudflare_has_token(root: &Path) -> bool {
+    !cloudflare_token_of(root).trim().is_empty()
+}
+
+pub fn cloudflare_token_for(root: &Path, account_id: Option<&str>) -> Result<String, String> {
+    let accounts = cloudflare_accounts(root);
+    if let Some(id) = account_id.map(str::trim).filter(|value| !value.is_empty()) {
+        return accounts
+            .into_iter()
+            .find(|account| account.id == id && !account.token.trim().is_empty())
+            .map(|account| account.token)
+            .ok_or_else(|| "A conta Cloudflare desta zona já não está nas definições.".to_string());
+    }
+    let token = first_token(&accounts);
+    if token.trim().is_empty() {
+        return Err("Configure o token da API Cloudflare em Definições → Cloudflare.".into());
+    }
+    Ok(token)
+}
+
+pub fn github_accounts(root: &Path) -> Vec<ServiceAccount> {
+    accounts_of(&load_settings(root), "GitHubAccounts", "GitHubApiToken")
+}
+
+pub fn cloudflare_accounts(root: &Path) -> Vec<ServiceAccount> {
+    accounts_of(&load_settings(root), "CloudflareAccounts", "CloudflareApiToken")
+}
+
+fn first_token(accounts: &[ServiceAccount]) -> String {
+    accounts
+        .iter()
+        .find(|account| !account.token.trim().is_empty())
+        .map(|account| account.token.trim().to_string())
+        .unwrap_or_default()
+}
+
+fn accounts_of(settings: &Value, list_key: &str, legacy_key: &str) -> Vec<ServiceAccount> {
+    if settings.get(list_key).is_some() {
+        return normalize_accounts(parse_accounts(settings.get(list_key)));
+    }
+    let legacy = setting_str(settings, legacy_key);
+    if legacy.trim().is_empty() {
+        return Vec::new();
+    }
+    vec![ServiceAccount {
+        id: "legacy".into(),
+        label: String::new(),
+        token: legacy.trim().to_string(),
+    }]
+}
+
+fn parse_accounts(value: Option<&Value>) -> Vec<ServiceAccount> {
+    value
+        .and_then(|item| item.as_array())
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| serde_json::from_value::<ServiceAccount>(item.clone()).ok())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn normalize_accounts(accounts: Vec<ServiceAccount>) -> Vec<ServiceAccount> {
+    let mut out = Vec::new();
+    for (index, account) in accounts.into_iter().enumerate() {
+        let token = account.token.trim();
+        if token.is_empty() {
+            continue;
+        }
+        let mut id = account.id.trim().to_string();
+        if id.is_empty() || out.iter().any(|item: &ServiceAccount| item.id == id) {
+            id = new_account_id(index);
+        }
+        out.push(ServiceAccount {
+            id,
+            label: clip_account_label(&account.label),
+            token: token.chars().take(800).collect(),
+        });
+    }
+    out
+}
+
+fn reconcile_accounts(accounts: Vec<ServiceAccount>, flat_token: &str) -> Vec<ServiceAccount> {
+    let accounts = normalize_accounts(accounts);
+    if !accounts.is_empty() {
+        return accounts;
+    }
+    let flat = flat_token.trim();
+    if flat.is_empty() {
+        return Vec::new();
+    }
+    vec![ServiceAccount {
+        id: "legacy".into(),
+        label: String::new(),
+        token: flat.chars().take(800).collect(),
+    }]
+}
+
+fn clip_account_label(value: &str) -> String {
+    value.trim().chars().take(80).collect()
+}
+
+fn new_account_id(index: usize) -> String {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|value| value.as_nanos())
+        .unwrap_or(0);
+    format!("acc-{nanos}-{index}")
+}
+
+/// Nome mostrado nas listas. Nome vazio ou repetido ganha o login da API.
+pub fn account_labels(accounts: &[ServiceAccount], logins: &[String]) -> Vec<String> {
+    let mut counts: HashMap<String, usize> = HashMap::new();
+    for account in accounts {
+        let key = account.label.trim().to_lowercase();
+        *counts.entry(key).or_insert(0) += 1;
+    }
+    accounts
+        .iter()
+        .enumerate()
+        .map(|(index, account)| {
+            let label = account.label.trim();
+            let login = logins.get(index).map(|value| value.trim()).unwrap_or("");
+            let duplicated = counts.get(&label.to_lowercase()).copied().unwrap_or(0) > 1;
+            if label.is_empty() {
+                if login.is_empty() {
+                    "Conta".to_string()
+                } else {
+                    login.to_string()
+                }
+            } else if duplicated && !login.is_empty() && !login.eq_ignore_ascii_case(label) {
+                format!("{label} · {login}")
+            } else {
+                label.to_string()
+            }
+        })
+        .collect()
 }
 
 pub fn cloudflared_path_of(root: &Path) -> String {
@@ -1685,5 +1855,27 @@ mod tests {
         let snap = snapshot(&root, &root).unwrap();
         assert!(snap.apps[0].filter_hidden);
         let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn legacy_token_becomes_one_account() {
+        let settings = json!({ "GitHubApiToken": "ghp_old" });
+        let accounts = accounts_of(&settings, "GitHubAccounts", "GitHubApiToken");
+        assert_eq!(accounts.len(), 1);
+        assert_eq!(accounts[0].id, "legacy");
+        assert_eq!(accounts[0].token, "ghp_old");
+
+        let saved = json!({ "GitHubAccounts": [], "GitHubApiToken": "ghp_old" });
+        assert!(accounts_of(&saved, "GitHubAccounts", "GitHubApiToken").is_empty());
+    }
+
+    #[test]
+    fn duplicate_account_labels_keep_the_login() {
+        let accounts = vec![
+            ServiceAccount { id: "a".into(), label: "Trabalho".into(), token: "1".into() },
+            ServiceAccount { id: "b".into(), label: "Trabalho".into(), token: "2".into() },
+        ];
+        let labels = account_labels(&accounts, &["octo".into(), "hub".into()]);
+        assert_eq!(labels, vec!["Trabalho · octo".to_string(), "Trabalho · hub".to_string()]);
     }
 }

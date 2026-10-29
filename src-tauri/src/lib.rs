@@ -628,6 +628,7 @@ pub fn run() {
             launcher::commands::app_cloudflare_stop,
             launcher::commands::app_cloudflare_status,
             launcher::commands::app_cloudflare_zones,
+            launcher::commands::github_repos,
             launcher::commands::app_generate_launchfile,
             launcher::commands::app_skip_update,
             launcher::commands::app_delete_install,

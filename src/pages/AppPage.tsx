@@ -401,7 +401,7 @@ function CloudflareTunnel({ app }: { app: AppView }) {
   const [mode, setMode] = useState<CloudflareMode>('quick');
   const [startWithApp, setStartWithApp] = useState(false);
   const [subdomain, setSubdomain] = useState('');
-  const [zoneName, setZoneName] = useState('');
+  const [zoneKey, setZoneKey] = useState('');
   const [busy, setBusy] = useState(false);
   const synced = useRef(false);
   const hostPartsSynced = useRef(false);
@@ -435,24 +435,28 @@ function CloudflareTunnel({ app }: { app: AppView }) {
     if (mode === 'named' && hasToken && zones.isLoading) return;
 
     hostPartsSynced.current = true;
-    const zoneList = zones.data ?? [];
+    const zoneList = zones.data?.zones ?? [];
     const host = pendingHostname.current;
+    const savedAccount = view?.config.accountId?.trim() ?? '';
     if (host) {
       const parts = splitHostname(host, zoneList);
       setSubdomain(parts.subdomain || defaultSubdomain(app));
-      if (parts.zone) setZoneName(parts.zone);
+      const matches = zoneList.filter((zone) => zone.name.toLowerCase() === parts.zone.toLowerCase());
+      const picked = matches.find((zone) => zone.accountId === savedAccount) ?? matches[0];
+      if (picked) setZoneKey(`${picked.accountId}:${picked.id}`);
     } else {
       setSubdomain(defaultSubdomain(app));
-      if (zoneList.length === 1) setZoneName(zoneList[0].name);
+      if (zoneList.length === 1) setZoneKey(`${zoneList[0].accountId}:${zoneList[0].id}`);
     }
-  }, [app, hasToken, mode, zones.data, zones.isLoading]);
+  }, [app, hasToken, mode, view?.config.accountId, zones.data, zones.isLoading]);
 
+  const selectedZone = (zones.data?.zones ?? []).find((zone) => `${zone.accountId}:${zone.id}` === zoneKey);
   const composedHostname = useMemo(() => {
     const sub = subdomain.trim().replace(/^\.+|\.+$/g, '');
-    const zone = zoneName.trim();
+    const zone = selectedZone?.name.trim() ?? '';
     if (!sub || !zone) return '';
     return `${sub}.${zone}`.toLowerCase();
-  }, [subdomain, zoneName]);
+  }, [selectedZone?.name, subdomain]);
 
   const hostnameConflict = useMemo(() => {
     if (mode !== 'named' || !composedHostname) return null;
@@ -482,8 +486,10 @@ function CloudflareTunnel({ app }: { app: AppView }) {
     const savedStart = Boolean(view.config.startWithApp);
     const savedHost = (view.config.hostname ?? '').trim().toLowerCase();
     const nextHost = mode === 'named' ? composedHostname : '';
-    return mode !== savedMode || startWithApp !== savedStart || nextHost !== savedHost;
-  }, [composedHostname, mode, startWithApp, view]);
+    const savedAccount = (view.config.accountId ?? '').trim();
+    const nextAccount = mode === 'named' ? (selectedZone?.accountId ?? '') : '';
+    return mode !== savedMode || startWithApp !== savedStart || nextHost !== savedHost || nextAccount !== savedAccount;
+  }, [composedHostname, mode, selectedZone?.accountId, startWithApp, view]);
 
   async function persistConfig() {
     if (mode === 'named' && !composedHostname) {
@@ -500,6 +506,7 @@ function CloudflareTunnel({ app }: { app: AppView }) {
       portOverride: null,
       hostname: mode === 'named' ? composedHostname : null,
       tunnelName: null,
+      accountId: mode === 'named' ? selectedZone?.accountId ?? null : null,
     });
   }
 
@@ -576,7 +583,7 @@ function CloudflareTunnel({ app }: { app: AppView }) {
               instalação
             </a>
             ) ou defina o caminho em{' '}
-            <Link to="/settings/profile">Definições de perfil</Link>.
+            <Link to="/settings/cloudflare">Definições → Cloudflare</Link>.
           </InlineAlert>
         </div>
       ) : null}
@@ -614,7 +621,7 @@ function CloudflareTunnel({ app }: { app: AppView }) {
               <div style={{ marginBottom: 8 }}>
                 <InlineAlert variant="warning">
                   Falta o token da API Cloudflare.{' '}
-                  <Link to="/settings/profile">Configurar em Definições de perfil</Link>
+                  <Link to="/settings/cloudflare">Configurar em Definições → Cloudflare</Link>
                 </InlineAlert>
               </div>
             ) : null}
@@ -629,9 +636,9 @@ function CloudflareTunnel({ app }: { app: AppView }) {
                 .
               </span>
               <Select
-                value={zoneName}
-                onChange={setZoneName}
-                disabled={!hasToken || zones.isLoading || Boolean(zones.error) || (zones.data?.length ?? 0) === 0}
+                value={zoneKey}
+                onChange={setZoneKey}
+                disabled={!hasToken || zones.isLoading || Boolean(zones.error) || (zones.data?.zones.length ?? 0) === 0}
                 searchable
                 searchPlaceholder="Buscar domínio…"
                 placeholder={
@@ -641,12 +648,15 @@ function CloudflareTunnel({ app }: { app: AppView }) {
                       ? 'A carregar domínios…'
                       : zones.error
                         ? 'Falha ao listar zonas'
-                        : (zones.data?.length ?? 0) === 0
+                        : (zones.data?.zones.length ?? 0) === 0
                           ? 'Sem domínios na conta'
                           : 'Escolher domínio…'
                 }
                 aria-label="Domínio Cloudflare"
-                options={(zones.data ?? []).map((z) => ({ value: z.name, label: z.name }))}
+                options={(zones.data?.zones ?? []).map((zone) => ({
+                  value: `${zone.accountId}:${zone.id}`,
+                  label: `${zone.name} · ${zone.accountLabel}`,
+                }))}
               />
             </div>
             <FormCard.Hint>
@@ -657,9 +667,12 @@ function CloudflareTunnel({ app }: { app: AppView }) {
                 <>
                   {' '}
                   O token precisa de <strong>Zone → Zone → Read</strong>.{' '}
-                  <Link to="/settings/profile">Editar nas definições</Link>.
+                  <Link to="/settings/cloudflare">Editar nas definições</Link>.
                 </>
               ) : null}
+              {zones.data?.warnings.map((warning) => (
+                <span key={warning}> {warning}</span>
+              ))}
             </FormCard.Hint>
             {hostnameConflict ? (
               <div style={{ marginTop: 8 }}>

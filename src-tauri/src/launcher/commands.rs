@@ -1,4 +1,4 @@
-use crate::launcher::cloudflare::{self, CloudflareSaveInput, CloudflareView, CloudflareZone};
+use crate::launcher::cloudflare::{self, CloudflareSaveInput, CloudflareView, CloudflareZoneList};
 use crate::launcher::install::{self, InstallResult};
 use crate::launcher::launch::{self, LaunchResult};
 use crate::launcher::runners::{self, LaunchConfigSave, LaunchConfigView};
@@ -403,9 +403,15 @@ pub fn app_cloudflare_status(paths: State<'_, AppPaths>, repository: String) -> 
 }
 
 #[tauri::command]
-pub async fn app_cloudflare_zones(paths: State<'_, AppPaths>) -> Result<Vec<CloudflareZone>, String> {
+pub async fn app_cloudflare_zones(paths: State<'_, AppPaths>) -> Result<CloudflareZoneList, String> {
     let meta = paths.org_root()?;
     cloudflare::list_zones(&meta).await
+}
+
+#[tauri::command]
+pub async fn github_repos(paths: State<'_, AppPaths>) -> Result<crate::launcher::github::GithubRepoList, String> {
+    let meta = paths.org_root()?;
+    crate::launcher::github::list_account_repos(&meta).await
 }
 
 #[tauri::command]

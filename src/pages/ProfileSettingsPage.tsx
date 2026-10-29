@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { open as openDialog } from '@tauri-apps/plugin-dialog';
 import { IconAlertTriangle, IconFolder } from '@tabler/icons-react';
@@ -24,17 +25,22 @@ import {
   settingsGet,
   settingsSave,
   type PublicSettings,
+  type ServiceAccount,
   type UpdateStatus,
 } from '@/lib/launcher-api';
 import { logOpenFolder, logPath } from '@/lib/activity-log';
+import { AccountForm, AccountLibrary, accountTitle } from '@/components/settings/AccountLibrary';
+import libraryStyles from './library.module.css';
 
 type Draft = Omit<PublicSettings, 'dataDir' | 'appVersion'>;
 
 const EMPTY: Draft = {
   appsPath: '',
   githubApiToken: '',
+  githubAccounts: [],
   deepseekApiToken: '',
   cloudflareApiToken: '',
+  cloudflareAccounts: [],
   cloudflaredPath: '',
   platform: 'Auto',
   sortBy: 'LastPlayed',
@@ -51,7 +57,24 @@ const EMPTY: Draft = {
   painelUpdateRepository: '',
 };
 
+function firstToken(accounts: ServiceAccount[] | undefined) {
+  return (accounts ?? []).find((account) => account.token.trim())?.token.trim() ?? '';
+}
+
+const GITHUB_HINT =
+  'Token em github.com/settings/tokens. Repositório privado pede o âmbito repo. Sem âmbito, a lista pública e o limite de pedidos continuam a funcionar.';
+const CLOUDFLARE_HINT =
+  'Custom Token em dash.cloudflare.com/profile/api-tokens: Account → Cloudflare Tunnel → Edit, Zone → DNS → Edit e Zone → Zone → Read. Quick não precisa de token.';
+
 export function ProfileSettingsPage() {
+  const { pathname } = useLocation();
+  const { accountId } = useParams();
+  const navigate = useNavigate();
+  const section = pathname.startsWith('/settings/cloudflare')
+    ? 'cloudflare'
+    : pathname.startsWith('/settings/github')
+      ? 'github'
+      : 'geral';
   const { user, updateDisplayName } = useAuth();
   const toast = useToast();
   const queryClient = useQueryClient();
@@ -90,13 +113,15 @@ export function ProfileSettingsPage() {
   useEffect(() => {
     if (!settings.data) return;
     const { dataDir: _dataDir, appVersion: _appVersion, ...rest } = settings.data;
-    setDraft(rest);
+    setDraft({
+      ...rest,
+      githubAccounts: rest.githubAccounts ?? [],
+      cloudflareAccounts: rest.cloudflareAccounts ?? [],
+    });
   }, [settings.data]);
 
   const cloudflareDirty = Boolean(
-    settings.data &&
-      (draft.cloudflareApiToken.trim() !== (settings.data.cloudflareApiToken ?? '').trim() ||
-        draft.cloudflaredPath.trim() !== (settings.data.cloudflaredPath ?? '').trim()),
+    settings.data && draft.cloudflaredPath.trim() !== (settings.data.cloudflaredPath ?? '').trim(),
   );
   const deepseekDirty = Boolean(
     settings.data && draft.deepseekApiToken.trim() !== (settings.data.deepseekApiToken ?? '').trim(),
@@ -109,15 +134,17 @@ export function ProfileSettingsPage() {
         draft.sortBy !== settings.data.sortBy ||
         draft.useGridView !== settings.data.useGridView ||
         draft.startFullscreen !== settings.data.startFullscreen ||
-        draft.githubApiToken.trim() !== (settings.data.githubApiToken ?? '').trim() ||
-        draft.appListRepository.trim() !== (settings.data.appListRepository ?? '').trim() ||
-        draft.painelUpdateRepository.trim() !== (settings.data.painelUpdateRepository ?? '').trim() ||
         draft.backgroundImagePath.trim() !== (settings.data.backgroundImagePath ?? '').trim() ||
         Math.abs(draft.backgroundOpacity - settings.data.backgroundOpacity) > 0.0001 ||
         draft.launcherMusicPath.trim() !== (settings.data.launcherMusicPath ?? '').trim() ||
         Math.abs(draft.musicVolume - settings.data.musicVolume) > 0.0001 ||
         draft.closeAfterLaunch !== settings.data.closeAfterLaunch ||
         draft.enableGamepadInput !== settings.data.enableGamepadInput),
+  );
+  const githubDirty = Boolean(
+    settings.data &&
+      (draft.appListRepository.trim() !== (settings.data.appListRepository ?? '').trim() ||
+        draft.painelUpdateRepository.trim() !== (settings.data.painelUpdateRepository ?? '').trim()),
   );
 
   async function saveDeepseek(event: React.FormEvent) {
@@ -136,15 +163,43 @@ export function ProfileSettingsPage() {
     }
   }
 
-  async function saveCloudflare(event: React.FormEvent) {
-    event.preventDefault();
-    if (!cloudflareDirty) return;
+  async function commitAccounts(kind: 'github' | 'cloudflare', accounts: ServiceAccount[], message: string) {
+    const current = settings.data;
+    if (!current) return false;
+    const { dataDir: _dataDir, appVersion: _appVersion, ...rest } = current;
+    const cleaned = accounts
+      .map((account) => ({ id: account.id, label: account.label.trim(), token: account.token.trim() }))
+      .filter((account) => account.token);
     setBusy(true);
     setError(null);
     try {
+      await settingsSave(
+        kind === 'github'
+          ? { ...rest, githubAccounts: cleaned, githubApiToken: firstToken(cleaned) }
+          : { ...rest, cloudflareAccounts: cleaned, cloudflareApiToken: firstToken(cleaned) },
+      );
+      await queryClient.invalidateQueries({ queryKey: ['launcher', 'settings'] });
+      toast.success(message);
+      return true;
+    } catch (err) {
+      setError(launcherError(err));
+      return false;
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function saveCloudflare(event: React.FormEvent) {
+    event.preventDefault();
+    if (!cloudflareDirty || !settings.data) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const accounts = settings.data.cloudflareAccounts ?? [];
       await settingsSave({
         ...draft,
-        cloudflareApiToken: draft.cloudflareApiToken.trim(),
+        cloudflareAccounts: accounts,
+        cloudflareApiToken: firstToken(accounts),
         cloudflaredPath: draft.cloudflaredPath.trim(),
       });
       await queryClient.invalidateQueries({ queryKey: ['launcher', 'settings'] });
@@ -165,6 +220,29 @@ export function ProfileSettingsPage() {
       await settingsSave(draft);
       await queryClient.invalidateQueries({ queryKey: ['launcher'] });
       toast.success('Definições salvas.');
+    } catch (err) {
+      setError(launcherError(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function saveGithub(event: React.FormEvent) {
+    event.preventDefault();
+    if (!githubDirty || !settings.data) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const accounts = settings.data.githubAccounts ?? [];
+      await settingsSave({
+        ...draft,
+        githubAccounts: accounts,
+        githubApiToken: firstToken(accounts),
+        appListRepository: draft.appListRepository.trim(),
+        painelUpdateRepository: draft.painelUpdateRepository.trim(),
+      });
+      await queryClient.invalidateQueries({ queryKey: ['launcher', 'settings'] });
+      toast.success('Definições GitHub salvas.');
     } catch (err) {
       setError(launcherError(err));
     } finally {
@@ -228,15 +306,75 @@ export function ProfileSettingsPage() {
     }
   }
 
-  const subtitle = settings.data
-    ? `Conta e preferências do painel · Dados em ${settings.data.dataDir} · Painel ${settings.data.appVersion}`
-    : 'Conta, DeepSeek, pasta das apps e preferências do painel.';
+  const subtitle =
+    section === 'geral'
+      ? settings.data
+        ? `Dados em ${settings.data.dataDir} · Painel ${settings.data.appVersion}`
+        : 'Conta, DeepSeek, pasta das apps e preferências do painel.'
+      : undefined;
+  const title = section === 'cloudflare' ? 'Cloudflare' : section === 'github' ? 'GitHub' : 'Geral';
+  const serviceKind = section === 'github' || section === 'cloudflare' ? section : null;
+  const savedAccounts =
+    serviceKind === 'github'
+      ? (settings.data?.githubAccounts ?? [])
+      : serviceKind === 'cloudflare'
+        ? (settings.data?.cloudflareAccounts ?? [])
+        : [];
+  const basePath = serviceKind === 'github' ? '/settings/github' : '/settings/cloudflare';
+
+  if (accountId && serviceKind) {
+    const isNew = accountId === 'new';
+    const account = isNew ? undefined : savedAccounts.find((item) => item.id === accountId);
+    const kindLabel = serviceKind === 'github' ? 'GitHub' : 'Cloudflare';
+    return (
+      <PageShell>
+        <PageShell.Heading subtitle={kindLabel}>
+          {isNew ? 'Nova conta' : account ? accountTitle(account, savedAccounts) : kindLabel}
+        </PageShell.Heading>
+        {error ? <InlineAlert>{error}</InlineAlert> : null}
+        {!isNew && settings.isLoading ? <p className={libraryStyles.empty}>A carregar conta…</p> : null}
+        {!isNew && !settings.isLoading && !account ? (
+          <p className={libraryStyles.empty}>Esta conta já não está nas definições.</p>
+        ) : null}
+        {isNew || account ? (
+          <AccountForm
+            key={isNew ? 'new' : account?.id}
+            mode={isNew ? 'new' : 'edit'}
+            account={account}
+            hint={serviceKind === 'github' ? GITHUB_HINT : CLOUDFLARE_HINT}
+            busy={busy || settings.isLoading}
+            onSubmit={(next) => {
+              const list = isNew ? [...savedAccounts, next] : savedAccounts.map((item) => (item.id === next.id ? next : item));
+              void commitAccounts(serviceKind, list, isNew ? 'Conta adicionada.' : 'Conta salva.').then((ok) => {
+                if (ok && isNew) navigate(basePath);
+              });
+            }}
+            onRemove={
+              account
+                ? () => {
+                    void commitAccounts(
+                      serviceKind,
+                      savedAccounts.filter((item) => item.id !== account.id),
+                      'Conta removida.',
+                    ).then((ok) => {
+                      if (ok) navigate(basePath);
+                    });
+                  }
+                : undefined
+            }
+          />
+        ) : null}
+      </PageShell>
+    );
+  }
 
   return (
     <PageShell>
-      <PageShell.Heading subtitle={subtitle}>Configurações do perfil</PageShell.Heading>
+      <PageShell.Heading subtitle={subtitle}>{title}</PageShell.Heading>
       {error ? <InlineAlert>{error}</InlineAlert> : null}
 
+      {section === 'geral' ? (
+      <>
       <FormCard onSubmit={(event) => void saveProfile(event)} aria-label="Conta">
         <FormCard.Header title="Conta" subtitle="Dados do utilizador." />
         <FormRow label="Nome">
@@ -279,50 +417,6 @@ export function ProfileSettingsPage() {
             }
           />
         ) : null}
-      </FormCard>
-
-      <FormCard onSubmit={(event) => void saveCloudflare(event)} aria-label="Cloudflare" style={{ marginTop: 20 }}>
-        <FormCard.Header
-          title="Cloudflare"
-          subtitle="Credenciais globais desta organização — usadas por todas as apps. Modo Quick/DNS e hostname escolhem-se em cada app."
-        />
-        <FormRow label="Token da API">
-          <Input
-            type="password"
-            value={draft.cloudflareApiToken}
-            onChange={(event) => patchDraft({ cloudflareApiToken: event.target.value })}
-            placeholder="Cloudflare API token…"
-            autoComplete="off"
-          />
-          <FormCard.Hint>
-            Custom Token em{' '}
-            <a href="https://dash.cloudflare.com/profile/api-tokens" target="_blank" rel="noreferrer">
-              dash.cloudflare.com/profile/api-tokens
-            </a>
-            : <strong>Account → Cloudflare Tunnel → Edit</strong>, <strong>Zone → DNS → Edit</strong>,{' '}
-            <strong>Zone → Zone → Read</strong>. Quick (trycloudflare) não precisa de token; Domínio sim.
-          </FormCard.Hint>
-        </FormRow>
-        <FormRow label="Caminho cloudflared">
-          <Input
-            value={draft.cloudflaredPath}
-            onChange={(event) => patchDraft({ cloudflaredPath: event.target.value })}
-            placeholder="Vazio = detectar automaticamente (where/which)"
-          />
-          <FormCard.Hint>
-            Binário do agente de túnel. Se vazio, o Painel tenta <code>where cloudflared</code> (Windows) ou pastas
-            comuns. Necessário para Quick e Domínio.
-          </FormCard.Hint>
-        </FormRow>
-        <FormCard.Footer
-          right={
-            cloudflareDirty ? (
-              <Button type="submit" variant="secondary" disabled={busy || settings.isLoading}>
-                Salvar
-              </Button>
-            ) : null
-          }
-        />
       </FormCard>
 
       <FormCard onSubmit={(event) => void saveLocation(event)} aria-label="Pasta das aplicações" style={{ marginTop: 20 }}>
@@ -442,56 +536,6 @@ export function ProfileSettingsPage() {
           onChange={(startFullscreen) => patchDraft({ startFullscreen })}
         />
 
-        <FormCard.Header title="GitHub" subtitle="Token e repositórios remotos." />
-        <FormRow label="Token">
-          <Input
-            type="password"
-            value={draft.githubApiToken}
-            onChange={(event) => patchDraft({ githubApiToken: event.target.value })}
-          />
-          <FormCard.Hint>Token clássico, sem permissões. Serve para passar das 60 consultas anónimas por hora.</FormCard.Hint>
-        </FormRow>
-        <FormRow label="Catálogo">
-          <Input
-            value={draft.appListRepository}
-            onChange={(event) => patchDraft({ appListRepository: event.target.value })}
-          />
-        </FormRow>
-        <FormRow label="Atualização">
-          <Input
-            value={draft.painelUpdateRepository}
-            onChange={(event) => patchDraft({ painelUpdateRepository: event.target.value })}
-          />
-          <FormCard.Hint>Vazio desliga a atualização. Não use o repositório Avalonia do GithubLauncher.</FormCard.Hint>
-        </FormRow>
-        <FormRow label="Versão" alignStart>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-            {update ? (
-              <InlineAlert variant={update.updateAvailable ? 'warning' : 'info'}>{update.message}</InlineAlert>
-            ) : null}
-            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-              <Button
-                type="button"
-                onClick={() =>
-                  void launcherCheckUpdate(true)
-                    .then(setUpdate)
-                    .catch((err) => toast.error(launcherError(err)))
-                }
-              >
-                Procurar atualização
-              </Button>
-              <Button
-                type="button"
-                variant="secondary"
-                disabled={!update?.updateAvailable}
-                onClick={() => void launcherApplyUpdate().catch((err) => toast.error(launcherError(err)))}
-              >
-                Aplicar
-              </Button>
-            </div>
-          </div>
-        </FormRow>
-
         <FormCard.Header title="Aparência" subtitle="Fundo e música do launcher." />
         <FormRow label="Imagem de fundo">
           <Input
@@ -546,6 +590,129 @@ export function ProfileSettingsPage() {
           />
         ) : null}
       </FormCard>
+      </>
+      ) : null}
+
+      {section === 'cloudflare' ? (
+        <>
+          <AccountLibrary
+            accounts={savedAccounts}
+            loading={settings.isLoading && savedAccounts.length === 0}
+            basePath="/settings/cloudflare"
+            emptyMessage="Nenhuma conta Cloudflare. Adicione uma para listar domínios."
+            onRemove={(account) => {
+              void commitAccounts(
+                'cloudflare',
+                savedAccounts.filter((item) => item.id !== account.id),
+                'Conta removida.',
+              );
+            }}
+          />
+          <div className={libraryStyles.blockGap}>
+            <FormCard onSubmit={(event) => void saveCloudflare(event)} aria-label="cloudflared">
+              <FormCard.Header
+                title="cloudflared"
+                subtitle="O domínio escolhe-se em cada app. Estas contas entram todas na lista."
+              />
+              <FormRow label="Caminho cloudflared">
+                <Input
+                  value={draft.cloudflaredPath}
+                  onChange={(event) => patchDraft({ cloudflaredPath: event.target.value })}
+                  placeholder="Vazio = detectar automaticamente (where/which)"
+                />
+                <FormCard.Hint>
+                  Binário do agente de túnel. Se vazio, o Painel tenta <code>where cloudflared</code> (Windows) ou pastas
+                  comuns. Necessário para Quick e Domínio.
+                </FormCard.Hint>
+              </FormRow>
+              {cloudflareDirty ? (
+                <FormCard.Footer
+                  right={
+                    <Button type="submit" variant="secondary" disabled={busy || settings.isLoading}>
+                      Salvar
+                    </Button>
+                  }
+                />
+              ) : null}
+            </FormCard>
+          </div>
+        </>
+      ) : null}
+
+      {section === 'github' ? (
+        <>
+          <AccountLibrary
+            accounts={savedAccounts}
+            loading={settings.isLoading && savedAccounts.length === 0}
+            basePath="/settings/github"
+            emptyMessage="Nenhuma conta GitHub. Adicione uma para listar repositórios."
+            onRemove={(account) => {
+              void commitAccounts(
+                'github',
+                savedAccounts.filter((item) => item.id !== account.id),
+                'Conta removida.',
+              );
+            }}
+          />
+          <div className={libraryStyles.blockGap}>
+            <FormCard onSubmit={(event) => void saveGithub(event)} aria-label="Catálogo e atualização">
+              <FormCard.Header
+                title="Catálogo e atualização"
+                subtitle="A Nova app lista os repositórios de todas as contas."
+              />
+              <FormRow label="Catálogo">
+                <Input
+                  value={draft.appListRepository}
+                  onChange={(event) => patchDraft({ appListRepository: event.target.value })}
+                />
+              </FormRow>
+              <FormRow label="Atualização">
+                <Input
+                  value={draft.painelUpdateRepository}
+                  onChange={(event) => patchDraft({ painelUpdateRepository: event.target.value })}
+                />
+                <FormCard.Hint>Vazio desliga a atualização. Não use o repositório Avalonia do GithubLauncher.</FormCard.Hint>
+              </FormRow>
+              <FormRow label="Versão" alignStart>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                  {update ? (
+                    <InlineAlert variant={update.updateAvailable ? 'warning' : 'info'}>{update.message}</InlineAlert>
+                  ) : null}
+                  <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                    <Button
+                      type="button"
+                      onClick={() =>
+                        void launcherCheckUpdate(true)
+                          .then(setUpdate)
+                          .catch((err) => toast.error(launcherError(err)))
+                      }
+                    >
+                      Procurar atualização
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      disabled={!update?.updateAvailable}
+                      onClick={() => void launcherApplyUpdate().catch((err) => toast.error(launcherError(err)))}
+                    >
+                      Aplicar
+                    </Button>
+                  </div>
+                </div>
+              </FormRow>
+              {githubDirty ? (
+                <FormCard.Footer
+                  right={
+                    <Button type="submit" variant="secondary" disabled={busy || settings.isLoading}>
+                      Salvar
+                    </Button>
+                  }
+                />
+              ) : null}
+            </FormCard>
+          </div>
+        </>
+      ) : null}
 
       <Modal
         isOpen={Boolean(folderAlert)}

@@ -53,6 +53,8 @@ export function backTarget(pathname: string): string | null {
     }
     return '/';
   }
+  if (pathname.startsWith('/settings/github/')) return '/settings/github';
+  if (pathname.startsWith('/settings/cloudflare/')) return '/settings/cloudflare';
   if (isDeepLibraryPath(pathname)) return '/';
   return null;
 }

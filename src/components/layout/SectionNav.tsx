@@ -31,9 +31,19 @@ export function SidebarSettings() {
           title: 'PAINEL',
           items: [
             {
-              label: 'Perfil',
+              label: 'Geral',
               href: '/settings/profile',
-              active: pathname.startsWith('/settings'),
+              active: pathname === '/settings/profile' || pathname === '/settings',
+            },
+            {
+              label: 'Cloudflare',
+              href: '/settings/cloudflare',
+              active: pathname.startsWith('/settings/cloudflare'),
+            },
+            {
+              label: 'GitHub',
+              href: '/settings/github',
+              active: pathname.startsWith('/settings/github'),
             },
           ],
         },

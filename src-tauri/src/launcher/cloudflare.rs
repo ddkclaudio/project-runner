@@ -41,6 +41,9 @@ pub struct CloudflareConfig {
     pub hostname: Option<String>,
     #[serde(default)]
     pub tunnel_name: Option<String>,
+    /// Conta das definições dona da zona escolhida.
+    #[serde(default)]
+    pub account_id: Option<String>,
 }
 
 impl Default for CloudflareConfig {
@@ -51,6 +54,7 @@ impl Default for CloudflareConfig {
             port_override: None,
             hostname: None,
             tunnel_name: None,
+            account_id: None,
         }
     }
 }
@@ -101,6 +105,8 @@ pub struct CloudflareSaveInput {
     pub port_override: Option<u16>,
     pub hostname: Option<String>,
     pub tunnel_name: Option<String>,
+    #[serde(default)]
+    pub account_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -108,6 +114,15 @@ pub struct CloudflareSaveInput {
 pub struct CloudflareZone {
     pub id: String,
     pub name: String,
+    pub account_id: String,
+    pub account_label: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CloudflareZoneList {
+    pub zones: Vec<CloudflareZone>,
+    pub warnings: Vec<String>,
 }
 
 fn folder_key(app: &AppEntry) -> String {
@@ -240,6 +255,11 @@ pub fn save_config(
     }
 
     fs::create_dir_all(info).map_err(|err| err.to_string())?;
+    let account_id = input
+        .account_id
+        .map(|id| id.trim().to_string())
+        .filter(|id| !id.is_empty())
+        .filter(|_| hostname.is_some());
     let config = CloudflareConfig {
         mode: input.mode,
         start_with_app: input.start_with_app,
@@ -249,6 +269,7 @@ pub fn save_config(
             .tunnel_name
             .map(|n| n.trim().to_string())
             .filter(|n| !n.is_empty()),
+        account_id,
     };
     let raw = serde_json::to_string_pretty(&config).map_err(|err| err.to_string())?;
     fs::write(config_path(info), raw).map_err(|err| err.to_string())?;
@@ -520,7 +541,6 @@ pub fn view(meta: &Path, workspace: &Path, info: &Path, app: &AppEntry) -> Cloud
     let config = load_config(info);
     let (bin, detected) = cloudflared_bin(meta);
     let available = cloudflared_available(&bin);
-    let token = store::cloudflare_token_of(meta);
     let folder = folder_key(app);
     let mut runtime = runtime_of(meta, &folder);
     // Actualizar URL se a thread do quick tunnel já a tiver
@@ -541,7 +561,7 @@ pub fn view(meta: &Path, workspace: &Path, info: &Path, app: &AppEntry) -> Cloud
         cloudflared_available: available,
         cloudflared_path: bin,
         cloudflared_detected: detected,
-        has_api_token: !token.trim().is_empty(),
+        has_api_token: store::cloudflare_has_token(meta),
         running: runtime.is_some(),
         public_url: runtime.as_ref().and_then(|r| r.public_url.clone()),
         pid: runtime.as_ref().map(|r| r.pid),
@@ -745,10 +765,7 @@ async fn start_named(
         .filter(|h| !h.is_empty())
         .ok_or_else(|| "Indique o hostname (ex. app.meudominio.com) para o modo Domínio.".to_string())?;
 
-    let token = store::cloudflare_token_of(meta);
-    if token.trim().is_empty() {
-        return Err("Configure o token da API Cloudflare em Definições → Cloudflare.".into());
-    }
+    let token = store::cloudflare_token_for(meta, config.account_id.as_deref())?;
 
     let folder = folder_key(app);
     if let Some(owner) = hostname_conflict(meta, workspace, hostname, &folder) {
@@ -941,56 +958,109 @@ async fn cf_account_id(token: &str) -> Result<String, String> {
         })
 }
 
-/// Lista zonas DNS da conta (requer Zone → Zone → Read no token).
-pub async fn list_zones(meta: &Path) -> Result<Vec<CloudflareZone>, String> {
-    let token = store::cloudflare_token_of(meta);
-    if token.trim().is_empty() {
-        let err = "Configure o token da API Cloudflare em Credenciais antes de listar domínios.".to_string();
-        activity_log::warn("cloudflare", &err);
-        return Err(err);
-    }
+async fn cf_account_name(token: &str) -> String {
+    let Ok(value) = cf_api(
+        token,
+        reqwest::Method::GET,
+        "https://api.cloudflare.com/client/v4/accounts?per_page=1",
+        None,
+    )
+    .await
+    else {
+        return String::new();
+    };
+    value
+        .pointer("/result/0/name")
+        .and_then(|item| item.as_str())
+        .unwrap_or("")
+        .trim()
+        .to_string()
+}
 
-    let value = match cf_api(
-        token.trim(),
+async fn zones_for_token(token: &str) -> Result<Vec<(String, String)>, String> {
+    let value = cf_api(
+        token,
         reqwest::Method::GET,
         "https://api.cloudflare.com/client/v4/zones?per_page=50",
         None,
     )
     .await
-    {
-        Ok(value) => value,
-        Err(err) => {
-            let msg = format!(
-                "{err} Para listar domínios o token precisa de Zone → Zone → Read (além de Tunnel Edit e DNS Edit)."
-            );
-            activity_log::error("cloudflare", "zones list failed", Some(&msg));
-            return Err(msg);
-        }
-    };
-
-    let mut zones: Vec<CloudflareZone> = value
+    .map_err(|err| {
+        format!("{err} Para listar domínios o token precisa de Zone → Zone → Read.")
+    })?;
+    Ok(value
         .get("result")
-        .and_then(|r| r.as_array())
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|z| {
-                    let id = z.get("id")?.as_str()?.to_string();
-                    let name = z.get("name")?.as_str()?.to_string();
+        .and_then(|item| item.as_array())
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|zone| {
+                    let id = zone.get("id")?.as_str()?.trim().to_string();
+                    let name = zone.get("name")?.as_str()?.trim().to_string();
                     if id.is_empty() || name.is_empty() {
-                        return None;
+                        None
+                    } else {
+                        Some((id, name))
                     }
-                    Some(CloudflareZone { id, name })
                 })
                 .collect()
         })
-        .unwrap_or_default();
+        .unwrap_or_default())
+}
 
-    zones.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+/// Lista as zonas de todas as contas. Uma conta que falhe não esconde as outras.
+pub async fn list_zones(meta: &Path) -> Result<CloudflareZoneList, String> {
+    let accounts = store::cloudflare_accounts(meta);
+    if accounts.is_empty() {
+        let err = "Configure uma conta Cloudflare em Definições → Cloudflare antes de listar domínios.".to_string();
+        activity_log::warn("cloudflare", &err);
+        return Err(err);
+    }
+
+    let mut names = Vec::with_capacity(accounts.len());
+    let mut fetched: Vec<Result<Vec<(String, String)>, String>> = Vec::with_capacity(accounts.len());
+    for account in &accounts {
+        let token = account.token.trim();
+        if token.is_empty() {
+            names.push(String::new());
+            fetched.push(Ok(Vec::new()));
+            continue;
+        }
+        names.push(cf_account_name(token).await);
+        fetched.push(zones_for_token(token).await);
+    }
+    let labels = store::account_labels(&accounts, &names);
+    let mut zones = Vec::new();
+    let mut warnings = Vec::new();
+    for ((account, label), result) in accounts.iter().zip(labels.iter()).zip(fetched) {
+        match result {
+            Ok(items) => {
+                for (id, name) in items {
+                    zones.push(CloudflareZone {
+                        id,
+                        name,
+                        account_id: account.id.clone(),
+                        account_label: label.clone(),
+                    });
+                }
+            }
+            Err(err) => {
+                activity_log::error("cloudflare", "zones list failed", Some(&err));
+                warnings.push(format!("{label}: {err}"));
+            }
+        }
+    }
+    zones.sort_by(|a, b| {
+        a.name
+            .to_lowercase()
+            .cmp(&b.name.to_lowercase())
+            .then_with(|| a.account_label.to_lowercase().cmp(&b.account_label.to_lowercase()))
+    });
     activity_log::info(
         "cloudflare",
-        &format!("zones list ok count={}", zones.len()),
+        &format!("zones list ok count={} warnings={}", zones.len(), warnings.len()),
     );
-    Ok(zones)
+    Ok(CloudflareZoneList { zones, warnings })
 }
 
 async fn create_tunnel(token: &str, account_id: &str, name: &str) -> Result<(String, Value), String> {
