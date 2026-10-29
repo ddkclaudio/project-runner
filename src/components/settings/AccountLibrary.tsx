@@ -208,10 +208,7 @@ export function AccountForm({
 
   return (
     <FormCard onSubmit={submit} aria-label={mode === 'new' ? 'Nova conta' : 'Conta'}>
-      <FormCard.Header
-        title="Dados da conta"
-        subtitle="O nome aparece na lista. O token fica só nesta conta."
-      />
+      <FormCard.Header title={null} subtitle={hint} />
       <FormRow label="Nome da conta">
         <Input value={label} onChange={(event) => setLabel(event.target.value)} placeholder="Trabalho" />
       </FormRow>
@@ -222,13 +219,13 @@ export function AccountForm({
           onChange={(event) => setToken(event.target.value)}
           autoComplete="off"
         />
-        <FormCard.Hint>{hint}</FormCard.Hint>
+        <FormCard.Hint>O nome aparece na lista. O token fica só nesta conta.</FormCard.Hint>
       </FormRow>
       {mode === 'new' || dirty || onRemove ? (
         <FormCard.Footer
           left={
             mode === 'edit' && onRemove ? (
-              <Button type="button" onClick={onRemove} disabled={busy}>
+              <Button type="button" variant="ghost" onClick={onRemove} disabled={busy}>
                 Remover
               </Button>
             ) : null

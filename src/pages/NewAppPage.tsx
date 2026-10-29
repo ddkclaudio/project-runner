@@ -8,6 +8,7 @@ import { FormCard, FormRow } from '@/components/ui/FormCard';
 import { Modal } from '@/components/ui/Modal';
 import { InlineAlert } from '@/components/ui/InlineAlert';
 import { appHref, githubRepos, launcherError, librarySave, settingsGet, type GithubRepo } from '@/lib/launcher-api';
+import { cx } from '@/utils';
 import styles from './new-app.module.css';
 
 export function NewAppPage() {
@@ -81,16 +82,16 @@ export function NewAppPage() {
     }
   }
 
+  const warnings = repos.data?.warnings ?? [];
+
   return (
     <PageShell>
       <Modal isOpen={choice === null} onClose={() => navigate('/')} title="Nova app" maxWidth={560}>
         <Modal.Content>
           {missingGithub ? (
-            <div style={{ marginBottom: 12 }}>
-              <InlineAlert variant="warning">
-                Nenhuma conta GitHub. <Link to="/settings/github">Configurar em Definições → GitHub</Link>
-              </InlineAlert>
-            </div>
+            <InlineAlert variant="warning">
+              Nenhuma conta GitHub. <Link to="/settings/github">Configurar em Definições → GitHub</Link>
+            </InlineAlert>
           ) : null}
           <div className={styles.choices}>
             <button type="button" className={styles.choice} onClick={() => setChoice('manual')}>
@@ -111,28 +112,33 @@ export function NewAppPage() {
           <FormCard.Header
             title="Nova app"
             subtitle="Disco: {pasta}/{orgSlug}/{app}/repositories/{repo}/. Exemplo: gitname/react-gh-pages."
+            actions={
+              choice === 'manual' ? (
+                <Button
+                  type="button"
+                  onClick={() => {
+                    setName('React GH Pages');
+                    setRepository('gitname/react-gh-pages');
+                  }}
+                >
+                  Preencher exemplo React Hello World
+                </Button>
+              ) : undefined
+            }
           />
-          {choice === 'manual' ? (
-            <div style={{ marginBottom: 12 }}>
-              <Button
-                type="button"
-                onClick={() => {
-                  setName('React GH Pages');
-                  setRepository('gitname/react-gh-pages');
-                }}
-              >
-                Preencher exemplo React Hello World
-              </Button>
-            </div>
-          ) : (
-            <div className={styles.list}>
+          {choice === 'github' ? (
+            <div className={styles.repos}>
               {repos.isPending ? <p className={styles.choiceText}>A carregar repositórios…</p> : null}
               {repos.error ? <InlineAlert>{launcherError(repos.error)}</InlineAlert> : null}
-              {repos.data?.warnings.map((warning) => (
-                <div key={warning} style={{ marginBottom: 8 }}>
-                  <InlineAlert variant="warning">{warning}</InlineAlert>
+              {warnings.length > 0 ? (
+                <div className={styles.warnings}>
+                  {warnings.map((warning) => (
+                    <InlineAlert key={warning} variant="warning">
+                      {warning}
+                    </InlineAlert>
+                  ))}
                 </div>
-              ))}
+              ) : null}
               {repos.isSuccess ? (
                 <div className={styles.picker}>
                   <Input
@@ -143,25 +149,29 @@ export function NewAppPage() {
                   />
                   <div className={styles.repoList}>
                     {shown.length === 0 ? (
-                      <p className={styles.choiceText}>Nenhum repositório</p>
+                      <p className={styles.empty}>Nenhum repositório</p>
                     ) : (
-                      shown.map((repo) => (
-                        <button
-                          key={`${repo.accountId}:${repo.fullName}`}
-                          type="button"
-                          className={styles.repo}
-                          onClick={() => fillFromRepo(repo)}
-                        >
-                          <span className={styles.repoName}>{repo.fullName}</span>
-                          <span className={styles.repoAccount}>{repo.accountLabel}</span>
-                        </button>
-                      ))
+                      shown.map((repo) => {
+                        const selected = repository === repo.fullName;
+                        return (
+                          <button
+                            key={`${repo.accountId}:${repo.fullName}`}
+                            type="button"
+                            className={cx(styles.repo, selected && styles.selected)}
+                            aria-current={selected ? 'true' : undefined}
+                            onClick={() => fillFromRepo(repo)}
+                          >
+                            <span className={styles.repoName}>{repo.fullName}</span>
+                            <span className={styles.repoAccount}>{repo.accountLabel}</span>
+                          </button>
+                        );
+                      })
                     )}
                   </div>
                 </div>
               ) : null}
             </div>
-          )}
+          ) : null}
           <FormRow label="Nome">
             <Input value={name} onChange={(event) => setName(event.target.value)} required />
           </FormRow>

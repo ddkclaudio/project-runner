@@ -24,12 +24,15 @@ function FormCardHeader({
   subtitle?: React.ReactNode;
   actions?: React.ReactNode;
 }) {
+  const hasTitle = title != null && title !== false && title !== '';
   return (
     <div className={styles.header}>
-      <div className={styles.headerTop}>
-        <h1 className={styles.title}>{title}</h1>
-        {actions ? <div className={styles.headerActions}>{actions}</div> : null}
-      </div>
+      {hasTitle || actions ? (
+        <div className={styles.headerTop}>
+          {hasTitle ? <h1 className={styles.title}>{title}</h1> : null}
+          {actions ? <div className={styles.headerActions}>{actions}</div> : null}
+        </div>
+      ) : null}
       {subtitle && <div className={styles.subtitle}>{subtitle}</div>}
     </div>
   );
