@@ -1165,12 +1165,21 @@ function OpenUrlButton({ literal }: { literal: string }) {
   );
 }
 
-function openLiteralFiles(literal: string, onError: (message: string) => void) {
+function openLiteralFiles(
+  literal: string,
+  onError: (message: string) => void,
+  onNote: (message: string) => void,
+) {
   if (!literal.trim()) {
     onError('Indique um arquivo para mostrar.');
     return;
   }
-  void revealFiles([literal]).catch((err) => onError(launcherError(err)));
+  void revealFiles([literal])
+    .then((note) => {
+      const text = note.trim();
+      if (text) onNote(text);
+    })
+    .catch((err) => onError(launcherError(err)));
 }
 
 function RevealFileButton({ literal }: { literal: string }) {
@@ -1187,7 +1196,7 @@ function RevealFileButton({ literal }: { literal: string }) {
       onPointerDown={(event) => event.stopPropagation()}
       onClick={(event) => {
         event.stopPropagation();
-        openLiteralFiles(literal, toast.error);
+        openLiteralFiles(literal, toast.error, toast.info);
       }}
       leftIcon={<IconFolder size={14} aria-hidden="true" />}
     />

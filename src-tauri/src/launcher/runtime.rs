@@ -4,6 +4,8 @@ use std::fs;
 use std::net::TcpStream;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+#[cfg(not(windows))]
+use std::process::Stdio;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -111,7 +113,8 @@ fn pid_alive(pid: u32) -> bool {
     if pid == 0 {
         return false;
     }
-    if cfg!(windows) {
+    #[cfg(windows)]
+    {
         Command::new("tasklist")
             .args(["/FI", &format!("PID eq {pid}"), "/NH"])
             .output()
@@ -120,8 +123,20 @@ fn pid_alive(pid: u32) -> bool {
                 text.contains(&pid.to_string()) && !text.contains("no tasks") && !text.contains("nenhuma")
             })
             .unwrap_or(false)
-    } else {
-        Path::new(&format!("/proc/{pid}")).exists()
+    }
+    #[cfg(target_os = "linux")]
+    {
+        Path::new(&format!("/proc/{pid}")).is_dir()
+    }
+    #[cfg(not(any(windows, target_os = "linux")))]
+    {
+        Command::new("kill")
+            .args(["-0", &pid.to_string()])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .map(|status| status.success())
+            .unwrap_or(false)
     }
 }
 
@@ -185,27 +200,13 @@ pub fn port_occupant(port: u16) -> Option<(u32, String)> {
         }
         parse_pid_name(&String::from_utf8_lossy(&output.stdout))
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "linux")]
     {
-        let output = Command::new("sh")
-            .args([
-                "-c",
-                &format!("ss -lptn 'sport = :{port}' 2>/dev/null | sed -n 's/.*pid=\\([0-9]*\\).*/\\1/p' | head -1"),
-            ])
-            .output()
-            .ok()?;
-        if !output.status.success() {
-            return None;
-        }
-        let pid: u32 = String::from_utf8_lossy(&output.stdout).trim().parse().ok()?;
-        let name = Command::new("ps")
-            .args(["-p", &pid.to_string(), "-o", "comm="])
-            .output()
-            .ok()
-            .map(|out| String::from_utf8_lossy(&out.stdout).trim().to_string())
-            .filter(|name| !name.is_empty())
-            .unwrap_or_else(|| "process".into());
-        Some((pid, name))
+        return occupant_via_ss(port).or_else(|| occupant_via_lsof(port));
+    }
+    #[cfg(not(any(windows, target_os = "linux")))]
+    {
+        occupant_via_lsof(port)
     }
 }
 
@@ -343,19 +344,14 @@ pub fn kill_pid_tree(pid: u32) -> Result<(), String> {
     if pid == 0 {
         return Err("PID inválido.".into());
     }
-    let ok = if cfg!(windows) {
-        Command::new("taskkill")
-            .args(["/PID", &pid.to_string(), "/T", "/F"])
-            .status()
-            .map(|status| status.success())
-            .unwrap_or(false)
-    } else {
-        Command::new("kill")
-            .args(["-TERM", &pid.to_string()])
-            .status()
-            .map(|status| status.success())
-            .unwrap_or(false)
-    };
+    #[cfg(windows)]
+    let ok = Command::new("taskkill")
+        .args(["/PID", &pid.to_string(), "/T", "/F"])
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false);
+    #[cfg(not(windows))]
+    let ok = unix_kill_tree(pid);
     if !ok {
         return Err(format!("Não foi possível terminar o PID {pid}."));
     }
@@ -442,6 +438,238 @@ fn parse_pid_name(text: &str) -> Option<(u32, String)> {
     }
 }
 
+#[cfg(target_os = "linux")]
+fn occupant_via_ss(port: u16) -> Option<(u32, String)> {
+    let output = Command::new("ss")
+        .args(["-H", "-lptn", &format!("sport = :{port}")])
+        .stderr(Stdio::null())
+        .output()
+        .ok()?;
+    parse_ss_listener(&String::from_utf8_lossy(&output.stdout)).or_else(|| {
+        let output = Command::new("ss")
+            .args(["-lptn", &format!("sport = :{port}")])
+            .stderr(Stdio::null())
+            .output()
+            .ok()?;
+        parse_ss_listener(&String::from_utf8_lossy(&output.stdout))
+    })
+}
+
+#[cfg(not(windows))]
+fn occupant_via_lsof(port: u16) -> Option<(u32, String)> {
+    let output = Command::new("lsof")
+        .args(["-nP", &format!("-iTCP:{port}"), "-sTCP:LISTEN", "-F", "pc"])
+        .stderr(Stdio::null())
+        .output()
+        .ok()?;
+    parse_lsof_listener(&String::from_utf8_lossy(&output.stdout))
+}
+
+#[cfg(any(test, target_os = "linux"))]
+fn parse_ss_listener(text: &str) -> Option<(u32, String)> {
+    for line in text.lines() {
+        let Some(pid_at) = line.find("pid=") else {
+            continue;
+        };
+        let pid_text = &line[pid_at + 4..];
+        let digits: String = pid_text.chars().take_while(|ch| ch.is_ascii_digit()).collect();
+        let Ok(pid) = digits.parse::<u32>() else {
+            continue;
+        };
+        if pid == 0 {
+            continue;
+        }
+        let before = &line[..pid_at];
+        let name = before
+            .rfind("((\"")
+            .and_then(|index| {
+                let start = index + 3;
+                let end = before[start..].find('"')?;
+                let name = &before[start..start + end];
+                if name.is_empty() { None } else { Some(name.to_string()) }
+            })
+            .unwrap_or_else(|| "process".into());
+        return Some((pid, name));
+    }
+    None
+}
+
+#[cfg(any(test, not(windows)))]
+fn parse_lsof_listener(text: &str) -> Option<(u32, String)> {
+    let mut pid = None;
+    let mut name = None;
+    for line in text.lines() {
+        let mut chars = line.chars();
+        let Some(kind) = chars.next() else {
+            continue;
+        };
+        let rest = chars.as_str().trim();
+        match kind {
+            'p' if pid.is_none() => pid = rest.parse().ok(),
+            'c' if name.is_none() && !rest.is_empty() => name = Some(rest.to_string()),
+            _ => {}
+        }
+        if let (Some(found), Some(command)) = (pid, name.clone()) {
+            if found != 0 {
+                return Some((found, command));
+            }
+        }
+    }
+    pid.filter(|found| *found != 0)
+        .map(|found| (found, name.unwrap_or_else(|| "process".into())))
+}
+
+#[cfg(unix)]
+fn unix_kill_tree(pid: u32) -> bool {
+    let descendants = descendant_pids(pid);
+    let mut ok = false;
+    for child in descendants.iter().rev() {
+        ok |= signal_pid(*child, false);
+    }
+    ok |= signal_pid(pid, true);
+    ok |= signal_pid(pid, false);
+    ok
+}
+
+#[cfg(unix)]
+fn signal_pid(pid: u32, group: bool) -> bool {
+    let target = if group {
+        format!("-{pid}")
+    } else {
+        pid.to_string()
+    };
+    Command::new("kill")
+        .args(["-TERM", &target])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false)
+}
+
+#[cfg(unix)]
+fn descendant_pids(root: u32) -> Vec<u32> {
+    let mut out = Vec::new();
+    let mut seen = std::collections::BTreeSet::from([root]);
+    let mut stack = child_pids(root);
+    while let Some(pid) = stack.pop() {
+        if pid == 0 || !seen.insert(pid) || out.len() > 256 {
+            continue;
+        }
+        stack.extend(child_pids(pid));
+        out.push(pid);
+    }
+    out
+}
+
+#[cfg(unix)]
+fn child_pids(parent: u32) -> Vec<u32> {
+    #[cfg(target_os = "linux")]
+    {
+        return linux_child_pids(parent);
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let Ok(output) = Command::new("pgrep").args(["-P", &parent.to_string()]).output() else {
+            return Vec::new();
+        };
+        String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .filter_map(|line| line.trim().parse().ok())
+            .collect()
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn linux_child_pids(parent: u32) -> Vec<u32> {
+    let mut kids = Vec::new();
+    let Ok(entries) = fs::read_dir("/proc") else {
+        return kids;
+    };
+    for entry in entries.flatten() {
+        let Some(text) = entry.file_name().to_str() else {
+            continue;
+        };
+        let Ok(pid) = text.parse::<u32>() else {
+            continue;
+        };
+        if proc_ppid(pid) == Some(parent) {
+            kids.push(pid);
+        }
+    }
+    kids
+}
+
+#[cfg(target_os = "linux")]
+fn proc_ppid(pid: u32) -> Option<u32> {
+    let stat = fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+    let rest = stat.rsplit_once(')')?.1.trim_start();
+    let mut fields = rest.split_whitespace();
+    let _state = fields.next()?;
+    fields.next()?.parse().ok()
+}
+
+#[cfg(unix)]
+fn process_comm(pid: u32) -> Option<String> {
+    #[cfg(target_os = "linux")]
+    {
+        let name = fs::read_to_string(format!("/proc/{pid}/comm")).ok()?;
+        let name = name.trim();
+        if name.is_empty() {
+            None
+        } else {
+            Some(name.to_string())
+        }
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let output = Command::new("ps")
+            .args(["-p", &pid.to_string(), "-o", "comm="])
+            .stderr(Stdio::null())
+            .output()
+            .ok()?;
+        let name = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        let base = name.rsplit('/').next().unwrap_or(&name).trim().to_string();
+        if base.is_empty() { None } else { Some(base) }
+    }
+}
+
+#[cfg(unix)]
+fn resolve_unix_descendant(parent_pid: u32) -> Option<(u32, String)> {
+    fn is_node(name: &str) -> bool {
+        name.to_ascii_lowercase().contains("node")
+    }
+    fn is_tool(name: &str) -> bool {
+        let name = name.to_ascii_lowercase();
+        name.contains("npm") || name.contains("npx") || name.contains("yarn") || name.contains("pnpm") || name.contains("bun")
+    }
+    let kids = child_pids(parent_pid);
+    let named: Vec<(u32, String)> = kids
+        .iter()
+        .copied()
+        .filter_map(|pid| process_comm(pid).map(|name| (pid, name)))
+        .collect();
+    if let Some(found) = named.iter().find(|(_, name)| is_node(name)) {
+        return Some(found.clone());
+    }
+    for (pid, _) in &named {
+        for grand in child_pids(*pid) {
+            if let Some(name) = process_comm(grand) {
+                if is_node(&name) {
+                    return Some((grand, name));
+                }
+            }
+        }
+    }
+    if let Some(found) = named.iter().find(|(_, name)| is_tool(name)) {
+        return Some(found.clone());
+    }
+    named
+        .into_iter()
+        .next()
+        .or_else(|| kids.first().copied().map(|pid| (pid, "process".into())))
+}
+
 /// Procura filho `node.exe` (ou descendente) do PID wrapper (cmd/npm).
 pub fn resolve_node_descendant(parent_pid: u32) -> Option<(u32, String)> {
     if parent_pid == 0 {
@@ -484,23 +712,7 @@ pub fn resolve_node_descendant(parent_pid: u32) -> Option<(u32, String)> {
     }
     #[cfg(not(windows))]
     {
-        let output = Command::new("pgrep")
-            .args(["-P", &parent_pid.to_string()])
-            .output()
-            .ok()?;
-        let text = String::from_utf8_lossy(&output.stdout);
-        for line in text.lines() {
-            if let Ok(pid) = line.trim().parse::<u32>() {
-                let name = fs::read_to_string(format!("/proc/{pid}/comm"))
-                    .unwrap_or_else(|_| "node".into())
-                    .trim()
-                    .to_string();
-                if name.contains("node") || name.contains("npm") {
-                    return Some((pid, name));
-                }
-            }
-        }
-        None
+        resolve_unix_descendant(parent_pid)
     }
 }
 
@@ -644,24 +856,19 @@ pub fn stop(root: &Path, repository: &str) -> Result<(), String> {
     let Some(item) = entry(root, repository) else {
         return Err("Esta app não está em execução.".into());
     };
-    let killed = if cfg!(windows) {
-        Command::new("taskkill")
-            .args(["/PID", &item.pid.to_string(), "/T", "/F"])
+    #[cfg(windows)]
+    let killed = Command::new("taskkill")
+        .args(["/PID", &item.pid.to_string(), "/T", "/F"])
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false)
+        || Command::new("taskkill")
+            .args(["/IM", &item.process_name, "/T", "/F"])
             .status()
             .map(|status| status.success())
-            .unwrap_or(false)
-            || Command::new("taskkill")
-                .args(["/IM", &item.process_name, "/T", "/F"])
-                .status()
-                .map(|status| status.success())
-                .unwrap_or(false)
-    } else {
-        Command::new("kill")
-            .args(["-TERM", &item.pid.to_string()])
-            .status()
-            .map(|status| status.success())
-            .unwrap_or(false)
-    };
+            .unwrap_or(false);
+    #[cfg(not(windows))]
+    let killed = unix_kill_tree(item.pid);
     let _ = clear(root, repository);
     if !killed {
         // Se a porta ainda responder, o kill falhou de facto.
@@ -746,6 +953,17 @@ mod tests {
         assert!(entry_owns_port(3000, None, Some(3000), 10, None));
         assert!(!entry_owns_port(3001, None, Some(3000), 10, None));
         assert!(!entry_owns_port(3000, None, None, 10, None));
+    }
+
+    #[test]
+    fn parses_ss_and_lsof_listeners() {
+        let ss = super::parse_ss_listener(
+            "LISTEN 0 128 127.0.0.1:3000 0.0.0.0:* users:((\"node\",pid=4321,fd=18))\n",
+        );
+        assert_eq!(ss, Some((4321, "node".into())));
+        let lsof = super::parse_lsof_listener("p4321\ncnode\nf18\n");
+        assert_eq!(lsof, Some((4321, "node".into())));
+        assert!(super::parse_ss_listener("LISTEN 0 128 127.0.0.1:3000 0.0.0.0:*\n").is_none());
     }
 
     #[test]

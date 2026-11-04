@@ -162,14 +162,55 @@ fn write_updater(exe: &Path, payload: &Path, backup: &Path) -> Result<(), String
         Command::new("cmd").args(["/C", "start", "", script.to_string_lossy().as_ref()]).spawn().map_err(|err| err.to_string())?;
     } else {
         let script = parent.join("Painel_Updater.sh");
+        let pid = std::process::id();
+        let exe_q = shell_single_quote(&exe.display().to_string());
         let body = format!(
-            "#!/bin/sh\nn=0\nwhile pgrep -f \"{exe}\" >/dev/null; do\n  n=$((n+1))\n  if [ \"$n\" -ge 120 ]; then exit 1; fi\n  sleep 1\ndone\nmkdir -p \"{backup}\"\ncp \"{exe}\" \"{backup}/\"\ncp \"{payload}\" \"{exe}\"\nchmod +x \"{exe}\"\n\"{exe}\" &\n",
-            exe = exe.display(),
-            backup = backup.display(),
-            payload = payload.display(),
+            "#!/bin/sh\n\
+             pid={pid}\n\
+             n=0\n\
+             while kill -0 \"$pid\" 2>/dev/null; do\n\
+               n=$((n+1))\n\
+               if [ \"$n\" -ge 120 ]; then exit 1; fi\n\
+               sleep 1\n\
+             done\n\
+             mkdir -p {backup}\n\
+             cp {exe_q} {backup}/\n\
+             cp {payload} {exe_q}\n\
+             chmod +x {exe_q}\n\
+             {relaunch}\n",
+            backup = shell_single_quote(&backup.display().to_string()),
+            payload = shell_single_quote(&payload.display().to_string()),
+            relaunch = relaunch_line(exe),
         );
         fs::write(&script, body).map_err(|err| err.to_string())?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = fs::set_permissions(&script, fs::Permissions::from_mode(0o755));
+        }
         Command::new("sh").arg(&script).spawn().map_err(|err| err.to_string())?;
     }
     Ok(())
+}
+
+fn shell_single_quote(text: &str) -> String {
+    format!("'{}'", text.replace('\'', "'\\''"))
+}
+
+fn relaunch_line(exe: &Path) -> String {
+    if cfg!(target_os = "macos") {
+        let mut cursor = exe.to_path_buf();
+        loop {
+            if cursor
+                .extension()
+                .is_some_and(|ext| ext.eq_ignore_ascii_case("app"))
+            {
+                return format!("open {}", shell_single_quote(&cursor.display().to_string()));
+            }
+            if !cursor.pop() {
+                break;
+            }
+        }
+    }
+    format!("{} &", shell_single_quote(&exe.display().to_string()))
 }

@@ -87,16 +87,21 @@ pub fn path_string() -> Result<String, String> {
 
 pub fn open_folder() -> Result<String, String> {
     let dir = ensure_logs_dir()?;
-    #[cfg(windows)]
-    {
-        std::process::Command::new("explorer")
-            .arg(&dir)
-            .spawn()
-            .map_err(|err| format!("Não foi possível abrir a pasta de logs: {err}"))?;
-    }
-    #[cfg(not(windows))]
-    {
-        let _ = std::process::Command::new("xdg-open").arg(&dir).spawn();
-    }
+    let mut command = if cfg!(windows) {
+        let mut command = std::process::Command::new("explorer");
+        command.arg(&dir);
+        command
+    } else if cfg!(target_os = "macos") {
+        let mut command = std::process::Command::new("open");
+        command.arg(&dir);
+        command
+    } else {
+        let mut command = std::process::Command::new("xdg-open");
+        command.arg(&dir);
+        command
+    };
+    command
+        .spawn()
+        .map_err(|err| format!("Não foi possível abrir a pasta de logs: {err}"))?;
     Ok(dir.display().to_string())
 }

@@ -264,9 +264,9 @@ export function communicationsOpenDir() {
   return invoke<void>('communications_open_dir');
 }
 
-/** Abre o explorador com estes arquivos selecionados. Cada entrada pode trazer vários caminhos separados por quebra de linha. */
+/** Abre o gestor de ficheiros com estes arquivos selecionados. Cada entrada pode trazer vários caminhos separados por quebra de linha. Devolve um aviso quando a pasta abre sem seleção. */
 export function revealFiles(paths: string[]) {
-  return invoke<void>('reveal_files', { paths });
+  return invoke<string>('reveal_files', { paths });
 }
 
 /** Quem ocupa a porta agora. `inUse` falso quando nem uma app do Painel nem outro processo a escuta. */

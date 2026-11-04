@@ -283,6 +283,11 @@ fn extract_zip(file: &Path, dir: &Path) -> Result<(), String> {
         }
         let mut outfile = fs::File::create(&dest).map_err(|err| err.to_string())?;
         io::copy(&mut entry, &mut outfile).map_err(|err| err.to_string())?;
+        #[cfg(unix)]
+        if let Some(mode) = entry.unix_mode() {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = fs::set_permissions(&dest, fs::Permissions::from_mode(mode));
+        }
     }
     Ok(())
 }
