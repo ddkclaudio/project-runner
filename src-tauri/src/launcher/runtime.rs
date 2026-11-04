@@ -587,9 +587,11 @@ fn linux_child_pids(parent: u32) -> Vec<u32> {
         return kids;
     };
     for entry in entries.flatten() {
-        let Some(text) = entry.file_name().to_str() else {
+        let name = entry.file_name();
+        let Some(text) = name.to_str() else {
             continue;
         };
+        let text = text.to_owned();
         let Ok(pid) = text.parse::<u32>() else {
             continue;
         };
