@@ -10,14 +10,12 @@
   flex-direction: column;
   transition:
     border-color var(--transition-base),
-    background var(--transition-base),
-    transform 120ms ease;
+    background var(--transition-base);
 }
 
 .card:hover {
   border-color: var(--border-hover);
   background: var(--bg-hover);
-  transform: translateY(-2px);
 }
 
 /* Menu aberto: sem transform (evita containing block) e acima dos demais cards */
@@ -49,11 +47,13 @@
   position: absolute;
   top: 12px;
   right: 12px;
-  color: var(--text-placeholder);
+  color: var(--text-muted);
   background: transparent;
   border: none;
   cursor: pointer;
-  padding: 4px;
+  min-width: 28px;
+  min-height: 28px;
+  padding: 6px;
   border-radius: var(--radius-sm);
   display: flex;
   align-items: center;
@@ -65,5 +65,5 @@
 
 .kebab:hover {
   background: var(--bg-active);
-  color: var(--text-primary);
+  color: var(--text-secondary);
 }

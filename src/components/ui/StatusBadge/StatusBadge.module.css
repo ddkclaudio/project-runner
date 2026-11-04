@@ -15,7 +15,7 @@
 
 .success {
   background: color-mix(in srgb, var(--brand-green) 12%, transparent);
-  color: var(--brand-green);
+  color: var(--text-brand);
 }
 
 .warning {

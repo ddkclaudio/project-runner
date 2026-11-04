@@ -56,7 +56,7 @@
 }
 .pillActive {
   border-color: var(--border-input);
-  color: var(--text-primary);
+  color: var(--text-secondary);
 }
 
 .viewToggle {

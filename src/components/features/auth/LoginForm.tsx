@@ -51,6 +51,7 @@ export function LoginForm() {
             <Input
               id="login-email"
               type="email"
+              spellCheck={false}
               label="E-mail"
               placeholder="seu@email.com"
               value={email}
@@ -75,7 +76,7 @@ export function LoginForm() {
             />
           </div>
           <div className={styles.submitWrapper}>
-            <Button type="submit" variant="primary" size="lg" loading={loading} style={{ width: '100%' }}>
+            <Button type="submit" variant="secondary" size="lg" loading={loading} style={{ width: '100%' }}>
               Entrar
             </Button>
           </div>

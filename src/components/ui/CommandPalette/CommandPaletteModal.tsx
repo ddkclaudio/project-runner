@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { IconSearch } from '@tabler/icons-react';
 import { CommandItem } from './CommandItem';
 import { CommandGroup } from './CommandGroup';
@@ -63,7 +64,7 @@ export function CommandPaletteModal({
     }
   }
 
-  return (
+  return createPortal(
     <div
       className={styles.overlay}
       role="dialog"
@@ -128,6 +129,7 @@ export function CommandPaletteModal({
           )}
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

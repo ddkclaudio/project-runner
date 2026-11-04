@@ -7,7 +7,7 @@
 .label {
   font-size: 13px;
   font-weight: 500;
-  color: var(--text-primary);
+  color: var(--text-secondary);
   margin-bottom: 6px;
 }
 
@@ -112,10 +112,10 @@
   cursor: not-allowed;
 }
 .rightActions button[data-variant='primary']:not(:disabled) {
-  color: var(--brand-green);
+  color: var(--text-brand);
 }
 .rightActions button[data-variant='primary']:hover:not(:disabled) {
-  color: var(--brand-green);
+  color: var(--text-brand);
   filter: brightness(1.1);
 }
 

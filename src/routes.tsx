@@ -6,7 +6,18 @@ import { RegisterForm } from '@/components/features/auth/RegisterForm';
 import { ForgotPasswordForm } from '@/components/features/auth/ForgotPasswordForm';
 import { ResetPasswordForm } from '@/components/features/auth/ResetPasswordForm';
 import { HomePage } from '@/pages/HomePage';
+import { CommunicationsPage } from '@/pages/CommunicationsPage';
 import { ComponentsPage } from '@/pages/ComponentsPage';
+import { NewAppPage } from '@/pages/NewAppPage';
+import { AppPage } from '@/pages/AppPage';
+import { CatalogPage } from '@/pages/CatalogPage';
+import { ProfileSettingsPage } from '@/pages/ProfileSettingsPage';
+import { LegacyAppRedirect, LegacyFolderRedirect } from '@/pages/LegacyAppRedirect';
+import { NewOrgPage } from '@/pages/NewOrgPage';
+import { OrgsPage } from '@/pages/OrgsPage';
+import { OrgMembersPage } from '@/pages/OrgMembersPage';
+import { AcceptInvitePage } from '@/pages/AcceptInvitePage';
+import { OrgProvider } from '@/contexts/OrgContext';
 
 function BootScreen() {
   return <div style={{ minHeight: '100dvh', background: 'var(--bg-base)' }} />;
@@ -18,9 +29,11 @@ export function RequireAuth() {
   if (loading) return <BootScreen />;
   if (!user) return <Navigate to="/login" replace state={{ from: location.pathname }} />;
   return (
-    <AppShell>
-      <Outlet />
-    </AppShell>
+    <OrgProvider>
+      <AppShell>
+        <Outlet />
+      </AppShell>
+    </OrgProvider>
   );
 }
 
@@ -45,6 +58,28 @@ export const routes = [
     element: <RequireAuth />,
     children: [
       { path: '/', element: <HomePage /> },
+      { path: '/comunicacoes', element: <CommunicationsPage /> },
+      { path: '/catalog', element: <CatalogPage mode="remote" /> },
+      { path: '/catalog/files', element: <CatalogPage mode="files" /> },
+      { path: '/settings', element: <Navigate to="/settings/profile" replace /> },
+      { path: '/settings/profile', element: <ProfileSettingsPage /> },
+      { path: '/settings/cloudflare', element: <ProfileSettingsPage /> },
+      { path: '/settings/cloudflare/:accountId', element: <ProfileSettingsPage /> },
+      { path: '/settings/github', element: <ProfileSettingsPage /> },
+      { path: '/settings/github/:accountId', element: <ProfileSettingsPage /> },
+      { path: '/settings/appearance', element: <Navigate to="/settings/profile" replace /> },
+      { path: '/settings/launch', element: <Navigate to="/settings/profile" replace /> },
+      { path: '/apps/new', element: <NewAppPage /> },
+      { path: '/app/:folder', element: <AppPage /> },
+      { path: '/app/:folder/:section', element: <AppPage /> },
+      { path: '/apps/f/:folder', element: <LegacyFolderRedirect /> },
+      { path: '/apps/f/:folder/:section', element: <LegacyFolderRedirect /> },
+      { path: '/apps/:owner/:repo', element: <LegacyAppRedirect /> },
+      { path: '/apps/:owner/:repo/:section', element: <LegacyAppRedirect /> },
+      { path: '/orgs', element: <OrgsPage /> },
+      { path: '/orgs/new', element: <NewOrgPage /> },
+      { path: '/orgs/invite', element: <AcceptInvitePage /> },
+      { path: '/orgs/:orgId/members', element: <OrgMembersPage /> },
       { path: '/components', element: <ComponentsPage /> },
     ],
   },

@@ -39,7 +39,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  color: var(--brand-green);
+  color: var(--text-brand);
 }
 
 @media (max-width: 767px) {
@@ -63,6 +63,8 @@
   font-weight: 600;
   color: var(--text-primary);
   overflow-wrap: anywhere;
+  text-wrap: balance;
+  scroll-margin-top: 16px;
 }
 
 .subtitle {

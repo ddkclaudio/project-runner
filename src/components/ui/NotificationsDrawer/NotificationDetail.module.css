@@ -119,7 +119,7 @@
   margin: 0;
   font-size: 14px;
   line-height: 1.5;
-  color: var(--text-primary);
+  color: var(--text-secondary);
   overflow-wrap: anywhere;
 }
 
@@ -188,7 +188,7 @@
 .metaValue {
   font-size: 13px;
   line-height: 1.4;
-  color: var(--text-primary);
+  color: var(--text-secondary);
   overflow-wrap: anywhere;
 }
 
@@ -212,7 +212,7 @@
 
 .copyBtn:hover:not(:disabled) {
   background: var(--bg-active);
-  color: var(--text-primary);
+  color: var(--text-secondary);
 }
 
 .copyBtn:disabled {
@@ -246,7 +246,7 @@
 }
 
 .contactLink:disabled {
-  color: var(--text-primary);
+  color: var(--text-secondary);
   text-decoration: none;
   cursor: default;
   font-weight: 500;
@@ -266,7 +266,7 @@
   border-radius: var(--radius-md);
   border: 1px solid var(--border-subtle);
   background: var(--bg-subtle, var(--bg-active));
-  color: var(--text-primary);
+  color: var(--text-secondary);
   font-size: 13px;
   font-weight: 600;
   cursor: pointer;
@@ -317,7 +317,7 @@
   margin: 0;
   font-size: 13px;
   font-weight: 650;
-  color: var(--text-primary);
+  color: var(--text-secondary);
 }
 
 .dossierHint {
@@ -341,7 +341,7 @@
 
 .markdown {
   line-height: 1.6;
-  color: var(--text-primary);
+  color: var(--text-secondary);
   font-size: 13px;
   overflow-wrap: anywhere;
 }
@@ -357,7 +357,7 @@
 
 .markdown strong {
   font-weight: 650;
-  color: var(--text-primary);
+  color: var(--text-secondary);
 }
 
 .markdown h1,
@@ -367,7 +367,7 @@
   font-weight: 650;
   line-height: 1.3;
   margin: 1em 0 0.35em;
-  color: var(--text-primary);
+  color: var(--text-secondary);
   letter-spacing: -0.01em;
 }
 

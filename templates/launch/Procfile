@@ -1,0 +1,3 @@
+# Procfile (Heroku-style). O Painel prefere o processo "web".
+web: npm start
+# worker: node worker.js

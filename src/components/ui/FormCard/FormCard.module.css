@@ -11,11 +11,28 @@
   border-bottom: 1px solid var(--border-subtle);
 }
 
+.headerTop {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.headerActions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
 .title {
   font-size: 15px;
   font-weight: 600;
   color: var(--text-primary);
-  margin-bottom: 6px;
+  margin-bottom: 0;
+}
+
+.headerTop + .subtitle {
+  margin-top: 6px;
 }
 
 .subtitle {
@@ -58,7 +75,7 @@
 .rowLabel {
   font-size: 13px;
   font-weight: 500;
-  color: var(--text-primary);
+  color: var(--text-secondary);
   padding-top: 7px;
   line-height: 1.4;
 }

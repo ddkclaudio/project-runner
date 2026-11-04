@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "start": "npm start",
+  "cwd": ".",
+  "url": "http://localhost:3000",
+  "env": {
+    "NODE_ENV": "production"
+  },
+  "_comment": "Copie para a raiz do repo. 'url' é o link Abrir no browser após Start. Remova _comment em produção."
+}

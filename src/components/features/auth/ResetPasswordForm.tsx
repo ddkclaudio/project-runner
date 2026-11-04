@@ -64,6 +64,7 @@ export function ResetPasswordForm() {
               <div className={styles.field}>
                 <Input
                   type="email"
+                  spellCheck={false}
                   label="E-mail"
                   value={email}
                   onChange={(e) => setEmail(e.target.value.toLowerCase())}
@@ -104,9 +105,11 @@ export function ResetPasswordForm() {
                   disabled={loading}
                 />
               </div>
-              <Button type="submit" variant="primary" size="lg" loading={loading} style={{ width: '100%' }}>
-                Guardar senha
-              </Button>
+              {(password.trim() || confirm.trim()) ? (
+                <Button type="submit" variant="secondary" size="lg" loading={loading} style={{ width: '100%' }}>
+                  Salvar
+                </Button>
+              ) : null}
             </>
           )}
           <AuthCard.Hint>

@@ -68,6 +68,7 @@ export function ForgotPasswordForm() {
             <div className={styles.field}>
               <Input
                 type="email"
+                spellCheck={false}
                 label="E-mail"
                 leftIcon={<IconMail size={15} />}
                 placeholder="seu@email.com"
@@ -80,7 +81,7 @@ export function ForgotPasswordForm() {
             </div>
           )}
           {!sent ? (
-            <Button type="submit" variant="primary" size="lg" loading={loading} style={{ width: '100%' }}>
+            <Button type="submit" variant="secondary" size="lg" loading={loading} style={{ width: '100%' }}>
               Gerar código
             </Button>
           ) : null}

@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useEffect, useLayoutEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { IconSelector } from '@tabler/icons-react';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { useMinimumLoading } from '@/hooks/useMinimumLoading';
@@ -139,27 +140,31 @@ export function SwitcherDropdown({
         )}
       </button>
 
-      {open && !showSkeleton && (
-        <SwitcherPanel
-          panelLabel={panelLabel}
-          searchPlaceholder={searchPlaceholder}
-          searchAriaLabel={searchAriaLabel}
-          items={items}
-          selectedId={selectedId}
-          onSelect={handleSelect}
-          actions={actions.map((action) => ({
-            ...action,
-            onClick: () => {
-              close();
-              action.onClick();
-            },
-          }))}
-          filterItems={filterItems}
-          getEmptyMessage={getEmptyMessage}
-          variant="floating"
-          style={pos ? { top: pos.top, left: pos.left } : undefined}
-        />
-      )}
+      {open && !showSkeleton && pos
+        ? createPortal(
+            <SwitcherPanel
+              panelLabel={panelLabel}
+              searchPlaceholder={searchPlaceholder}
+              searchAriaLabel={searchAriaLabel}
+              items={items}
+              selectedId={selectedId}
+              onSelect={handleSelect}
+              actions={actions.map((action) => ({
+                ...action,
+                onClick: () => {
+                  close();
+                  action.onClick();
+                },
+              }))}
+              filterItems={filterItems}
+              getEmptyMessage={getEmptyMessage}
+              variant="floating"
+              style={{ top: pos.top, left: pos.left }}
+              onMouseDown={(event) => event.stopPropagation()}
+            />,
+            document.body,
+          )
+        : null}
     </div>
   );
 }

@@ -52,7 +52,7 @@ export function SearchableListPanel<T>({
         {items.length === 0 ? (
           <p className={styles.empty}>{emptyMessage}</p>
         ) : (
-          items.map((item) => renderItem(item))
+          items.map((item, index) => <React.Fragment key={index}>{renderItem(item)}</React.Fragment>)
         )}
       </div>
     </div>

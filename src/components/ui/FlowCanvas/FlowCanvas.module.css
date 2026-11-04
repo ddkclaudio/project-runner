@@ -76,7 +76,7 @@
 
 .canvas :global(.react-flow__controls-button):hover {
   background: var(--bg-active);
-  color: var(--text-primary);
+  color: var(--text-secondary);
 }
 
 .canvas :global(.react-flow__controls-button svg) {
@@ -106,7 +106,7 @@
   background: var(--bg-surface);
   border: 1px solid var(--border-default);
   border-radius: var(--radius-lg);
-  color: var(--text-primary);
+  color: var(--text-secondary);
   font-size: 12px;
   font-weight: 500;
   padding: 10px 14px;

@@ -1,9 +1,50 @@
+.skip {
+  position: absolute;
+  left: 12px;
+  top: 8px;
+  z-index: var(--z-toast);
+  padding: 8px 12px;
+  background: var(--bg-elevated);
+  color: var(--text-secondary);
+  border: 1px solid var(--border-input);
+  border-radius: var(--radius-md);
+  transform: translateY(-160%);
+}
+
+.skip:focus {
+  transform: none;
+}
+
 .shell {
   display: flex;
   flex-direction: column;
   height: 100dvh;
   background: var(--bg-base);
   overflow: hidden;
+  position: relative;
+}
+
+.atmosphere,
+.atmosphereScrim {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.atmosphere {
+  background-size: cover;
+  background-position: center;
+  z-index: 0;
+}
+
+.atmosphereScrim {
+  background: var(--bg-base);
+  z-index: 0;
+}
+
+.topbarHost {
+  position: relative;
+  z-index: var(--z-sticky);
 }
 
 .body {
@@ -12,14 +53,29 @@
   overflow: hidden;
   position: relative;
   min-height: 0;
+  z-index: 1;
 }
 
 .main {
   flex: 1;
   overflow-y: auto;
   overflow-x: hidden;
+  overscroll-behavior: contain;
   padding: var(--main-padding-y) var(--main-padding-x) 60px;
   min-width: 0;
+  position: relative;
+  z-index: 1;
+}
+
+/* Boot / empty org states — same centered column as PageShell */
+.mainMessage {
+  width: 100%;
+  max-width: var(--page-max-width);
+  margin: 0 auto;
+  padding: var(--space-8) 0;
+  font-size: var(--font-base);
+  color: var(--text-muted);
+  line-height: 1.5;
 }
 
 /* Inbox/conversas: sem folga vertical extra */

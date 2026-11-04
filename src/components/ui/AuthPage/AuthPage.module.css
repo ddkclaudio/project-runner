@@ -1,10 +1,14 @@
 .page {
-  min-height: 100vh;
-  min-height: 100dvh;
+  position: relative;
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 100%;
+  height: 100dvh;
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 24px;
+  /* Reserva a titlebar e compensa o -14px dos WindowControls (igual ao Topbar). */
+  padding: var(--topbar-height, 44px) 24px 24px;
   background:
     radial-gradient(
       ellipse 80% 60% at 50% -10%,
@@ -15,10 +19,46 @@
   min-width: 0;
 }
 
+.page > :not(.titlebar) {
+  flex: 0 1 auto;
+  width: 100%;
+  max-width: 400px;
+  min-width: 0;
+  max-height: 100%;
+}
+
+.titlebar {
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: var(--topbar-height, 44px);
+  display: flex;
+  align-items: stretch;
+  justify-content: flex-end;
+  padding-inline: 14px;
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 100%;
+  z-index: 20;
+}
+
+.titlebarSpacer {
+  flex: 1;
+  min-width: 0;
+}
+
 @media (max-width: 767px) {
   .page {
-    padding: 16px;
-    align-items: flex-start;
-    padding-top: 48px;
+    padding: var(--topbar-height, 44px) 16px 16px;
+  }
+}
+
+/* Janelas baixas: compacta o card em vez de gerar scroll. */
+@media (max-height: 720px) {
+  .page {
+    padding-block: var(--topbar-height, 44px) 12px;
+  }
+
+  .page > :not(.titlebar) {
+    align-self: center;
   }
 }

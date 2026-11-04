@@ -10,5 +10,5 @@
 }
 
 .feedback:hover {
-  color: var(--text-primary);
+  color: var(--text-secondary);
 }

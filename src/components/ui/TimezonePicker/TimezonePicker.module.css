@@ -164,7 +164,7 @@
 }
 
 .check {
-  color: var(--brand-green);
+  color: var(--text-brand);
   flex-shrink: 0;
   margin-left: var(--space-2);
 }

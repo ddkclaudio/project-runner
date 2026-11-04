@@ -1,4 +1,4 @@
-import { IconHome, IconComponents, IconLogout } from '@tabler/icons-react';
+import { IconHome, IconBooks, IconSettings, IconComponents, IconLogout } from '@tabler/icons-react';
 import React from 'react';
 import { shortcutKeys } from '@/lib/nav-shortcuts';
 
@@ -24,12 +24,30 @@ export const GROUP_ORDER: CommandGroup[] = ['shortcuts', 'actions'];
 export const COMMANDS: Command[] = [
   {
     id: 'nav-home',
-    label: 'Início',
+    label: 'Biblioteca',
     group: 'shortcuts',
     icon: React.createElement(IconHome, { size: 15 }),
     shortcut: shortcutKeys('nav-home'),
     keywords: ['home', 'inicio', 'início'],
     href: '/',
+  },
+  {
+    id: 'nav-catalog',
+    label: 'Catálogo',
+    group: 'shortcuts',
+    icon: React.createElement(IconBooks, { size: 15 }),
+    shortcut: shortcutKeys('nav-catalog'),
+    keywords: ['catalogo', 'catálogo', 'apps'],
+    href: '/catalog',
+  },
+  {
+    id: 'nav-settings',
+    label: 'Definições',
+    group: 'shortcuts',
+    icon: React.createElement(IconSettings, { size: 15 }),
+    shortcut: shortcutKeys('nav-settings'),
+    keywords: ['settings', 'definições', 'configurações'],
+    href: '/settings/profile',
   },
   {
     id: 'nav-components',

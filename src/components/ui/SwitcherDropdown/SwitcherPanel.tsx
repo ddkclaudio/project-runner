@@ -26,6 +26,7 @@ export interface SwitcherPanelProps {
   className?: string;
   autoFocus?: boolean;
   style?: React.CSSProperties;
+  onMouseDown?: React.MouseEventHandler<HTMLDivElement>;
 }
 
 export function defaultFilter(items: SwitcherItem[], query: string): SwitcherItem[] {
@@ -67,6 +68,7 @@ export function SwitcherPanel({
   className,
   autoFocus = false,
   style,
+  onMouseDown,
 }: SwitcherPanelProps) {
   const [query, setQuery] = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
@@ -87,6 +89,7 @@ export function SwitcherPanel({
       aria-label={panelLabel}
       aria-busy={showSkeleton || undefined}
       style={style}
+      onMouseDown={onMouseDown}
     >
       <div className={styles.search}>
         <IconSearch size={13} className={styles.searchIcon} aria-hidden="true" />
@@ -112,6 +115,7 @@ export function SwitcherPanel({
           ) : (
             filtered.map((item) => {
               const isSelected = selectedId === item.id;
+              const disabled = Boolean(item.disabled);
               return (
                 <button
                   key={item.id}
@@ -119,7 +123,11 @@ export function SwitcherPanel({
                   className={cx(styles.item, isSelected && styles.itemActive)}
                   role="option"
                   aria-selected={isSelected}
-                  onClick={() => onSelect(item.id)}
+                  disabled={disabled}
+                  aria-disabled={disabled || undefined}
+                  onClick={() => {
+                    if (!disabled) onSelect(item.id);
+                  }}
                 >
                   {item.leading && <span className={styles.itemLeading}>{item.leading}</span>}
                   <span className={styles.itemLabel}>{item.label}</span>

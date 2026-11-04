@@ -1,15 +1,23 @@
-import { invoke } from '@tauri-apps/api/core';
+import { loggedInvoke as invoke } from '@/lib/activity-log';
 
 export type AuthUser = {
   uid: string;
   email: string;
   displayName: string;
   photoURL?: string | null;
+  activeOrgId?: string | null;
 };
 
 export type AuthSession = {
   token: string;
   user: AuthUser;
+  activeOrg?: {
+    id: string;
+    name: string;
+    slug: string;
+    role: string;
+    isOwner: boolean;
+  } | null;
 };
 
 export const SESSION_STORAGE_KEY = 'painel-session';
@@ -28,6 +36,10 @@ export function logoutAccount(token: string) {
 
 export function currentAccount(token: string) {
   return invoke<AuthUser | null>('current_user', { token });
+}
+
+export function updateProfile(token: string, name: string) {
+  return invoke<AuthUser>('update_profile', { token, name });
 }
 
 export function requestPasswordReset(email: string) {

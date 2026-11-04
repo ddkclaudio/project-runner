@@ -9,6 +9,8 @@ export type ShortcutSpec = {
 
 export const SHORTCUT_SPECS: ShortcutSpec[] = [
   { id: 'nav-home', keys: ['mod', 'H'], code: 'KeyH', mod: true, href: '/' },
+  { id: 'nav-catalog', keys: ['mod', 'L'], code: 'KeyL', mod: true, href: '/catalog' },
+  { id: 'nav-settings', keys: ['mod', ','], code: 'Comma', mod: true, href: '/settings/profile' },
   { id: 'nav-components', keys: ['mod', 'D'], code: 'KeyD', mod: true, href: '/components' },
   { id: 'shortcuts', keys: ['mod', '/'], code: 'Slash', mod: true },
 ];

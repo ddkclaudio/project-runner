@@ -1,0 +1,10 @@
+# Exemplo mínimo. Para comando custom, prefira painel.launch.json com start = "python -m uvicorn app:app".
+[project]
+name = "my-app"
+version = "0.1.0"
+requires-python = ">=3.10"
+dependencies = []
+
+[project.scripts]
+# Opcional: entry point instalável
+# my-app = "my_app:main"

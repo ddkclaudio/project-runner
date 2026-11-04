@@ -38,6 +38,30 @@
   transform: translateX(0);
 }
 
+.panelDock {
+  position: relative;
+  top: auto;
+  right: auto;
+  bottom: auto;
+  z-index: 1;
+  flex: 0 0 auto;
+  width: 0;
+  min-width: 0;
+  height: 100%;
+  transform: none;
+  border-left: none;
+  box-shadow: none;
+  pointer-events: none;
+  transition: width var(--transition-slow), transform var(--transition-slow);
+}
+
+.panelDockOpen {
+  width: min(460px, 100%);
+  border-left: 1px solid var(--border-subtle);
+  box-shadow: var(--shadow-drawer);
+  pointer-events: auto;
+}
+
 .header {
   display: flex;
   align-items: center;
@@ -75,7 +99,7 @@
   font-size: var(--font-lg, 15px);
   font-weight: 650;
   letter-spacing: -0.02em;
-  color: var(--text-primary);
+  color: var(--text-secondary);
   line-height: 1.35;
   overflow: hidden;
 }
@@ -113,7 +137,7 @@
 
 .iconBtn:hover {
   background: var(--bg-active);
-  color: var(--text-primary);
+  color: var(--text-secondary);
 }
 
 .iconBtn:focus-visible {
@@ -141,11 +165,11 @@
 }
 
 .iconBtnSuccess {
-  color: var(--brand-green);
+  color: var(--text-brand);
 }
 
 .iconBtnSuccess:hover {
-  color: var(--brand-green);
+  color: var(--text-brand);
 }
 
 .iconBtnDanger {
@@ -203,6 +227,22 @@
   .panel {
     width: 100%;
     border-left: none;
+  }
+
+  .panelDock,
+  .panelDockOpen {
+    position: fixed;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    z-index: calc(var(--z-modal) + 1);
+    height: auto;
+    width: 100%;
+    transform: translateX(100%);
+  }
+
+  .panelDockOpen {
+    transform: translateX(0);
   }
 
   .header {
