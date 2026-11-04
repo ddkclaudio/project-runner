@@ -58,6 +58,7 @@ import {
 } from '@/lib/launcher-api';
 import {
   applyComputed,
+  bindLaunchQueryClient,
   commit as commitLaunch,
   isLaunchConfigDirty,
   launchConfigQueryKey,
@@ -491,6 +492,19 @@ function liveApp(apps: AppView[], node: CommunicationNode) {
   );
 }
 
+/** O nome no grafo acompanha a biblioteca. Sem mudança, devolve o mesmo objeto. */
+function withLiveAppNames(current: Graph, apps: AppView[]): Graph {
+  let changed = false;
+  const nodes = current.nodes.map((node) => {
+    if (!isAppNode(node)) return node;
+    const live = liveApp(apps, node)?.name?.trim();
+    if (!live || live === node.name) return node;
+    changed = true;
+    return { ...node, name: live };
+  });
+  return changed ? { ...current, nodes } : current;
+}
+
 function anchorStyle(x: number, y: number, height = 280) {
   return {
     left: Math.max(8, Math.min(x, window.innerWidth - 300)),
@@ -851,10 +865,18 @@ function dirtyLaunchIds(graph: Graph, apps: AppView[]): string[] {
 }
 
 function destinationDrift(graph: Graph, apps: AppView[]): boolean {
-  if (!graph.edges.some((edge) => edge.targetField?.trim())) return false;
+  const linked = graph.edges.some((edge) => {
+    const key = edge.targetField?.trim() ?? '';
+    return Boolean(key) && !isRetiredLaunchField(key);
+  });
+  if (!linked) return false;
   const plan = planWrites(graph, apps);
-  if (!plan.ok) return true;
-  return plan.writes.some((write) => readField(write.appId, write.key) !== write.value);
+  // Uma cadeia que ainda não dá para calcular não é uma gravação pendente: senão Salvar não sai do lugar.
+  if (!plan.ok) return false;
+  return plan.writes.some((write) => {
+    if (!readSnapshot(write.appId) && readDraft(write.appId) === undefined) return false;
+    return (readField(write.appId, write.key) ?? '').trim() !== write.value.trim();
+  });
 }
 
 function planWrites(graph: Graph, apps: AppView[]): WritePlan {
@@ -962,6 +984,15 @@ async function warmGraph(client: QueryClient, graph: Graph, apps: AppView[]) {
     const root = chainAppNode(graph, node.id);
     if (!root) continue;
     const live = liveApp(apps, root);
+    if (!live || live.status === 'not_installed') continue;
+    ids.add(appId(live));
+  }
+  for (const edge of graph.edges) {
+    const key = edge.targetField?.trim() ?? '';
+    if (!key || isRetiredLaunchField(key)) continue;
+    const dest = graph.nodes.find((node) => node.id === edge.target);
+    if (!dest || !isAppNode(dest)) continue;
+    const live = liveApp(apps, dest);
     if (!live || live.status === 'not_installed') continue;
     ids.add(appId(live));
   }
@@ -1745,6 +1776,7 @@ function PortModal({ onConfirm, onClose }: { onConfirm: (port: number) => void; 
 
 function CommunicationsCanvas({ orgId, initial }: { orgId: string; initial: Graph }) {
   const queryClient = useQueryClient();
+  bindLaunchQueryClient(queryClient);
   const navigate = useNavigate();
   const toast = useToast();
   const mutations = useLibraryMutations();
@@ -1756,6 +1788,7 @@ function CommunicationsCanvas({ orgId, initial }: { orgId: string; initial: Grap
   const apps = library.data?.apps ?? EMPTY_APPS;
   const [graph, setGraph] = useState(initial);
   const [baseline, setBaseline] = useState(() => signature(initial));
+  const baselineRef = useRef(baseline);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [nodes, setNodes] = useState<FlowNode[]>(() => toFlow(initial, [], null));
   const [edges, setEdges] = useState(() => toEdges(initial));
@@ -1890,20 +1923,15 @@ function CommunicationsCanvas({ orgId, initial }: { orgId: string; initial: Grap
 
   useEffect(() => {
     const current = graphRef.current;
-    let changed = false;
-    const nodes = current.nodes.map((node) => {
-      if (!isAppNode(node)) return node;
-      const live = liveApp(apps, node)?.name?.trim();
-      if (!live || live === node.name) return node;
-      changed = true;
-      return { ...node, name: live };
-    });
-    if (!changed) return;
-    const next = { ...current, nodes };
-    const clean = signature(current) === baseline;
+    const next = withLiveAppNames(current, apps);
+    if (next === current) return;
+    const clean = signature(current) === baselineRef.current;
     graphRef.current = next;
     setGraph(next);
-    if (clean) setBaseline(signature(next));
+    if (!clean) return;
+    const sig = signature(next);
+    baselineRef.current = sig;
+    setBaseline(sig);
   }, [apps, baseline]);
 
   useEffect(() => {
@@ -2602,21 +2630,29 @@ function CommunicationsCanvas({ orgId, initial }: { orgId: string; initial: Grap
 
   async function save() {
     if (!needsSave || saving || runningRef.current) return;
+    bindLaunchQueryClient(queryClient);
     const current = graphRef.current;
-    const hasTargets = current.edges.some((edge) => edge.targetField?.trim());
+    const hasWrites = current.edges.some((edge) => {
+      const key = edge.targetField?.trim() ?? '';
+      return Boolean(key) && !isRetiredLaunchField(key);
+    });
     setSaving(true);
     setError('');
     try {
-      if (hasTargets) {
+      let planApps = appsRef.current;
+      if (hasWrites) {
         const snapshot = await libraryList();
-        await warmGraph(queryClient, current, snapshot.apps);
-        const plan = planWrites(current, snapshot.apps);
+        planApps = snapshot.apps;
+        await warmGraph(queryClient, current, planApps);
+        const plan = planWrites(current, planApps);
+        const launchIds = new Set([
+          ...dirtyLaunchIds(current, planApps),
+          ...dirtyLaunchIds(current, appsRef.current),
+        ]);
+        for (const id of launchIds) await commitLaunch(id);
         if (!plan.ok) {
           toast.error(plan.message);
-          return;
-        }
-        for (const id of dirtyLaunchIds(current, snapshot.apps)) await commitLaunch(id);
-        if (plan.writes.length > 0) {
+        } else if (plan.writes.length > 0) {
           const ready = await installMissing(plan.writes);
           if (!ready) return;
           for (const write of ready) {
@@ -2627,13 +2663,14 @@ function CommunicationsCanvas({ orgId, initial }: { orgId: string; initial: Grap
       } else {
         for (const id of dirtyLaunchIds(current, appsRef.current)) await commitLaunch(id);
       }
-      if (signature(graphRef.current) !== baseline) {
-        const saved = normalize(await communicationsSave(graphRef.current));
-        graphRef.current = saved;
-        setGraph(saved);
-        setBaseline(signature(saved));
-        queryClient.setQueryData(['launcher', 'communications', orgId], saved);
-      }
+      const pending = withLiveAppNames(graphRef.current, appsRef.current);
+      const saved = withLiveAppNames(normalize(await communicationsSave(pending)), appsRef.current);
+      const sig = signature(saved);
+      baselineRef.current = sig;
+      graphRef.current = saved;
+      setGraph(saved);
+      setBaseline(sig);
+      queryClient.setQueryData(['launcher', 'communications', orgId], saved);
     } catch (err) {
       setError(launcherError(err));
     } finally {
