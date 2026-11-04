@@ -785,9 +785,10 @@ pub fn communications_open_dir(paths: State<'_, AppPaths>) -> Result<(), String>
     launch::reveal_dir(&root)
 }
 
-/// Abre o explorador com os arquivos selecionados. Vários caminhos no mesmo texto vão separados por quebra de linha.
+/// Abre o gestor de ficheiros com os arquivos selecionados. Vários caminhos no mesmo texto vão separados por quebra de linha.
+/// String vazia quando a seleção correu. Texto quando só foi possível abrir a pasta.
 #[tauri::command]
-pub fn reveal_files(paths: Vec<String>) -> Result<(), String> {
+pub fn reveal_files(paths: Vec<String>) -> Result<String, String> {
     launch::reveal_files(&paths)
 }
 

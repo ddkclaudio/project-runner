@@ -235,18 +235,51 @@ pub fn resolve_apps_root() -> PathBuf {
     user_data_dir()
 }
 
-/// `%APPDATA%\com.local.painel` no Windows. Conta, orgs e bootstrap.
+/// `%APPDATA%\com.local.painel` no Windows,
+/// `~/Library/Application Support/com.local.painel` no macOS,
+/// `$XDG_DATA_HOME/com.local.painel` ou `~/.local/share/com.local.painel` no Linux.
 pub fn user_data_dir() -> PathBuf {
-    if let Some(appdata) = std::env::var_os("APPDATA") {
-        return PathBuf::from(appdata).join("com.local.painel");
+    data_dir_from(
+        cfg!(windows),
+        cfg!(target_os = "macos"),
+        std::env::var_os("APPDATA").as_deref(),
+        std::env::var_os("USERPROFILE").as_deref(),
+        std::env::var_os("HOME").as_deref(),
+        std::env::var_os("XDG_DATA_HOME").as_deref(),
+    )
+}
+
+fn data_dir_from(
+    host_windows: bool,
+    host_macos: bool,
+    appdata: Option<&std::ffi::OsStr>,
+    userprofile: Option<&std::ffi::OsStr>,
+    home: Option<&std::ffi::OsStr>,
+    xdg_data_home: Option<&std::ffi::OsStr>,
+) -> PathBuf {
+    const FOLDER: &str = "com.local.painel";
+    if let Some(appdata) = appdata {
+        return PathBuf::from(appdata).join(FOLDER);
     }
-    if let Some(home) = std::env::var_os("USERPROFILE") {
-        return PathBuf::from(home)
+    if let Some(userprofile) = userprofile {
+        return PathBuf::from(userprofile)
             .join("AppData")
             .join("Roaming")
-            .join("com.local.painel");
+            .join(FOLDER);
     }
-    PathBuf::from(".").join("com.local.painel")
+    if !host_windows {
+        if let Some(home) = home.filter(|value| !value.is_empty()) {
+            let home = PathBuf::from(home);
+            if host_macos {
+                return home.join("Library").join("Application Support").join(FOLDER);
+            }
+            if let Some(xdg) = xdg_data_home.filter(|value| !value.is_empty()) {
+                return PathBuf::from(xdg).join(FOLDER);
+            }
+            return home.join(".local").join("share").join(FOLDER);
+        }
+    }
+    PathBuf::from(".").join(FOLDER)
 }
 
 /// Metadados do sistema: `{metaRoot}/data` (auth, orgs, por-org).
@@ -2329,5 +2362,59 @@ mod tests {
         assert_eq!(again.github_accounts[0].token, "ghp_acc");
         assert_eq!(again.github_accounts[0].update_repository, "acme/painel");
         let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn data_dir_follows_the_host_platform() {
+        let folder = "com.local.painel";
+        let windows = data_dir_from(
+            true,
+            false,
+            Some(std::ffi::OsStr::new(r"C:\Users\a\AppData\Roaming")),
+            Some(std::ffi::OsStr::new(r"C:\Users\a")),
+            Some(std::ffi::OsStr::new("/home/a")),
+            None,
+        );
+        assert_eq!(
+            windows,
+            PathBuf::from(r"C:\Users\a\AppData\Roaming").join(folder)
+        );
+        let windows_profile = data_dir_from(
+            true,
+            false,
+            None,
+            Some(std::ffi::OsStr::new(r"C:\Users\a")),
+            Some(std::ffi::OsStr::new("/home/a")),
+            Some(std::ffi::OsStr::new("/data")),
+        );
+        assert_eq!(
+            windows_profile,
+            PathBuf::from(r"C:\Users\a\AppData\Roaming").join(folder)
+        );
+        let windows_without_profile = data_dir_from(
+            true,
+            false,
+            None,
+            None,
+            Some(std::ffi::OsStr::new("/home/a")),
+            Some(std::ffi::OsStr::new("/data")),
+        );
+        assert_eq!(windows_without_profile, PathBuf::from(".").join(folder));
+        let macos = data_dir_from(false, true, None, None, Some(std::ffi::OsStr::new("/Users/a")), None);
+        assert_eq!(
+            macos,
+            PathBuf::from("/Users/a/Library/Application Support").join(folder)
+        );
+        let linux_xdg = data_dir_from(
+            false,
+            false,
+            None,
+            None,
+            Some(std::ffi::OsStr::new("/home/a")),
+            Some(std::ffi::OsStr::new("/data")),
+        );
+        assert_eq!(linux_xdg, PathBuf::from("/data").join(folder));
+        let linux_default = data_dir_from(false, false, None, None, Some(std::ffi::OsStr::new("/home/a")), None);
+        assert_eq!(linux_default, PathBuf::from("/home/a/.local/share").join(folder));
     }
 }

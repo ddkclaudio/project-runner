@@ -336,7 +336,7 @@ pub async fn generate_launchfile(
 fn process_image_name(exe: &Path) -> String {
     exe.file_name()
         .and_then(|name| name.to_str())
-        .unwrap_or("unknown.exe")
+        .unwrap_or(if cfg!(windows) { "unknown.exe" } else { "unknown" })
         .to_string()
 }
 
@@ -487,7 +487,7 @@ pub(crate) fn reveal_dir(dir: &Path) -> Result<(), String> {
 /// Abre o explorador com os arquivos já selecionados.
 /// Cada entrada é um caminho absoluto, ou vários separados por quebra de linha.
 /// Um segmento vazio ou um caminho relativo recusa o pedido. Arquivos que não existem são ignorados.
-pub fn reveal_files(entries: &[String]) -> Result<(), String> {
+pub fn reveal_files(entries: &[String]) -> Result<String, String> {
     let paths = parse_reveal_entries(entries)?;
     let groups = group_existing(&paths)?;
     show_groups(&groups)
@@ -587,7 +587,7 @@ fn paths_equal(left: &Path, right: &Path) -> bool {
     }
 }
 
-fn show_groups(groups: &[(PathBuf, Vec<PathBuf>)]) -> Result<(), String> {
+fn show_groups(groups: &[(PathBuf, Vec<PathBuf>)]) -> Result<String, String> {
     #[cfg(windows)]
     {
         return show_windows(groups);
@@ -608,7 +608,7 @@ fn show_groups(groups: &[(PathBuf, Vec<PathBuf>)]) -> Result<(), String> {
 }
 
 #[cfg(windows)]
-fn show_windows(groups: &[(PathBuf, Vec<PathBuf>)]) -> Result<(), String> {
+fn show_windows(groups: &[(PathBuf, Vec<PathBuf>)]) -> Result<String, String> {
     let groups = groups.to_vec();
     std::thread::Builder::new()
         .name("reveal-files".into())
@@ -616,6 +616,7 @@ fn show_windows(groups: &[(PathBuf, Vec<PathBuf>)]) -> Result<(), String> {
         .map_err(|_| "Não foi possível mostrar o arquivo na pasta.".to_string())?
         .join()
         .map_err(|_| "Não foi possível mostrar o arquivo na pasta.".to_string())?
+        .map(|()| String::new())
 }
 
 #[cfg(windows)]
@@ -744,41 +745,73 @@ unsafe extern "system" {
     fn CoUninitialize();
 }
 
+#[cfg(unix)]
+fn reveal_fallback_note(groups: &[(PathBuf, Vec<PathBuf>)]) -> String {
+    let multiple = groups.len() > 1 || groups.iter().any(|(_, files)| files.len() > 1);
+    if multiple {
+        "O gestor de ficheiros não seleciona vários arquivos. A pasta foi aberta.".into()
+    } else {
+        "Não foi possível selecionar o arquivo no gestor de ficheiros. A pasta foi aberta.".into()
+    }
+}
+
+#[cfg(unix)]
+fn open_path_with(program: &str, path: &Path) -> bool {
+    let mut command = Command::new(program);
+    command.arg(path);
+    no_window(&mut command);
+    command.spawn().is_ok()
+}
+
 #[cfg(target_os = "macos")]
-fn show_macos(groups: &[(PathBuf, Vec<PathBuf>)]) -> Result<(), String> {
-    for (_, files) in groups {
+fn show_macos(groups: &[(PathBuf, Vec<PathBuf>)]) -> Result<String, String> {
+    let mut fallback = false;
+    for (folder, files) in groups {
         if files.is_empty() {
             continue;
         }
-        let mut command = Command::new("open");
-        command.arg("-R");
-        for file in files {
-            command.arg(file);
+        if macos_reveal(files) {
+            continue;
         }
-        no_window(&mut command);
-        let status = command
-            .status()
-            .map_err(|_| "Não foi possível mostrar o arquivo na pasta.".to_string())?;
-        if !status.success() {
-            return Err("Não foi possível mostrar o arquivo na pasta.".into());
+        if open_path_with("open", folder) {
+            fallback = true;
+            continue;
         }
+        return Err("Não foi possível mostrar o arquivo na pasta.".into());
     }
-    Ok(())
+    if fallback {
+        Ok(reveal_fallback_note(groups))
+    } else {
+        Ok(String::new())
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn macos_reveal(files: &[PathBuf]) -> bool {
+    let mut command = Command::new("open");
+    command.arg("-R");
+    for file in files {
+        command.arg(file);
+    }
+    no_window(&mut command);
+    command.status().map(|status| status.success()).unwrap_or(false)
 }
 
 #[cfg(all(unix, not(target_os = "macos")))]
-fn show_linux(groups: &[(PathBuf, Vec<PathBuf>)]) -> Result<(), String> {
-    if linux_show_items(groups).is_err() {
-        for (folder, _) in groups {
-            let mut command = Command::new("xdg-open");
-            command.arg(folder);
-            no_window(&mut command);
-            command
-                .spawn()
-                .map_err(|_| "Não foi possível mostrar o arquivo na pasta.".to_string())?;
+fn show_linux(groups: &[(PathBuf, Vec<PathBuf>)]) -> Result<String, String> {
+    if linux_show_items(groups).is_ok() {
+        return Ok(String::new());
+    }
+    let mut opened = false;
+    for (folder, _) in groups {
+        if open_path_with("xdg-open", folder) {
+            opened = true;
         }
     }
-    Ok(())
+    if !opened {
+        return Err("Não foi possível mostrar o arquivo na pasta.".into());
+    }
+    Ok(reveal_fallback_note(groups))
 }
 
 #[cfg(all(unix, not(target_os = "macos")))]
@@ -828,9 +861,6 @@ fn file_uri(path: &Path) -> String {
 }
 
 pub fn desktop_shortcut(root: &Path, repository: &str, org_id: &str) -> Result<String, String> {
-    if cfg!(target_os = "macos") {
-        return Err("Atalhos no ambiente de trabalho não estão disponíveis no macOS.".into());
-    }
     let apps = load_apps(root);
     let app = find_app(&apps, repository)?;
     let exe = std::env::current_exe().map_err(|err| err.to_string())?;
@@ -856,7 +886,11 @@ pub fn desktop_shortcut(root: &Path, repository: &str, org_id: &str) -> Result<S
         }
         return Ok(link.display().to_string());
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
+    {
+        return write_macos_shortcut(&desktop, &app.name, &exe, org_id);
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
     {
         let file = desktop.join(format!("{}.desktop", store::sanitize_folder(&app.name)));
         let contents = format!(
@@ -876,6 +910,72 @@ pub fn desktop_shortcut(root: &Path, repository: &str, org_id: &str) -> Result<S
     }
 }
 
+#[cfg(target_os = "macos")]
+fn write_macos_shortcut(desktop: &Path, app_name: &str, exe: &Path, org_id: &str) -> Result<String, String> {
+    let bundle_name = store::sanitize_folder(app_name);
+    let bundle = desktop.join(format!("{bundle_name}.app"));
+    let macos_dir = bundle.join("Contents").join("MacOS");
+    fs::create_dir_all(&macos_dir).map_err(|err| err.to_string())?;
+    let ident: String = bundle_name
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() {
+                ch.to_ascii_lowercase()
+            } else {
+                '-'
+            }
+        })
+        .collect();
+    let ident = ident.trim_matches('-');
+    let ident = if ident.is_empty() { "app" } else { ident };
+    let plist = format!(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
+         <!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n\
+         <plist version=\"1.0\">\n\
+         <dict>\n\
+           <key>CFBundleExecutable</key>\n\
+           <string>launch</string>\n\
+           <key>CFBundleIdentifier</key>\n\
+           <string>com.local.painel.shortcut.{ident}</string>\n\
+           <key>CFBundleName</key>\n\
+           <string>{}</string>\n\
+           <key>CFBundlePackageType</key>\n\
+           <string>APPL</string>\n\
+           <key>CFBundleVersion</key>\n\
+           <string>1.0</string>\n\
+         </dict>\n\
+         </plist>\n",
+        xml_escape(app_name),
+    );
+    fs::write(bundle.join("Contents").join("Info.plist"), plist).map_err(|err| err.to_string())?;
+    let script = format!(
+        "#!/bin/sh\nexec {} {} {} {} {}\n",
+        shell_single_quote(&exe.display().to_string()),
+        shell_single_quote("--run"),
+        shell_single_quote(app_name.replace('"', "").trim()),
+        shell_single_quote("--org"),
+        shell_single_quote(org_id),
+    );
+    let launcher = macos_dir.join("launch");
+    fs::write(&launcher, script).map_err(|err| err.to_string())?;
+    use std::os::unix::fs::PermissionsExt;
+    fs::set_permissions(&launcher, fs::Permissions::from_mode(0o755)).map_err(|err| err.to_string())?;
+    Ok(bundle.display().to_string())
+}
+
+#[cfg(target_os = "macos")]
+fn shell_single_quote(text: &str) -> String {
+    format!("'{}'", text.replace('\'', "'\\''"))
+}
+
+#[cfg(target_os = "macos")]
+fn xml_escape(text: &str) -> String {
+    text.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+}
+
 fn desktop_dir() -> Option<PathBuf> {
     if let Ok(user) = std::env::var("USERPROFILE") {
         let desktop = PathBuf::from(user).join("Desktop");
@@ -889,6 +989,19 @@ fn desktop_dir() -> Option<PathBuf> {
         return Some(desktop);
     }
     let home = std::env::var("HOME").ok()?;
+    if !cfg!(windows) {
+        if cfg!(target_os = "macos") {
+            return Some(PathBuf::from(home).join("Desktop"));
+        }
+        if let Some(xdg) = xdg_desktop_dir(&home) {
+            return Some(xdg);
+        }
+        let desktop = PathBuf::from(&home).join("Desktop");
+        if desktop.is_dir() {
+            return Some(desktop);
+        }
+        return Some(PathBuf::from(home).join(".local/share/applications"));
+    }
     let desktop = PathBuf::from(&home).join("Desktop");
     if desktop.is_dir() {
         Some(desktop)
@@ -897,10 +1010,31 @@ fn desktop_dir() -> Option<PathBuf> {
     }
 }
 
-pub fn steam_shortcut(root: &Path, repository: &str, org_id: &str) -> Result<String, String> {
-    if cfg!(target_os = "macos") {
-        return Err("Atalhos da Steam não estão disponíveis no macOS.".into());
+fn xdg_desktop_dir(home: &str) -> Option<PathBuf> {
+    let text = fs::read_to_string(PathBuf::from(home).join(".config").join("user-dirs.dirs")).ok()?;
+    parse_xdg_desktop(home, &text)
+}
+
+fn parse_xdg_desktop(home: &str, text: &str) -> Option<PathBuf> {
+    for line in text.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let Some(rest) = line.strip_prefix("XDG_DESKTOP_DIR=") else {
+            continue;
+        };
+        let rest = rest.trim().trim_matches('"');
+        if rest.is_empty() {
+            return None;
+        }
+        let expanded = rest.replace("$HOME", home).replace("${HOME}", home);
+        return Some(PathBuf::from(expanded));
     }
+    None
+}
+
+pub fn steam_shortcut(root: &Path, repository: &str, org_id: &str) -> Result<String, String> {
     if steam_running() {
         return Err("Feche a Steam antes de adicionar o atalho.".into());
     }
@@ -944,14 +1078,22 @@ fn steam_running() -> bool {
             .output()
             .map(|output| String::from_utf8_lossy(&output.stdout).to_lowercase().contains("steam.exe"))
             .unwrap_or(false)
+    } else if cfg!(target_os = "macos") {
+        unix_process_exists("steam_osx") || unix_process_exists("Steam")
     } else {
-        Command::new("pgrep")
-            .arg("-x")
-            .arg("steam")
-            .status()
-            .map(|status| status.success())
-            .unwrap_or(false)
+        unix_process_exists("steam")
     }
+}
+
+fn unix_process_exists(name: &str) -> bool {
+    Command::new("pgrep")
+        .arg("-x")
+        .arg(name)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false)
 }
 
 fn steam_config_dir() -> Option<PathBuf> {
@@ -964,7 +1106,10 @@ fn steam_config_dir() -> Option<PathBuf> {
     }
     if let Ok(home) = std::env::var("HOME") {
         roots.push(PathBuf::from(&home).join(".steam/steam/userdata"));
+        roots.push(PathBuf::from(&home).join(".steam/debian-installation/userdata"));
         roots.push(PathBuf::from(&home).join(".local/share/Steam/userdata"));
+        roots.push(PathBuf::from(&home).join(".var/app/com.valvesoftware.Steam/data/Steam/userdata"));
+        roots.push(PathBuf::from(&home).join("Library/Application Support/Steam/userdata"));
     }
     let mut newest: Option<(std::time::SystemTime, PathBuf)> = None;
     for root in roots {
@@ -1206,6 +1351,15 @@ mod reveal_tests {
         assert!(one.contains("não existe"));
         let two = group_existing(&[missing.clone(), missing.join("outro.txt")]).unwrap_err();
         assert!(two.contains("Nenhum dos arquivos existe"));
+    }
+
+    #[test]
+    fn reads_xdg_desktop_dir() {
+        let parsed = super::parse_xdg_desktop("/home/a", "XDG_DESKTOP_DIR=\"$HOME/Área de Trabalho\"\n");
+        assert_eq!(parsed, Some(PathBuf::from("/home/a/Área de Trabalho")));
+        let braced = super::parse_xdg_desktop("/home/a", "# comment\nXDG_DESKTOP_DIR=\"${HOME}/Desktop\"\n");
+        assert_eq!(braced, Some(PathBuf::from("/home/a/Desktop")));
+        assert!(super::parse_xdg_desktop("/home/a", "XDG_DOWNLOAD_DIR=\"$HOME/Downloads\"\n").is_none());
     }
 
     fn paths_end_with(paths: &[PathBuf], name: &str) -> bool {
