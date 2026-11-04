@@ -59,8 +59,8 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tagName: v__VERSION__
-          releaseName: "Project Runner v__VERSION__"
+          tagName: v__VERSION__-${{ github.run_number }}
+          releaseName: "Project Runner v__VERSION__ (${{ github.run_number }})"
           releaseBody: "Installers built from this commit."
           releaseDraft: false
           prerelease: false
