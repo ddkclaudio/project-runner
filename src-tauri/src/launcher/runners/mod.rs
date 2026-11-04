@@ -231,7 +231,7 @@ pub(crate) fn apply_detached(command: &mut Command) {
             command.pre_exec(|| {
                 #[allow(non_camel_case_types)]
                 type pid_t = i32;
-                extern "C" {
+                unsafe extern "C" {
                     fn setsid() -> pid_t;
                 }
                 if setsid() == -1 {
