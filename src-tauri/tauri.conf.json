@@ -4,9 +4,9 @@
   "version": "1.0.0",
   "identifier": "com.local.painel",
   "build": {
-    "beforeDevCommand": "npm run dev",
+    "beforeDevCommand": "npx vite",
     "devUrl": "http://localhost:1420",
-    "beforeBuildCommand": "npm run build",
+    "beforeBuildCommand": "npx tsc && npx vite build",
     "frontendDist": "../dist"
   },
   "app": {
