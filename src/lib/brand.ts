@@ -1,5 +1,5 @@
 export function appName(): string {
-  return 'Painel';
+  return 'Project Runner';
 }
 
 export function appBadge(): string | null {

@@ -34,7 +34,7 @@ import {
 import { useOrg } from '@/contexts/OrgContext';
 import styles from './library.module.css';
 
-const TOKEN_URL = 'https://github.com/settings/tokens/new?description=Painel';
+const TOKEN_URL = 'https://github.com/settings/tokens/new?description=Project%20Runner';
 
 type CatalogRow = AppEntry & { group: string; id: string };
 

@@ -549,7 +549,7 @@ pub fn run() {
                 .ok_or_else(|| std::io::Error::other("Ícone da janela em falta para a bandeja."))?;
             let _tray = TrayIconBuilder::with_id("painel-tray")
                 .icon(tray_icon)
-                .tooltip("Painel")
+                .tooltip("Project Runner")
                 .menu(&tray_menu)
                 .show_menu_on_left_click(false)
                 .on_menu_event(|app, event| match event.id().as_ref() {

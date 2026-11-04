@@ -2845,7 +2845,7 @@ function CommunicationsCanvas({ orgId, initial }: { orgId: string; initial: Grap
             headerActions={
               selected && isAppNode(selected) && liveApp(apps, selected) ? (
                 <SideDrawerIconButton
-                  label="Abrir no Painel"
+                  label="Abrir no Project Runner"
                   onClick={() => {
                     const live = liveApp(apps, selected);
                     if (live) navigate(appHref(live));

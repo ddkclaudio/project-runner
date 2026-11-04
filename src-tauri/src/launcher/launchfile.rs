@@ -157,7 +157,7 @@ fn parse_port(raw: &str) -> Option<u16> {
 
 pub fn template_raw(name: &str) -> String {
     format!(
-        r#"# Launchfile — manifesto de arranque do Painel
+        r#"# Launchfile — manifesto de arranque do Project Runner
 version: launch/v1
 name: {name}
 runtime: node
@@ -175,7 +175,7 @@ env:
 
 pub fn serialize(doc: &LaunchfileDoc) -> String {
     let mut out = String::new();
-    out.push_str("# Launchfile — manifesto de arranque do Painel\n");
+    out.push_str("# Launchfile — manifesto de arranque do Project Runner\n");
     out.push_str(&format!(
         "version: {}\n",
         if doc.version.trim().is_empty() {

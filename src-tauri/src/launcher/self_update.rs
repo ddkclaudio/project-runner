@@ -58,7 +58,7 @@ pub async fn check(root: &Path, force: bool, repository: Option<&str>) -> Result
         });
     }
     if repo.eq_ignore_ascii_case("SirDiabo/GithubLauncher") {
-        return Err("Esta origem é o launcher em Avalonia. Indique o repositório do Painel.".into());
+        return Err("Esta origem é o launcher em Avalonia. Indique o repositório do Project Runner.".into());
     }
     let mut saved = read_check(root);
     let last = saved.get("LastCheckTime").and_then(|value| value.as_i64()).unwrap_or(0);
@@ -70,7 +70,7 @@ pub async fn check(root: &Path, force: bool, repository: Option<&str>) -> Result
             configured: true,
             update_available: available,
             remote_version: remote,
-            message: if available { "Há uma versão mais recente do Painel.".into() } else { "O Painel está atualizado.".into() },
+            message: if available { "Há uma versão mais recente do Project Runner.".into() } else { "O Project Runner está atualizado.".into() },
             current_version: current,
         });
     }
@@ -103,7 +103,7 @@ pub async fn check(root: &Path, force: bool, repository: Option<&str>) -> Result
         update_available: available,
         remote_version: if remote.is_empty() { None } else { Some(remote) },
         current_version: current,
-        message: if available { "Há uma versão mais recente do Painel.".into() } else { "O Painel está atualizado.".into() },
+        message: if available { "Há uma versão mais recente do Project Runner.".into() } else { "O Project Runner está atualizado.".into() },
     })
 }
 
@@ -130,7 +130,7 @@ pub async fn apply(root: &Path, repository: Option<&str>) -> Result<String, Stri
     let platform = platform_of(&load_settings(root));
     let matches = matching_assets(&names, &platform);
     if matches.len() != 1 {
-        return Err("A release do Painel precisa de um único ficheiro para esta plataforma.".into());
+        return Err("A release do Project Runner precisa de um único ficheiro para esta plataforma.".into());
     }
     let asset = release.assets.iter().find(|item| item.name == matches[0]).ok_or_else(|| "Ficheiro em falta.".to_string())?;
     if wine_warning(&platform, &asset.name).is_some() {
@@ -144,7 +144,7 @@ pub async fn apply(root: &Path, repository: Option<&str>) -> Result<String, Stri
     let stamp = chrono::Local::now().format("%Y%m%d_%H%M%S");
     let backup = std::env::temp_dir().join(format!("Painel_backup_{stamp}"));
     write_updater(&exe, &file, &backup)?;
-    Ok("O Painel vai fechar para aplicar a atualização.".into())
+    Ok("O Project Runner vai fechar para aplicar a atualização.".into())
 }
 
 fn write_updater(exe: &Path, payload: &Path, backup: &Path) -> Result<(), String> {

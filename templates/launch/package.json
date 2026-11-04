@@ -5,5 +5,5 @@
     "start": "node server.js",
     "dev": "vite"
   },
-  "_comment": "O Painel usa scripts.start; se faltar, tenta scripts.dev. Ajuste para o seu projecto."
+  "_comment": "O Project Runner usa scripts.start; se faltar, tenta scripts.dev. Ajuste para o seu projecto."
 }

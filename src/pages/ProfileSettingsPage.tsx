@@ -306,8 +306,8 @@ export function ProfileSettingsPage() {
   const subtitle =
     section === 'geral'
       ? settings.data
-        ? `Dados em ${settings.data.dataDir} · Painel ${settings.data.appVersion}`
-        : 'Conta, DeepSeek, pasta das apps e preferências do painel.'
+        ? `Dados em ${settings.data.dataDir} · Project Runner ${settings.data.appVersion}`
+        : 'Conta, DeepSeek, pasta das apps e preferências do Project Runner.'
       : undefined;
   const title = section === 'cloudflare' ? 'Cloudflare' : section === 'github' ? 'GitHub' : 'Geral';
   const serviceKind = section === 'github' || section === 'cloudflare' ? section : null;
@@ -546,7 +546,7 @@ export function ProfileSettingsPage() {
         />
       </FormCard>
 
-      <FormCard onSubmit={(event) => void saveLauncher(event)} aria-label="Definições do painel" style={{ marginTop: 20 }}>
+      <FormCard onSubmit={(event) => void saveLauncher(event)} aria-label="Definições do Project Runner" style={{ marginTop: 20 }}>
         <FormCard.Header title="Geral" subtitle="Plataforma e vista da biblioteca." />
         <FormRow label="Plataforma">
           <Select

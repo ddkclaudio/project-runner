@@ -146,7 +146,7 @@ async fn execute() -> Result<(), String> {
     match command {
         "--help" | "-h" => {
             println!(
-                "Painel\n\n  --list, -l                 lista as apps\n  --run, -r NOME             lança uma app\n  --download, -d NOME        instala uma app\n  --update, -u [NOME]        atualiza uma app ou todas\n  --uninstall, -x NOME       apaga a pasta instalada\n  --add-steam-shortcut NOME  adiciona à Steam\n  --org ID                   organização do atalho (com --run/--download/…)\n  --self-update              atualiza o Painel\n  --help, -h                 mostra esta ajuda"
+                "Project Runner\n\n  --list, -l                 lista as apps\n  --run, -r NOME             lança uma app\n  --download, -d NOME        instala uma app\n  --update, -u [NOME]        atualiza uma app ou todas\n  --uninstall, -x NOME       apaga a pasta instalada\n  --add-steam-shortcut NOME  adiciona à Steam\n  --org ID                   organização do atalho (com --run/--download/…)\n  --self-update              atualiza o Project Runner\n  --help, -h                 mostra esta ajuda"
             );
             Ok(())
         }

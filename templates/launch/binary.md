@@ -1,6 +1,6 @@
 # Apps só com binário (release GitHub)
 
-Não é obrigatório manifesto. O Painel:
+Não é obrigatório manifesto. O Project Runner:
 
 1. Descarrega o asset da release para a pasta da app, **ou** clona o repo.
 2. Procura executáveis (`.exe`, `.bat`, `.cmd` no Windows; AppImage / binários no Linux; `.app` no macOS).

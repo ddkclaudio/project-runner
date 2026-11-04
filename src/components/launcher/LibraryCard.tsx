@@ -228,7 +228,7 @@ export function libraryMenu(
   const restarting = Boolean(app.running && app.status !== 'not_installed');
   const PrimaryIcon = restarting || app.status === 'update' ? IconRefresh : app.status === 'installed' ? IconPlayerPlay : IconDownload;
   const items: ContextMenuItem[] = [
-    { label: 'Abrir no Painel', icon: <IconEye size={15} />, onClick: () => actions.open(app) },
+    { label: 'Abrir no Project Runner', icon: <IconEye size={15} />, onClick: () => actions.open(app) },
     { label: primary, icon: <PrimaryIcon size={15} />, onClick: () => onPrimary(app) },
   ];
   if (app.running) {

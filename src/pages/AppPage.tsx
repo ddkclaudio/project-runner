@@ -1090,7 +1090,7 @@ function Shortcuts({ app }: { app: AppView }) {
   const toast = useToast();
   return (
     <PageShell>
-      <PageShell.Heading subtitle="O atalho abre o Painel com o nome desta app.">Atalhos</PageShell.Heading>
+      <PageShell.Heading subtitle="O atalho abre o Project Runner com o nome desta app.">Atalhos</PageShell.Heading>
       <div style={{ display: 'flex', gap: 8 }}>
         <Button variant="secondary" onClick={() => void appShortcutDesktop(appId(app)).then((path) => toast.success(path)).catch((err) => toast.error(launcherError(err)))}>Ambiente de trabalho</Button>
         <Button onClick={() => void appShortcutSteam(appId(app)).then((path) => toast.success(path)).catch((err) => toast.error(launcherError(err)))}>Steam</Button>

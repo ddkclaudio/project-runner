@@ -2677,27 +2677,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "painel"
-version = "1.0.0"
-dependencies = [
- "argon2",
- "chrono",
- "flate2",
- "image",
- "rand_core 0.6.4",
- "reqwest 0.12.28",
- "serde",
- "serde_json",
- "tar",
- "tauri",
- "tauri-build",
- "tauri-plugin-dialog",
- "tauri-plugin-opener",
- "tokio",
- "zip",
-]
-
-[[package]]
 name = "pango"
 version = "0.18.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2990,6 +2969,27 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "985e7ec9bb745e6ce6535b544d84d6cd6f7ad8bd711c398938ae983b91a766d9"
 dependencies = [
  "unicode-ident",
+]
+
+[[package]]
+name = "project-runner"
+version = "1.0.0"
+dependencies = [
+ "argon2",
+ "chrono",
+ "flate2",
+ "image",
+ "rand_core 0.6.4",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "tar",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-dialog",
+ "tauri-plugin-opener",
+ "tokio",
+ "zip",
 ]
 
 [[package]]
