@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { IconAffiliate, IconPlus, IconTicket, IconUsers } from '@tabler/icons-react';
+import { IconAffiliate, IconPlus } from '@tabler/icons-react';
 import { PageShell } from '@/components/ui/PageShell';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
@@ -44,19 +44,9 @@ export function OrgsPage() {
       <PageShell.Heading
         subtitle="Todas as organizações a que pertence."
         actions={
-          <>
-            <Button variant="secondary" size="sm" leftIcon={<IconPlus size={14} />} onClick={() => navigate('/orgs/new')}>
-              Nova organização
-            </Button>
-            <Button size="sm" leftIcon={<IconTicket size={14} />} onClick={() => navigate('/orgs/invite')}>
-              Aceitar convite
-            </Button>
-            {activeOrg ? (
-              <Button size="sm" leftIcon={<IconUsers size={14} />} onClick={() => navigate(`/orgs/${activeOrg.id}/members`)}>
-                Membros da ativa
-              </Button>
-            ) : null}
-          </>
+          <Button variant="secondary" size="sm" leftIcon={<IconPlus size={14} />} onClick={() => navigate('/orgs/new')}>
+            Nova organização
+          </Button>
         }
       >
         Organizações
@@ -91,9 +81,6 @@ export function OrgsPage() {
                   </div>
                 </div>
                 <div className={styles.listActions}>
-                  <Button onClick={() => navigate(`/orgs/${org.id}/members`)} leftIcon={<IconUsers size={14} />}>
-                    Membros
-                  </Button>
                   <Button
                     variant={isActive ? 'ghost' : 'secondary'}
                     disabled={isActive || busy}

@@ -46,12 +46,7 @@ impl ProjectRunner for ManifestRunner {
             .unwrap_or(candidate.id.as_str());
         let lasting = launchfile::lasting_start(&doc);
         let command = if command.is_empty() { lasting.as_str() } else { command };
-        let work = doc
-            .cwd
-            .as_ref()
-            .map(|item| root.join(item))
-            .filter(|path| path.is_dir());
-        spawn_command_line_with_env(root, command, work.as_deref(), &doc.env, None)
+        spawn_command_line_with_env(root, command, None, &doc.env, None)
     }
 
     fn config_view(&self, root: &Path) -> Result<LaunchConfigView, String> {
@@ -104,7 +99,6 @@ impl ProjectRunner for ManifestRunner {
                 env.insert(k.trim().to_string(), v.trim().to_string());
             }
         }
-        let port = get("port").trim().parse().ok();
         let has_pre = fields
             .iter()
             .any(|item| item.key == "pre-start" || item.key.starts_with("pre-start."));
@@ -145,9 +139,6 @@ impl ProjectRunner for ManifestRunner {
                     kind
                 }
             },
-            port,
-            url: Some(get("url")).filter(|item| !item.trim().is_empty()),
-            cwd: Some(get("cwd")).filter(|item| !item.trim().is_empty()),
             pre_start,
             start,
             env,
@@ -226,22 +217,13 @@ fn view_from(root: &Path, file: &Path, raw: &str, doc: &LaunchfileDoc) -> Launch
         LaunchField::text("name", "Nome", doc.name.clone()),
         LaunchField::text("runtime", "Runtime", doc.runtime.clone()),
         LaunchField::text("kind", "Tipo", doc.kind.clone()),
-        LaunchField::typed(
-            "port",
-            "Porta",
-            doc.port.map(|item| item.to_string()).unwrap_or_default(),
-            "number",
-        ),
-        LaunchField::typed("url", "URL Abrir", doc.url.clone().unwrap_or_default(), "url"),
-        LaunchField::text(
-            "cwd",
-            "Pasta de trabalho",
-            doc.cwd.clone().unwrap_or_else(|| ".".into()),
-        ),
     ];
     push_steps(&mut fields, "pre-start", "Pre-start", &doc.pre_start);
     push_steps(&mut fields, "start", "Start", &doc.start);
     for (key, value) in &doc.env {
+        if key.eq_ignore_ascii_case("BROWSER") {
+            continue;
+        }
         fields.push(LaunchField::typed(
             format!("env.{key}"),
             format!("Env · {key}"),

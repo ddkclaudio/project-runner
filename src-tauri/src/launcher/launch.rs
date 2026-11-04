@@ -143,12 +143,7 @@ pub async fn launch(
         let _ = crate::launcher::runtime::stop(meta, &runtime_key);
     }
 
-    let work = doc
-        .cwd
-        .as_ref()
-        .map(|item| project.join(item))
-        .filter(|path| path.is_dir())
-        .unwrap_or_else(|| project.clone());
+    let work = project.clone();
 
     let pre_start = crate::launcher::launchfile::finished_steps(&doc.pre_start);
     for (index, step) in pre_start.iter().enumerate() {
@@ -489,6 +484,349 @@ pub(crate) fn reveal_dir(dir: &Path) -> Result<(), String> {
     Ok(())
 }
 
+/// Abre o explorador com os arquivos já selecionados.
+/// Cada entrada é um caminho absoluto, ou vários separados por quebra de linha.
+/// Um segmento vazio ou um caminho relativo recusa o pedido. Arquivos que não existem são ignorados.
+pub fn reveal_files(entries: &[String]) -> Result<(), String> {
+    let paths = parse_reveal_entries(entries)?;
+    let groups = group_existing(&paths)?;
+    show_groups(&groups)
+}
+
+fn parse_reveal_entries(entries: &[String]) -> Result<Vec<PathBuf>, String> {
+    if entries.is_empty() || entries.iter().all(|entry| entry.trim().is_empty()) {
+        return Err("Indique um arquivo para mostrar.".into());
+    }
+    let mut paths = Vec::new();
+    for entry in entries {
+        let trimmed = entry.trim();
+        if trimmed.is_empty() {
+            return Err("Há um caminho vazio.".into());
+        }
+        for line in trimmed.lines() {
+            let segment = line.trim();
+            if segment.is_empty() {
+                return Err("Há um caminho vazio.".into());
+            }
+            let path = PathBuf::from(segment);
+            if !path.is_absolute() {
+                return Err(format!("O caminho tem de ser absoluto: {segment}"));
+            }
+            paths.push(path);
+        }
+    }
+    if paths.is_empty() {
+        return Err("Indique um arquivo para mostrar.".into());
+    }
+    Ok(paths)
+}
+
+fn group_existing(paths: &[PathBuf]) -> Result<Vec<(PathBuf, Vec<PathBuf>)>, String> {
+    let mut groups: Vec<(PathBuf, Vec<PathBuf>)> = Vec::new();
+    let mut saw_existing = false;
+    for path in paths {
+        let Ok(resolved) = existing_target(path) else {
+            continue;
+        };
+        saw_existing = true;
+        let Some(parent) = resolved
+            .parent()
+            .map(Path::to_path_buf)
+            .filter(|parent| !parent.as_os_str().is_empty())
+        else {
+            continue;
+        };
+        if let Some((_, files)) = groups.iter_mut().find(|(folder, _)| paths_equal(folder, &parent)) {
+            if files.iter().any(|item| paths_equal(item, &resolved)) {
+                continue;
+            }
+            files.push(resolved);
+        } else {
+            groups.push((parent, vec![resolved]));
+        }
+    }
+    if groups.is_empty() {
+        return Err(if saw_existing {
+            "Não foi possível mostrar o arquivo na pasta.".into()
+        } else if paths.len() == 1 {
+            "O arquivo não existe.".into()
+        } else {
+            "Nenhum dos arquivos existe.".into()
+        });
+    }
+    Ok(groups)
+}
+
+fn existing_target(path: &Path) -> Result<PathBuf, ()> {
+    if !path.exists() {
+        return Err(());
+    }
+    let resolved = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    Ok(strip_verbatim(&resolved))
+}
+
+fn strip_verbatim(path: &Path) -> PathBuf {
+    let text = path.to_string_lossy();
+    if let Some(rest) = text.strip_prefix(r"\\?\UNC\") {
+        return PathBuf::from(format!(r"\\{rest}"));
+    }
+    if let Some(rest) = text.strip_prefix(r"\\?\") {
+        return PathBuf::from(rest);
+    }
+    path.to_path_buf()
+}
+
+fn paths_equal(left: &Path, right: &Path) -> bool {
+    #[cfg(windows)]
+    {
+        left.as_os_str().eq_ignore_ascii_case(right.as_os_str())
+    }
+    #[cfg(not(windows))]
+    {
+        left == right
+    }
+}
+
+fn show_groups(groups: &[(PathBuf, Vec<PathBuf>)]) -> Result<(), String> {
+    #[cfg(windows)]
+    {
+        return show_windows(groups);
+    }
+    #[cfg(target_os = "macos")]
+    {
+        return show_macos(groups);
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        return show_linux(groups);
+    }
+    #[cfg(not(any(windows, unix)))]
+    {
+        let _ = groups;
+        Err("Não foi possível mostrar o arquivo na pasta.".into())
+    }
+}
+
+#[cfg(windows)]
+fn show_windows(groups: &[(PathBuf, Vec<PathBuf>)]) -> Result<(), String> {
+    let groups = groups.to_vec();
+    std::thread::Builder::new()
+        .name("reveal-files".into())
+        .spawn(move || select_groups_sta(&groups))
+        .map_err(|_| "Não foi possível mostrar o arquivo na pasta.".to_string())?
+        .join()
+        .map_err(|_| "Não foi possível mostrar o arquivo na pasta.".to_string())?
+}
+
+#[cfg(windows)]
+fn select_groups_sta(groups: &[(PathBuf, Vec<PathBuf>)]) -> Result<(), String> {
+    let _com = ComApartment::enter()?;
+    for (folder, files) in groups {
+        if files.is_empty() {
+            continue;
+        }
+        select_in_folder(folder, files)?;
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn select_in_folder(folder: &Path, files: &[PathBuf]) -> Result<(), String> {
+    let folder_pidl = parse_pidl(folder)?;
+    let mut full = Vec::with_capacity(files.len());
+    for file in files {
+        full.push(parse_pidl(file)?);
+    }
+    let children: Vec<*const std::ffi::c_void> = full
+        .iter()
+        .map(|pidl| unsafe { ILFindLastID(pidl.0) } as *const std::ffi::c_void)
+        .collect();
+    if children.iter().any(|child| child.is_null()) {
+        return Err("Não foi possível mostrar o arquivo na pasta.".into());
+    }
+    let hr = unsafe {
+        SHOpenFolderAndSelectItems(
+            folder_pidl.0,
+            children.len() as u32,
+            children.as_ptr(),
+            0,
+        )
+    };
+    if hr < 0 {
+        return Err("Não foi possível mostrar o arquivo na pasta.".into());
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn parse_pidl(path: &Path) -> Result<Pidl, String> {
+    use std::os::windows::ffi::OsStrExt;
+    let mut wide: Vec<u16> = path.as_os_str().encode_wide().collect();
+    wide.push(0);
+    let mut raw = std::ptr::null_mut();
+    let hr = unsafe {
+        SHParseDisplayName(wide.as_ptr(), std::ptr::null_mut(), &mut raw, 0, std::ptr::null_mut())
+    };
+    if hr < 0 || raw.is_null() {
+        if !raw.is_null() {
+            unsafe { ILFree(raw) };
+        }
+        return Err("Não foi possível mostrar o arquivo na pasta.".into());
+    }
+    Ok(Pidl(raw))
+}
+
+#[cfg(windows)]
+struct Pidl(*mut std::ffi::c_void);
+
+#[cfg(windows)]
+impl Drop for Pidl {
+    fn drop(&mut self) {
+        if !self.0.is_null() {
+            unsafe { ILFree(self.0) };
+            self.0 = std::ptr::null_mut();
+        }
+    }
+}
+
+#[cfg(windows)]
+struct ComApartment(bool);
+
+#[cfg(windows)]
+impl ComApartment {
+    fn enter() -> Result<Self, String> {
+        const COINIT_APARTMENTTHREADED: u32 = 0x2;
+        const RPC_E_CHANGED_MODE: i32 = -2147417850;
+        let hr = unsafe { CoInitializeEx(std::ptr::null_mut(), COINIT_APARTMENTTHREADED) };
+        if hr == RPC_E_CHANGED_MODE {
+            return Ok(Self(false));
+        }
+        if hr < 0 {
+            return Err("Não foi possível mostrar o arquivo na pasta.".into());
+        }
+        Ok(Self(true))
+    }
+}
+
+#[cfg(windows)]
+impl Drop for ComApartment {
+    fn drop(&mut self) {
+        if self.0 {
+            unsafe { CoUninitialize() };
+        }
+    }
+}
+
+#[cfg(windows)]
+#[link(name = "shell32")]
+unsafe extern "system" {
+    fn SHParseDisplayName(
+        psz_name: *const u16,
+        pbc: *mut std::ffi::c_void,
+        ppidl: *mut *mut std::ffi::c_void,
+        sfgao_in: u32,
+        psfgao_out: *mut u32,
+    ) -> i32;
+    fn SHOpenFolderAndSelectItems(
+        pidl_folder: *const std::ffi::c_void,
+        cidl: u32,
+        apidl: *const *const std::ffi::c_void,
+        dw_flags: u32,
+    ) -> i32;
+    fn ILFree(pidl: *mut std::ffi::c_void);
+    fn ILFindLastID(pidl: *const std::ffi::c_void) -> *mut std::ffi::c_void;
+}
+
+#[cfg(windows)]
+#[link(name = "ole32")]
+unsafe extern "system" {
+    fn CoInitializeEx(reserved: *mut std::ffi::c_void, coinit: u32) -> i32;
+    fn CoUninitialize();
+}
+
+#[cfg(target_os = "macos")]
+fn show_macos(groups: &[(PathBuf, Vec<PathBuf>)]) -> Result<(), String> {
+    for (_, files) in groups {
+        if files.is_empty() {
+            continue;
+        }
+        let mut command = Command::new("open");
+        command.arg("-R");
+        for file in files {
+            command.arg(file);
+        }
+        no_window(&mut command);
+        let status = command
+            .status()
+            .map_err(|_| "Não foi possível mostrar o arquivo na pasta.".to_string())?;
+        if !status.success() {
+            return Err("Não foi possível mostrar o arquivo na pasta.".into());
+        }
+    }
+    Ok(())
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+fn show_linux(groups: &[(PathBuf, Vec<PathBuf>)]) -> Result<(), String> {
+    if linux_show_items(groups).is_err() {
+        for (folder, _) in groups {
+            let mut command = Command::new("xdg-open");
+            command.arg(folder);
+            no_window(&mut command);
+            command
+                .spawn()
+                .map_err(|_| "Não foi possível mostrar o arquivo na pasta.".to_string())?;
+        }
+    }
+    Ok(())
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+fn linux_show_items(groups: &[(PathBuf, Vec<PathBuf>)]) -> Result<(), String> {
+    for (_, files) in groups {
+        if files.is_empty() {
+            continue;
+        }
+        let uris: Vec<String> = files.iter().map(|file| file_uri(file)).collect();
+        let array = format!(
+            "array:string:{}",
+            uris.iter().map(|uri| format!("\"{uri}\"")).collect::<Vec<_>>().join(",")
+        );
+        let mut command = Command::new("dbus-send");
+        command.args([
+            "--session",
+            "--dest=org.freedesktop.FileManager1",
+            "--type=method_call",
+            "--print-reply",
+            "/org/freedesktop/FileManager1",
+            "org.freedesktop.FileManager1.ShowItems",
+        ]);
+        command.arg(&array);
+        command.arg("string:");
+        no_window(&mut command);
+        let status = command.status().map_err(|err| err.to_string())?;
+        if !status.success() {
+            return Err("Não foi possível mostrar o arquivo na pasta.".into());
+        }
+    }
+    Ok(())
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+fn file_uri(path: &Path) -> String {
+    use std::os::unix::ffi::OsStrExt;
+    let mut out = String::from("file://");
+    for &byte in path.as_os_str().as_bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'/' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(byte as char);
+            }
+            _ => out.push_str(&format!("%{byte:02X}")),
+        }
+    }
+    out
+}
+
 pub fn desktop_shortcut(root: &Path, repository: &str, org_id: &str) -> Result<String, String> {
     if cfg!(target_os = "macos") {
         return Err("Atalhos no ambiente de trabalho não estão disponíveis no macOS.".into());
@@ -786,4 +1124,95 @@ fn write_value(out: &mut Vec<u8>, value: &Vdf) {
 fn push_cstr(out: &mut Vec<u8>, text: &str) {
     out.extend(text.as_bytes());
     out.push(0);
+}
+
+#[cfg(test)]
+mod reveal_tests {
+    use super::{group_existing, parse_reveal_entries};
+    use std::fs;
+    use std::path::PathBuf;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    struct Scratch(PathBuf);
+
+    impl Scratch {
+        fn new() -> Self {
+            let nanos = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+            let dir = std::env::temp_dir().join(format!("painel-reveal-{nanos}"));
+            fs::create_dir_all(&dir).unwrap();
+            Self(dir)
+        }
+    }
+
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn parses_one_path_and_newline_separated_paths() {
+        let root = std::env::temp_dir();
+        let one = root.join("a.txt");
+        let parsed = parse_reveal_entries(&[one.display().to_string()]).unwrap();
+        assert_eq!(parsed, vec![one.clone()]);
+
+        let other = root.join("sub").join("b.txt");
+        let literal = format!("  {}  \r\n{}  ", one.display(), other.display());
+        let many = parse_reveal_entries(&[literal]).unwrap();
+        assert_eq!(many, vec![one, other]);
+    }
+
+    #[test]
+    fn rejects_empty_segments_and_relative_paths() {
+        assert!(parse_reveal_entries(&[]).unwrap_err().contains("Indique um arquivo"));
+        assert!(parse_reveal_entries(&["  ".into()]).unwrap_err().contains("Indique um arquivo"));
+        let root = std::env::temp_dir();
+        let broken = format!("{}\n\n{}", root.join("a.txt").display(), root.join("b.txt").display());
+        assert!(parse_reveal_entries(&[broken]).unwrap_err().contains("caminho vazio"));
+        assert!(parse_reveal_entries(&[root.join("a.txt").display().to_string(), "  ".into()])
+            .unwrap_err()
+            .contains("caminho vazio"));
+        let mixed = format!("{}\nrelativo.txt", root.join("a.txt").display());
+        assert!(parse_reveal_entries(&[mixed]).unwrap_err().contains("absoluto"));
+    }
+
+    #[test]
+    fn groups_files_that_share_a_folder_and_skips_missing() {
+        let scratch = Scratch::new();
+        let other = scratch.0.join("other");
+        fs::create_dir_all(&other).unwrap();
+        let first = scratch.0.join("a.txt");
+        let second = scratch.0.join("b.txt");
+        let third = other.join("c.txt");
+        fs::write(&first, b"a").unwrap();
+        fs::write(&second, b"b").unwrap();
+        fs::write(&third, b"c").unwrap();
+        let missing = scratch.0.join("nope.txt");
+        let groups = group_existing(&[first.clone(), second.clone(), missing, third.clone(), first]).unwrap();
+        assert_eq!(groups.len(), 2);
+        assert_eq!(groups[0].1.len(), 2);
+        assert_eq!(groups[1].1.len(), 1);
+        assert!(paths_end_with(&groups[0].1, "a.txt"));
+        assert!(paths_end_with(&groups[0].1, "b.txt"));
+        assert!(paths_end_with(&groups[1].1, "c.txt"));
+    }
+
+    #[test]
+    fn errors_when_no_path_exists() {
+        let missing = std::env::temp_dir().join(format!("painel-reveal-missing-{}", std::process::id()));
+        assert!(!missing.exists());
+        let one = group_existing(&[missing.clone()]).unwrap_err();
+        assert!(one.contains("não existe"));
+        let two = group_existing(&[missing.clone(), missing.join("outro.txt")]).unwrap_err();
+        assert!(two.contains("Nenhum dos arquivos existe"));
+    }
+
+    fn paths_end_with(paths: &[PathBuf], name: &str) -> bool {
+        paths.iter().any(|path| {
+            path.file_name()
+                .and_then(|item| item.to_str())
+                .is_some_and(|item| item.eq_ignore_ascii_case(name))
+        })
+    }
 }

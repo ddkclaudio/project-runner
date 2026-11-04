@@ -4,11 +4,10 @@ version: launch/v1
 name: my-app
 runtime: node
 kind: site
-port: 3000
-url: http://localhost:3000
-cwd: .
 commands:
-  install: "npm install"
-  start: "npm start"
+  pre-start:
+    - "npm install"
+  start:
+    - "npm start"
 env:
   PORT: "3000"

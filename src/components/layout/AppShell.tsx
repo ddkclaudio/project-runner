@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useRef } from 'react';
+import { Fragment, useCallback, useEffect, useRef } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { convertFileSrc } from '@tauri-apps/api/core';
@@ -68,6 +68,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const { activeOrg, loading: orgLoading } = useOrg();
   const stack = parseContextStack(pathname);
   const back = backTarget(pathname);
+  const goBack = useCallback(() => {
+    if (back) navigate(back);
+  }, [back, navigate]);
   const settings = useQuery({
     queryKey: ['launcher', 'settings', activeOrg?.id],
     queryFn: settingsGet,
@@ -121,6 +124,18 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   }, []);
 
   useEffect(() => {
+    function onKey(event: KeyboardEvent) {
+      if (event.key !== 'Escape' || !back || navOpen || event.defaultPrevented) return;
+      const target = event.target;
+      if (target instanceof HTMLElement && target.closest('input, textarea, select, [contenteditable="true"]')) return;
+      if (document.querySelector('[role="dialog"], [role="menu"], [aria-modal="true"]')) return;
+      goBack();
+    }
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [back, goBack, navOpen]);
+
+  useEffect(() => {
     const audio = audioRef.current;
     if (!audio) return;
     audio.volume = settings.data?.musicVolume ?? 0.2;
@@ -171,7 +186,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                   <TopbarActionButton
                     icon={<IconArrowLeft size={16} aria-hidden="true" />}
                     label="Voltar"
-                    onClick={() => navigate(back)}
+                    onClick={goBack}
                   />
                 </>
               ) : null}

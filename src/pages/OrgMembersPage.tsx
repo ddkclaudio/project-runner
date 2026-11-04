@@ -8,20 +8,17 @@ import { InlineAlert } from '@/components/ui/InlineAlert';
 import { FormCard, FormRow } from '@/components/ui/FormCard';
 import { useToast } from '@/components/ui/Toast';
 import { authErrorMessage } from '@/lib/auth-api';
-import { inviteMember, listInvites, listMembers, removeMember, revokeInvite, updateMemberRole } from '@/lib/org-api';
+import { inviteMember, listInvites, revokeInvite } from '@/lib/org-api';
 import { useOrg } from '@/contexts/OrgContext';
-import { useAuth } from '@/contexts/AuthContext';
 import styles from './library.module.css';
 
 export function OrgMembersPage() {
   const params = useParams();
   const orgId = params.orgId ?? '';
   const { activeOrg, orgs } = useOrg();
-  const { user } = useAuth();
   const toast = useToast();
   const queryClient = useQueryClient();
   const org = orgs.find((item) => item.id === orgId) || (activeOrg?.id === orgId ? activeOrg : null);
-  const members = useQuery({ queryKey: ['orgs', orgId, 'members'], queryFn: () => listMembers(orgId), enabled: Boolean(orgId) });
   const invites = useQuery({
     queryKey: ['orgs', orgId, 'invites'],
     queryFn: () => listInvites(orgId),
@@ -47,49 +44,6 @@ export function OrgMembersPage() {
     <PageShell>
       <PageShell.Heading subtitle={org?.name || orgId}>Membros</PageShell.Heading>
       {error ? <InlineAlert>{error}</InlineAlert> : null}
-      {members.error ? <InlineAlert>{authErrorMessage(members.error)}</InlineAlert> : null}
-
-      {members.isLoading ? (
-        <p className={styles.empty}>A carregar membros…</p>
-      ) : (members.data ?? []).length === 0 ? (
-        <p className={styles.empty}>Nenhum membro nesta organização.</p>
-      ) : (
-        <div className={styles.list}>
-          {(members.data ?? []).map((member) => (
-            <div key={member.userId} className={styles.listRow}>
-              <div className={styles.listText}>
-                <div className={styles.listTitle}>{member.displayName}</div>
-                <div className={styles.listMeta}>
-                  {member.email} · {member.role}
-                </div>
-              </div>
-              {org?.isOwner && member.userId !== user?.uid ? (
-                <div className={styles.listActions}>
-                  <Button
-                    onClick={() =>
-                      void updateMemberRole(orgId, member.userId, member.role === 'owner' ? 'member' : 'owner')
-                        .then(() => queryClient.invalidateQueries({ queryKey: ['orgs', orgId] }))
-                        .catch((err) => toast.error(authErrorMessage(err)))
-                    }
-                  >
-                    Tornar {member.role === 'owner' ? 'member' : 'owner'}
-                  </Button>
-                  <Button
-                    variant="danger"
-                    onClick={() =>
-                      void removeMember(orgId, member.userId)
-                        .then(() => queryClient.invalidateQueries({ queryKey: ['orgs', orgId] }))
-                        .catch((err) => toast.error(authErrorMessage(err)))
-                    }
-                  >
-                    Remover
-                  </Button>
-                </div>
-              ) : null}
-            </div>
-          ))}
-        </div>
-      )}
 
       {org?.isOwner ? (
         <PageShell.Section className={styles.blockGap}>

@@ -4,7 +4,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import ReactMarkdown from 'react-markdown';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import { open as openDialog } from '@tauri-apps/plugin-dialog';
-import { IconCopy, IconDownload, IconFolder, IconPhoto, IconX } from '@tabler/icons-react';
+import { IconCopy, IconDownload, IconFolder } from '@tabler/icons-react';
 import { PageShell } from '@/components/ui/PageShell';
 import { Button } from '@/components/ui/Button';
 import { StatusBadge, type StatusTone } from '@/components/ui/StatusBadge';
@@ -110,14 +110,98 @@ export function AppPage() {
   return <Overview app={app} />;
 }
 
+const PROJECT_IMAGE_EXT = new Set(['jpg', 'jpeg', 'png', 'webp', 'gif']);
+
+function imageExtension(path: string) {
+  const base = path.split(/[/\\]/).pop() ?? '';
+  const dot = base.lastIndexOf('.');
+  if (dot < 0) return '';
+  return base.slice(dot + 1).toLowerCase();
+}
+
+function useProjectImage(app: AppView) {
+  const toast = useToast();
+  const queryClient = useQueryClient();
+
+  async function pick() {
+    try {
+      const selected = await openDialog({
+        multiple: false,
+        title: 'Escolher imagem',
+        filters: [{ name: 'Imagens', extensions: ['jpg', 'jpeg', 'png', 'webp', 'gif'] }],
+      });
+      if (typeof selected !== 'string' || !selected) return;
+      if (!PROJECT_IMAGE_EXT.has(imageExtension(selected))) {
+        toast.error('Escolha uma imagem jpg, jpeg, png, webp ou gif.');
+        return;
+      }
+      await appSetIcon(appId(app), selected);
+      await queryClient.invalidateQueries({ queryKey: ['launcher'] });
+      toast.success('Imagem salva.');
+    } catch (err) {
+      toast.error(launcherError(err));
+    }
+  }
+
+  async function clear() {
+    try {
+      await appClearIcon(appId(app));
+      await queryClient.invalidateQueries({ queryKey: ['launcher'] });
+      toast.success('Imagem removida.');
+    } catch (err) {
+      toast.error(launcherError(err));
+    }
+  }
+
+  return { pick, clear };
+}
+
+function ProjectAvatar({
+  app,
+  onPick,
+  onClear,
+}: {
+  app: AppView;
+  onPick?: () => void;
+  onClear?: () => void;
+}) {
+  const iconSrc = appIconSrc(app);
+  const initial = (app.name.trim().charAt(0) || '?').toUpperCase();
+  const face = iconSrc ? (
+    <img className={styles.overviewIcon} src={iconSrc} alt="" />
+  ) : (
+    <div className={styles.overviewIconFallback} aria-hidden="true">
+      {initial}
+    </div>
+  );
+
+  if (!onPick) return face;
+
+  return (
+    <div className={styles.iconPicker}>
+      <button
+        type="button"
+        className={styles.iconPickerBtn}
+        onClick={onPick}
+        aria-label={iconSrc ? 'Substituir imagem do projeto' : 'Escolher imagem do projeto'}
+      >
+        {face}
+      </button>
+      {app.iconPath && onClear ? (
+        <Button type="button" variant="ghost" onClick={onClear}>
+          Remover
+        </Button>
+      ) : null}
+    </div>
+  );
+}
+
 function Overview({ app }: { app: AppView }) {
   const toast = useToast();
-  const actions = useLibraryMutations();
+  const image = useProjectImage(app);
   const { activeOrg } = useOrg();
   const id = appId(app);
   const progress = useAppProgressStore((s) => s.byId[id]);
-  const iconSrc = appIconSrc(app);
-  const initial = (app.name.trim().charAt(0) || '?').toUpperCase();
 
   const cloudflare = useQuery({
     queryKey: ['launcher', 'cloudflare', activeOrg?.id, id],
@@ -142,18 +226,6 @@ function Overview({ app }: { app: AppView }) {
         : '')
     : '';
 
-  async function runPrimary() {
-    if (app.running && app.status !== 'not_installed') {
-      await actions.restart(app);
-      return;
-    }
-    if (app.status === 'installed') {
-      await actions.launch(app);
-      return;
-    }
-    await actions.install(app);
-  }
-
   const stats: { label: string; value: string; mono?: boolean }[] = [
     { label: 'Versão instalada', value: app.installedVersion || '—' },
     { label: 'Versão remota', value: app.remoteVersion || '—' },
@@ -164,13 +236,7 @@ function Overview({ app }: { app: AppView }) {
   return (
     <PageShell>
       <header className={styles.overviewHero}>
-        {iconSrc ? (
-          <img className={styles.overviewIcon} src={iconSrc} alt="" />
-        ) : (
-          <div className={styles.overviewIconFallback} aria-hidden="true">
-            {initial}
-          </div>
-        )}
+        <ProjectAvatar app={app} onPick={() => void image.pick()} />
         <div className={styles.overviewHeroText}>
           <h1 className={styles.overviewTitle}>{app.name}</h1>
           <p className={styles.overviewRepo}>{app.repository}</p>
@@ -192,12 +258,6 @@ function Overview({ app }: { app: AppView }) {
       </header>
 
       {progress ? <AppProgressBar progress={progress} /> : null}
-
-      <div className={styles.actions}>
-        <Button type="button" disabled={Boolean(progress)} onClick={() => void runPrimary()}>
-          {actions.primaryLabel(app)}
-        </Button>
-      </div>
 
       <div className={styles.overviewStats} role="list" aria-label="Indicadores">
         {stats.map((stat) => (
@@ -339,12 +399,6 @@ function Overview({ app }: { app: AppView }) {
       ) : null}
     </PageShell>
   );
-}
-
-function iconFileName(path: string | null | undefined) {
-  if (!path) return '';
-  const parts = path.split(/[/\\]/);
-  return parts[parts.length - 1] || path;
 }
 
 function defaultSubdomain(app: AppView) {
@@ -742,10 +796,10 @@ function AppSettings({ app }: { app: AppView }) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const actions = useLibraryMutations();
+  const image = useProjectImage(app);
   const [name, setName] = useState(app.name);
   const [pendingDanger, setPendingDanger] = useState<'delete' | 'remove' | null>(null);
   const [dangerBusy, setDangerBusy] = useState(false);
-  const hasIcon = Boolean(app.iconPath);
 
   useEffect(() => {
     setName(app.name);
@@ -769,33 +823,8 @@ function AppSettings({ app }: { app: AppView }) {
         appId(app),
       );
       await queryClient.invalidateQueries({ queryKey: ['launcher'] });
+      await queryClient.invalidateQueries({ queryKey: ['launcher', 'communications'] });
       toast.success('Entrada actualizada.');
-    } catch (err) {
-      toast.error(launcherError(err));
-    }
-  }
-
-  async function pickIcon() {
-    try {
-      const selected = await openDialog({
-        multiple: false,
-        title: 'Escolher ícone',
-        filters: [{ name: 'Imagens', extensions: ['png', 'jpg', 'jpeg', 'webp', 'gif', 'ico', 'svg', 'bmp'] }],
-      });
-      if (typeof selected !== 'string' || !selected) return;
-      await appSetIcon(appId(app), selected);
-      await queryClient.invalidateQueries({ queryKey: ['launcher'] });
-      toast.success('Ícone salvo.');
-    } catch (err) {
-      toast.error(launcherError(err));
-    }
-  }
-
-  async function removeIcon() {
-    try {
-      await appClearIcon(appId(app));
-      await queryClient.invalidateQueries({ queryKey: ['launcher'] });
-      toast.success('Ícone removido.');
     } catch (err) {
       toast.error(launcherError(err));
     }
@@ -804,10 +833,6 @@ function AppSettings({ app }: { app: AppView }) {
   return (
     <PageShell>
       <PageShell.Heading subtitle="Nome, pasta, ícone e gestão da entrada na biblioteca.">Configuração</PageShell.Heading>
-
-      <div className={styles.actions}>
-        <Button onClick={() => void actions.hide(app)}>{app.manuallyHidden ? 'Mostrar na biblioteca' : 'Ocultar na biblioteca'}</Button>
-      </div>
 
       <FormCard
         onSubmit={(event) => {
@@ -835,14 +860,11 @@ function AppSettings({ app }: { app: AppView }) {
             }}
           />
         </FormRow>
-        <FormRow label="Ícone">
-          <Input
-            value={hasIcon ? iconFileName(app.iconPath) : ''}
-            readOnly
-            placeholder="Nenhum ícone"
-            rightIcon={hasIcon ? <IconX size={16} aria-hidden="true" /> : <IconPhoto size={16} aria-hidden="true" />}
-            rightIconLabel={hasIcon ? 'Remover ícone' : 'Escolher ficheiro'}
-            onRightIconClick={() => void (hasIcon ? removeIcon() : pickIcon())}
+        <FormRow label="Ícone" alignStart>
+          <ProjectAvatar
+            app={app}
+            onPick={() => void image.pick()}
+            onClear={() => void image.clear()}
           />
         </FormRow>
         <FormRow label="Pasta instalada">

@@ -225,8 +225,10 @@ function RemoteCatalog() {
     );
   }, [catalog.data, query, group]);
 
-  const rateLimited = Boolean(catalog.error && isRateLimit(catalog.error));
-  const showToken = settings.isSuccess && (!tokenReady || rateLimited);
+  const warnings = catalog.data?.warnings ?? [];
+  const rateLimited =
+    Boolean(catalog.error && isRateLimit(catalog.error)) || warnings.some((warning) => isRateLimit(warning));
+  const showToken = settings.isSuccess && (!tokenReady || (rateLimited && !catalog.data));
   const listLoading = tokenReady && catalog.isLoading && !catalog.data;
 
   async function add(entry: AppEntry) {
@@ -303,7 +305,7 @@ function RemoteCatalog() {
   }
 
   const subtitle = catalog.data
-    ? `${catalog.data.repository} · ${catalog.data.version}${catalog.data.fromCache ? ' · cache' : ''}`
+    ? [catalog.data.repository, catalog.data.version, catalog.data.fromCache ? 'cache' : ''].filter(Boolean).join(' · ')
     : 'A última release do repositório configurado.';
   const emptyMessage = query || group ? 'Nenhuma app corresponde aos filtros.' : 'O catálogo não tem apps.';
 
@@ -346,6 +348,11 @@ function RemoteCatalog() {
       ) : null}
       {!showToken && settings.isSuccess ? (
         <>
+          {warnings.map((warning, index) => (
+            <InlineAlert key={`${index}:${warning}`} variant="warning">
+              {warning}
+            </InlineAlert>
+          ))}
           {catalog.error && !rateLimited ? <InlineAlert>{launcherError(catalog.error)}</InlineAlert> : null}
           <ViewToolbar
             query={query}

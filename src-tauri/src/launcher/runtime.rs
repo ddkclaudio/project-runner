@@ -209,6 +209,136 @@ pub fn port_occupant(port: u16) -> Option<(u32, String)> {
     }
 }
 
+/// Quem ocupa a porta agora: uma app do Painel em execução, um processo à escuta, ou ambos.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PortOccupancy {
+    pub in_use: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pid: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub process_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub app_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub folder_name: Option<String>,
+}
+
+struct RunningPortOwner {
+    folder_name: String,
+    app_name: String,
+    pid: u32,
+    process_name: String,
+}
+
+/// Dono interno: o PID que escuta, a porta gravada no `openUrl`, ou o `env.PORT` quando a app corre sem URL.
+fn entry_owns_port(
+    port: u16,
+    open_url: Option<&str>,
+    configured_port: Option<u16>,
+    pid: u32,
+    listener_pid: Option<u32>,
+) -> bool {
+    if pid != 0 && listener_pid == Some(pid) {
+        return true;
+    }
+    if let Some(live) = open_url.and_then(port_from_url) {
+        return live == port;
+    }
+    configured_port == Some(port)
+}
+
+fn configured_port(meta: &Path, workspace: &Path, app: &crate::launcher::store::AppEntry) -> Option<u16> {
+    let info = crate::launcher::store::launch_info_dir(workspace, app);
+    if let Some(branch) = selected_branch(meta, &app.folder_name) {
+        let dir = crate::launcher::store::branch_launch_dir(&info, &branch);
+        if let Ok(doc) = crate::launcher::launchfile::read(&dir) {
+            if let Some(port) = crate::launcher::launchfile::effective_port(&doc) {
+                return Some(port);
+            }
+        }
+    }
+    if let Ok(doc) = crate::launcher::launchfile::read(&info) {
+        if let Some(port) = crate::launcher::launchfile::effective_port(&doc) {
+            return Some(port);
+        }
+    }
+    fs::read_to_string(info.join("open_url.txt"))
+        .ok()
+        .and_then(|raw| port_from_url(raw.trim()))
+}
+
+fn find_running_owner(
+    meta: &Path,
+    workspace: &Path,
+    port: u16,
+    listener_pid: Option<u32>,
+) -> Option<RunningPortOwner> {
+    let map = load_map(meta);
+    let keys: Vec<String> = map
+        .as_object()
+        .map(|obj| obj.keys().cloned().collect())
+        .unwrap_or_default();
+    if keys.is_empty() {
+        return None;
+    }
+    let apps = crate::launcher::store::load_apps(meta);
+    for key in keys {
+        if !is_running(meta, &key) {
+            continue;
+        }
+        let Some(item) = entry(meta, &key) else {
+            continue;
+        };
+        let app = apps
+            .iter()
+            .find(|app| app.folder_name.eq_ignore_ascii_case(&key));
+        let configured = app.and_then(|app| configured_port(meta, workspace, app));
+        if !entry_owns_port(port, item.open_url.as_deref(), configured, item.pid, listener_pid) {
+            continue;
+        }
+        let app_name = app
+            .map(|app| app.name.trim().to_string())
+            .filter(|name| !name.is_empty())
+            .unwrap_or_else(|| key.clone());
+        return Some(RunningPortOwner {
+            folder_name: key,
+            app_name,
+            pid: item.pid,
+            process_name: item.process_name,
+        });
+    }
+    None
+}
+
+/// Porta ocupada por uma app do Painel em execução ou por qualquer processo à escuta.
+pub fn inspect_port(meta: &Path, workspace: &Path, port: u16) -> PortOccupancy {
+    let listener = port_occupant(port);
+    let listener_pid = listener.as_ref().map(|(pid, _)| *pid);
+    let owner = find_running_owner(meta, workspace, port, listener_pid);
+    let in_use = listener.is_some() || owner.is_some();
+    let (pid, process_name) = if let Some((pid, name)) = listener {
+        (Some(pid), Some(name))
+    } else if let Some(owner) = &owner {
+        let pid = if owner.pid == 0 { None } else { Some(owner.pid) };
+        let name = if owner.process_name.trim().is_empty() {
+            None
+        } else {
+            Some(owner.process_name.clone())
+        };
+        (pid, name)
+    } else {
+        (None, None)
+    };
+    PortOccupancy {
+        in_use,
+        pid,
+        process_name,
+        app_name: owner.as_ref().map(|owner| owner.app_name.clone()),
+        folder_name: owner.as_ref().map(|owner| owner.folder_name.clone()),
+    }
+}
+
 pub fn kill_pid_tree(pid: u32) -> Result<(), String> {
     if pid == 0 {
         return Err("PID inválido.".into());
@@ -587,4 +717,41 @@ pub fn set_selected_branch(root: &Path, repository: &str, branch: &str) -> Resul
         obj.insert("selectedBranch".into(), json!(branch.trim()));
     }
     save_app_state(root, &map)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::entry_owns_port;
+
+    #[test]
+    fn running_app_owns_the_url_port_not_a_later_launchfile_port() {
+        assert!(entry_owns_port(
+            3000,
+            Some("http://localhost:3000/react-gh-pages"),
+            Some(4000),
+            10,
+            None
+        ));
+        assert!(!entry_owns_port(
+            4000,
+            Some("http://localhost:3000"),
+            Some(4000),
+            10,
+            None
+        ));
+    }
+
+    #[test]
+    fn running_app_without_url_owns_its_configured_port() {
+        assert!(entry_owns_port(3000, None, Some(3000), 10, None));
+        assert!(!entry_owns_port(3001, None, Some(3000), 10, None));
+        assert!(!entry_owns_port(3000, None, None, 10, None));
+    }
+
+    #[test]
+    fn listener_pid_marks_the_running_app_even_when_the_url_differs() {
+        assert!(entry_owns_port(9, Some("http://localhost:3000"), None, 42, Some(42)));
+        assert!(!entry_owns_port(9, Some("http://localhost:3000"), None, 42, Some(7)));
+        assert!(!entry_owns_port(9, None, None, 0, Some(0)));
+    }
 }

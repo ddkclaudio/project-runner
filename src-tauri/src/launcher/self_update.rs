@@ -40,9 +40,14 @@ fn write_check(root: &Path, value: &Value) {
     );
 }
 
-pub async fn check(root: &Path, force: bool) -> Result<UpdateStatus, String> {
+pub async fn check(root: &Path, force: bool, repository: Option<&str>) -> Result<UpdateStatus, String> {
     let current = env!("CARGO_PKG_VERSION").to_string();
-    let repo = update_repo(root);
+    let stored = update_repo(root);
+    let repo = match repository {
+        Some(value) => value.trim().to_string(),
+        None => stored.clone(),
+    };
+    let isolated = repository.is_some() && !repo.eq_ignore_ascii_case(&stored);
     if repo.is_empty() {
         return Ok(UpdateStatus {
             configured: false,
@@ -58,7 +63,7 @@ pub async fn check(root: &Path, force: bool) -> Result<UpdateStatus, String> {
     let mut saved = read_check(root);
     let last = saved.get("LastCheckTime").and_then(|value| value.as_i64()).unwrap_or(0);
     let now = github::now_secs();
-    if !force && now.saturating_sub(last) < 300 {
+    if !isolated && !force && now.saturating_sub(last) < 300 {
         let remote = saved.get("LastKnownVersion").and_then(|value| value.as_str()).map(|value| value.to_string());
         let available = saved.get("UpdateAvailable").and_then(|value| value.as_bool()).unwrap_or(false);
         return Ok(UpdateStatus {
@@ -69,7 +74,11 @@ pub async fn check(root: &Path, force: bool) -> Result<UpdateStatus, String> {
             current_version: current,
         });
     }
-    let etag = saved.get("ETag").and_then(|value| value.as_str()).map(|value| value.to_string());
+    let etag = if isolated {
+        None
+    } else {
+        saved.get("ETag").and_then(|value| value.as_str()).map(|value| value.to_string())
+    };
     let release = fetch_release(root, &repo, None, etag.as_deref()).await?;
     let remote = if let Some(release) = release.as_ref() {
         release.tag.clone()
@@ -77,16 +86,18 @@ pub async fn check(root: &Path, force: bool) -> Result<UpdateStatus, String> {
         saved.get("LastKnownVersion").and_then(|value| value.as_str()).unwrap_or("").to_string()
     };
     let available = !remote.is_empty() && crate::launcher::version::is_newer(&remote, &current);
-    if let Some(map) = saved.as_object_mut() {
-        map.insert("LastCheckTime".into(), json!(now));
-        map.insert("LastKnownVersion".into(), json!(remote));
-        map.insert("CurrentVersion".into(), json!(current));
-        map.insert("UpdateAvailable".into(), json!(available));
-        if let Some(release) = &release {
-            map.insert("ETag".into(), json!(release.etag));
+    if !isolated {
+        if let Some(map) = saved.as_object_mut() {
+            map.insert("LastCheckTime".into(), json!(now));
+            map.insert("LastKnownVersion".into(), json!(remote));
+            map.insert("CurrentVersion".into(), json!(current));
+            map.insert("UpdateAvailable".into(), json!(available));
+            if let Some(release) = &release {
+                map.insert("ETag".into(), json!(release.etag));
+            }
         }
+        write_check(root, &saved);
     }
-    write_check(root, &saved);
     Ok(UpdateStatus {
         configured: true,
         update_available: available,
@@ -96,8 +107,8 @@ pub async fn check(root: &Path, force: bool) -> Result<UpdateStatus, String> {
     })
 }
 
-pub async fn apply(root: &Path) -> Result<String, String> {
-    let status = check(root, true).await?;
+pub async fn apply(root: &Path, repository: Option<&str>) -> Result<String, String> {
+    let status = check(root, true, repository).await?;
     if !status.configured {
         return Err(status.message);
     }
@@ -110,7 +121,10 @@ pub async fn apply(root: &Path) -> Result<String, String> {
     if parent_text.contains("target\\debug") || parent_text.contains("target\\release") {
         return Err("A atualização do executável só corre numa instalação, não na pasta de desenvolvimento.".into());
     }
-    let repo = update_repo(root);
+    let repo = match repository {
+        Some(value) if !value.trim().is_empty() => value.trim().to_string(),
+        _ => update_repo(root),
+    };
     let release = fetch_release(root, &repo, None, None).await?.ok_or_else(|| "A release não foi encontrada.".to_string())?;
     let names: Vec<String> = release.assets.iter().map(|asset| asset.name.clone()).collect();
     let platform = platform_of(&load_settings(root));

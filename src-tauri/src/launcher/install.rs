@@ -2,6 +2,7 @@ use crate::launcher::assets::{matching_assets, wine_warning};
 use crate::launcher::github::{self, AssetInfo};
 use crate::launcher::store::{self, find_app, install_dir, installed_version, load_apps};
 use serde::Serialize;
+use image::ImageEncoder;
 use std::fs;
 use std::io::{self, Read};
 use std::path::{Component, Path, PathBuf};
@@ -300,9 +301,86 @@ fn extract_tar_gz(file: &Path, dir: &Path) -> Result<(), String> {
 }
 
 
+const AVATAR_EXTENSIONS: &[&str] = &["jpg", "jpeg", "png", "webp", "gif"];
+
+fn image_extension(source: &Path) -> Option<String> {
+    source
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .map(|ext| ext.to_ascii_lowercase())
+        .filter(|ext| AVATAR_EXTENSIONS.contains(&ext.as_str()))
+}
+
+fn encode_webp(bytes: &[u8]) -> Result<Vec<u8>, String> {
+    let decoded = image::load_from_memory(bytes).map_err(|_| "O ficheiro não é uma imagem válida.".to_string())?;
+    let rgba = decoded.to_rgba8();
+    let mut output = Vec::new();
+    image::codecs::webp::WebPEncoder::new_lossless(&mut output)
+        .write_image(
+            rgba.as_raw(),
+            rgba.width(),
+            rgba.height(),
+            image::ExtendedColorType::Rgba8,
+        )
+        .map_err(|_| "Não foi possível converter a imagem.".to_string())?;
+    if output.len() < 12 || &output[..4] != b"RIFF" || &output[8..12] != b"WEBP" {
+        return Err("Não foi possível converter a imagem.".into());
+    }
+    Ok(output)
+}
+
+/// `launch-info/avatar/icon.webp`, garantido dentro da pasta de configuração.
+fn avatar_destination(info: &Path) -> Result<PathBuf, String> {
+    if info.components().any(|part| matches!(part, Component::ParentDir)) {
+        return Err("Caminho de avatar inválido.".into());
+    }
+    fs::create_dir_all(info).map_err(|err| err.to_string())?;
+    let root = info.canonicalize().map_err(|err| err.to_string())?;
+    let dir = info.join("avatar");
+    fs::create_dir_all(&dir).map_err(|err| err.to_string())?;
+    let dir = dir.canonicalize().map_err(|err| err.to_string())?;
+    if !dir.starts_with(&root) {
+        return Err("Caminho de avatar inválido.".into());
+    }
+    let dest = dir.join("icon.webp");
+    if dest.file_name().and_then(|name| name.to_str()) != Some("icon.webp") {
+        return Err("Caminho de avatar inválido.".into());
+    }
+    Ok(dest)
+}
+
+fn remove_files_in(dir: &Path) {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        if entry.path().is_file() {
+            let _ = fs::remove_file(entry.path());
+        }
+    }
+}
+
+fn clear_stored_icons(meta: &Path, workspace: &Path, app: &store::AppEntry) {
+    let info = store::launch_info_dir(workspace, app);
+    remove_files_in(&info.join("avatar"));
+    remove_files_in(&store::images_dir(workspace, app));
+    if let Ok(entries) = fs::read_dir(meta.join("Cache").join("CustomIcons")) {
+        for entry in entries.flatten() {
+            if entry.file_name().to_string_lossy().starts_with(&store::icon_stem(app)) {
+                let _ = fs::remove_file(entry.path());
+            }
+        }
+    }
+    let cached = meta.join("Cache").join("Icons").join(format!("{}.img", store::icon_stem(app)));
+    let _ = fs::remove_file(cached);
+}
+
 pub fn remember_icon(meta: &Path, workspace: &Path, repository: &str, source: &Path) -> Result<String, String> {
     if !source.is_file() {
         return Err("O ficheiro de imagem não existe.".into());
+    }
+    if image_extension(source).is_none() {
+        return Err("Escolha uma imagem jpg, jpeg, png, webp ou gif.".into());
     }
     let mut bytes = Vec::new();
     fs::File::open(source)
@@ -311,54 +389,136 @@ pub fn remember_icon(meta: &Path, workspace: &Path, repository: &str, source: &P
     if bytes.len() > 4_000_000 {
         return Err("A imagem passa de 4 MB.".into());
     }
+    let webp = encode_webp(&bytes)?;
     let apps = load_apps(meta);
-    let app = find_app(&apps, repository)?;
-    let ext = source
-        .extension()
-        .and_then(|ext| ext.to_str())
-        .map(|ext| ext.to_ascii_lowercase())
-        .filter(|ext| matches!(ext.as_str(), "png" | "jpg" | "jpeg" | "webp" | "gif" | "ico" | "svg" | "bmp"))
-        .unwrap_or_else(|| "png".into());
-    let images = store::images_dir(workspace, app);
-    fs::create_dir_all(&images).map_err(|err| err.to_string())?;
-    if let Ok(entries) = fs::read_dir(&images) {
-        for entry in entries.flatten() {
-            if entry.path().is_file() {
-                let _ = fs::remove_file(entry.path());
-            }
-        }
-    }
-    // Limpar ícone legado em Cache/CustomIcons.
-    if let Ok(entries) = fs::read_dir(meta.join("Cache").join("CustomIcons")) {
-        for entry in entries.flatten() {
-            let name = entry.file_name().to_string_lossy().to_string();
-            if name.starts_with(&store::icon_stem(app)) {
-                let _ = fs::remove_file(entry.path());
-            }
-        }
-    }
-    let dest = images.join(format!("icon.{ext}"));
-    fs::write(&dest, bytes).map_err(|err| err.to_string())?;
+    let app = find_app(&apps, repository)?.clone();
+    let info = store::ensure_launch_info(workspace, &app)?;
+    let dest = avatar_destination(&info)?;
+    clear_stored_icons(meta, workspace, &app);
+    fs::create_dir_all(dest.parent().unwrap_or(&info)).map_err(|err| err.to_string())?;
+    fs::write(&dest, &webp).map_err(|err| err.to_string())?;
     Ok(dest.display().to_string())
 }
 
 pub fn clear_icon(meta: &Path, workspace: &Path, repository: &str) -> Result<(), String> {
     let apps = load_apps(meta);
-    let app = find_app(&apps, repository)?;
-    let images = store::images_dir(workspace, app);
-    if let Ok(entries) = fs::read_dir(&images) {
-        for entry in entries.flatten() {
-            if entry.path().is_file() {
-                let _ = fs::remove_file(entry.path());
-            }
-        }
-    }
-    if let Ok(entries) = fs::read_dir(meta.join("Cache").join("CustomIcons")) {
-        for entry in entries.flatten() {
-            if entry.file_name().to_string_lossy().starts_with(&store::icon_stem(app)) {
-                let _ = fs::remove_file(entry.path());
-            }
-        }
-    }
+    let app = find_app(&apps, repository)?.clone();
+    clear_stored_icons(meta, workspace, &app);
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::launcher::store::{self, AppEntry};
+    use image::ImageFormat;
+    use std::fs;
+
+    fn temp_root(name: &str) -> PathBuf {
+        let root = std::env::temp_dir().join(format!("painel-avatar-{name}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        store::ensure_root(&root).unwrap();
+        root
+    }
+
+    fn sample(path: &Path, format: ImageFormat) {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).unwrap();
+        }
+        if format == ImageFormat::Jpeg {
+            image::RgbImage::from_pixel(3, 2, image::Rgb([12, 34, 56]))
+                .save_with_format(path, format)
+                .unwrap();
+            return;
+        }
+        image::RgbaImage::from_pixel(3, 2, image::Rgba([12, 34, 56, 255]))
+            .save_with_format(path, format)
+            .unwrap();
+    }
+
+    fn seed(root: &Path) -> AppEntry {
+        store::upsert_app(
+            root,
+            AppEntry {
+                name: "Hello".into(),
+                repository: "acme/hello".into(),
+                folder_name: "hello".into(),
+                install_path: None,
+                app_icon_url: None,
+                preferred_version: None,
+                skipped_update_version: None,
+            },
+            None,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn avatar_is_webp_under_launch_info_not_beside_branch_launchfile() {
+        let root = temp_root("webp");
+        let app = seed(&root);
+        let info = store::launch_info_dir(&root, &app);
+        let launchfile = store::branch_launch_dir(&info, "master").join("Launchfile");
+        fs::create_dir_all(launchfile.parent().unwrap()).unwrap();
+        fs::write(&launchfile, "name: hello\ncommands:\n  start:\n    - echo hi\n").unwrap();
+        let source = root.join("picked.png");
+        sample(&source, ImageFormat::Png);
+
+        let saved = remember_icon(&root, &root, "hello", &source).unwrap();
+        let dest = PathBuf::from(&saved);
+        let expected = store::project_avatar_path(&info);
+        assert_eq!(dest.canonicalize().unwrap(), expected.canonicalize().unwrap());
+        assert!(expected.ends_with(Path::new("launch-info").join("avatar").join("icon.webp")));
+        assert!(!saved.contains("branches"));
+        let bytes = fs::read(&dest).unwrap();
+        assert_eq!(&bytes[..4], b"RIFF");
+        assert_eq!(&bytes[8..12], b"WEBP");
+        assert!(source.is_file(), "o original escolhido fica no sítio");
+        let names: Vec<_> = fs::read_dir(dest.parent().unwrap())
+            .unwrap()
+            .flatten()
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(names, vec!["icon.webp".to_string()]);
+        assert_eq!(fs::read_to_string(&launchfile).unwrap(), "name: hello\ncommands:\n  start:\n    - echo hi\n");
+
+        for (name, format) in [
+            ("photo.jpg", ImageFormat::Jpeg),
+            ("photo.jpeg", ImageFormat::Jpeg),
+            ("anim.gif", ImageFormat::Gif),
+            ("already.webp", ImageFormat::WebP),
+        ] {
+            let file = root.join(name);
+            sample(&file, format);
+            let again = PathBuf::from(remember_icon(&root, &root, "hello", &file).unwrap());
+            assert_eq!(again, dest);
+            let encoded = fs::read(&again).unwrap();
+            assert_eq!(&encoded[..4], b"RIFF");
+            assert_eq!(&encoded[8..12], b"WEBP");
+            assert!(file.is_file());
+        }
+
+        clear_icon(&root, &root, "hello").unwrap();
+        assert!(!dest.exists());
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn rejects_non_images_without_writing_avatar() {
+        let root = temp_root("reject");
+        let app = seed(&root);
+        let dest = store::project_avatar_path(&store::launch_info_dir(&root, &app));
+        let text = root.join("notes.txt");
+        fs::write(&text, b"not an image").unwrap();
+        let err = remember_icon(&root, &root, "hello", &text).unwrap_err();
+        assert!(err.contains("jpg"));
+        assert!(!dest.exists());
+
+        let fake = root.join("fake.png");
+        fs::write(&fake, b"not really a png").unwrap();
+        let err = remember_icon(&root, &root, "hello", &fake).unwrap_err();
+        assert!(err.contains("não é uma imagem"));
+        assert!(!dest.exists());
+        let _ = fs::remove_dir_all(&root);
+    }
 }

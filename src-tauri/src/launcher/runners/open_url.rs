@@ -1,7 +1,7 @@
 use crate::launcher::launchfile;
 use std::path::Path;
 
-/// URL local a partir do Launchfile (`url` ou `http://localhost:{port}`).
+/// URL local: `http://localhost:{env.PORT}` para `site` e `api`.
 pub fn detect(root: &Path) -> Option<String> {
     let doc = launchfile::read(root).ok()?;
     launchfile::open_url_of(&doc)
@@ -24,18 +24,12 @@ mod tests {
             name: "x".into(),
             runtime: "node".into(),
             kind: "site".into(),
-            port: Some(3000),
-            url: Some("http://localhost:3000/react-gh-pages".into()),
-            cwd: Some(".".into()),
             pre_start: vec!["npm install".into()],
             start: vec!["npm start".into()],
-            env: BTreeMap::new(),
+            env: BTreeMap::from([("PORT".into(), "3000".into())]),
         };
         launchfile::write(&dir, &doc).unwrap();
-        assert_eq!(
-            detect(&dir).as_deref(),
-            Some("http://localhost:3000/react-gh-pages")
-        );
+        assert_eq!(detect(&dir).as_deref(), Some("http://localhost:3000"));
         let _ = fs::remove_dir_all(&dir);
     }
 }

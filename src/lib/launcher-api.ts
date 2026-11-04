@@ -46,6 +46,7 @@ export type ServiceAccount = {
   id: string;
   label: string;
   token: string;
+  updateRepository?: string;
 };
 
 export type PublicSettings = {
@@ -69,6 +70,8 @@ export type PublicSettings = {
   linuxWindowsLaunchCommand: string;
   appListRepository: string;
   painelUpdateRepository: string;
+  appListAccountName: string;
+  appListApiToken: string;
   dataDir: string;
   appVersion: string;
 };
@@ -176,6 +179,7 @@ export type CatalogPayload = {
   version: string;
   fromCache: boolean;
   groups: { name: string; apps: AppEntry[] }[];
+  warnings?: string[];
 };
 
 export type UpdateStatus = {
@@ -197,6 +201,9 @@ export function libraryList() {
 /** Operação entre apps. Sem `kind`, o node é uma app. */
 export type CommunicationOpKind = 'increment' | 'decrement' | 'value' | 'get';
 
+/** Valor solto no grafo. Não depende de uma app. */
+export type PrimitiveValueType = 'number' | 'text' | 'multiline' | 'boolean' | 'url' | 'file';
+
 export type CommunicationNode = {
   id: string;
   folderName: string;
@@ -206,16 +213,30 @@ export type CommunicationNode = {
   y: number;
   /** O Run flow inicia esta app quando ela está parada. */
   alwaysOn: boolean;
-  /** Ausente em node de app. `increment`, `decrement`, `value` ou `get` numa operação. */
-  kind?: CommunicationOpKind;
+  /** Ausente em node de app. Operação, `primitive` para um valor solto, ou `port` para uma porta. */
+  kind?: CommunicationOpKind | 'primitive' | 'port';
   /** App ou operação de onde o valor sai. Só em node de operação. */
   sourceNodeId?: string;
   /** Campo da app de origem (`port`, `env.PORT`). Vazio quando a origem é outra operação. */
   sourceField?: string;
-  /** Texto guardado por um node `value`. */
+  /** Texto guardado por um node `value` ou `primitive`, ou a porta de um node `port`. */
   literal?: string;
+  /** Tipo do valor quando `kind` é `primitive`. */
+  valueType?: PrimitiveValueType;
   /** Quanto somar ou subtrair. Só em incrementar e decrementar. Ausente vale 1. */
   step?: string;
+  /** Última verificação gravada num node `port`. Ausente até verificar. `inUse` falso é porta livre. */
+  portStatus?: PortStatus;
+};
+
+/** Resultado de `port_check` guardado no node. Não inclui campos vazios. */
+export type PortStatus = {
+  inUse: boolean;
+  pid?: number;
+  processName?: string;
+  /** Nome da app do Painel, quando a porta é de uma app em execução. */
+  appName?: string;
+  folderName?: string;
 };
 
 export type CommunicationEdge = {
@@ -241,6 +262,25 @@ export function communicationsSave(graph: CommunicationsGraph) {
 
 export function communicationsOpenDir() {
   return invoke<void>('communications_open_dir');
+}
+
+/** Abre o explorador com estes arquivos selecionados. Cada entrada pode trazer vários caminhos separados por quebra de linha. */
+export function revealFiles(paths: string[]) {
+  return invoke<void>('reveal_files', { paths });
+}
+
+/** Quem ocupa a porta agora. `inUse` falso quando nem uma app do Painel nem outro processo a escuta. */
+export type PortOccupancy = {
+  inUse: boolean;
+  pid?: number | null;
+  processName?: string | null;
+  /** Nome da app do Painel, quando a porta é de uma app em execução. */
+  appName?: string | null;
+  folderName?: string | null;
+};
+
+export function portCheck(port: number) {
+  return invoke<PortOccupancy>('port_check', { port });
 }
 
 export function libraryRefresh(force = false) {
@@ -364,6 +404,21 @@ export function appLaunchConfigGet(repository: string) {
   return invoke<LaunchConfigView>('app_launch_config_get', { repository });
 }
 
+export type ProjectEnvEntry = {
+  key: string;
+  value: string;
+};
+
+export type ProjectEnvFile = {
+  /** `dotenv` se existe `.env`, `example` se só existe `.env.example`, `none` se nenhum existe. */
+  source: 'dotenv' | 'example' | 'none' | string;
+  entries: ProjectEnvEntry[];
+};
+
+export function appProjectEnv(repository: string) {
+  return invoke<ProjectEnvFile>('app_project_env', { repository });
+}
+
 export function appLaunchConfigSave(repository: string, input: LaunchConfigSave) {
   return invoke<LaunchConfigView>('app_launch_config_save', { repository, input });
 }
@@ -452,12 +507,17 @@ export function catalogAdd(entry: AppEntry) {
   return invoke<AppEntry>('catalog_add', { entry });
 }
 
-export function launcherCheckUpdate(force = false) {
-  return invoke<UpdateStatus>('launcher_check_update', { force });
+export function launcherCheckUpdate(force = false, repository?: string) {
+  return invoke<UpdateStatus>('launcher_check_update', {
+    force,
+    repository: repository === undefined ? null : repository.trim(),
+  });
 }
 
-export function launcherApplyUpdate() {
-  return invoke<string>('launcher_apply_update');
+export function launcherApplyUpdate(repository?: string) {
+  return invoke<string>('launcher_apply_update', {
+    repository: repository === undefined ? null : repository.trim(),
+  });
 }
 
 export function windowClose() {

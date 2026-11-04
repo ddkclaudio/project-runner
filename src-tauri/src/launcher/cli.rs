@@ -225,7 +225,7 @@ async fn execute() -> Result<(), String> {
             Ok(())
         }
         "--self-update" | "--update-launcher" => {
-            let message = self_update::apply(&root).await?;
+            let message = self_update::apply(&root, None).await?;
             println!("{message}");
             Ok(())
         }

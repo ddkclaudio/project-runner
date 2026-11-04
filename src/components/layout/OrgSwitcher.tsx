@@ -1,5 +1,5 @@
 import { useLocation, useNavigate } from 'react-router-dom';
-import { IconAffiliate, IconArrowRight, IconPlus, IconUsers, IconTicket } from '@tabler/icons-react';
+import { IconAffiliate, IconArrowRight, IconPlus } from '@tabler/icons-react';
 import { SwitcherDropdown } from '@/components/ui/SwitcherDropdown';
 import { useOrg } from '@/contexts/OrgContext';
 import { resolveOrgSwitcherNavigation } from '@/lib/contextSwitchers';
@@ -28,12 +28,6 @@ export function OrgSwitcher() {
       getEmptyMessage={(query) => (query ? `Nenhum resultado para "${query}"` : 'Nenhuma organização ainda.')}
       actions={[
         { label: 'Nova organização', icon: <IconPlus size={14} />, onClick: () => navigate('/orgs/new') },
-        {
-          label: 'Membros',
-          icon: <IconUsers size={14} />,
-          onClick: () => activeOrg && navigate(`/orgs/${activeOrg.id}/members`),
-        },
-        { label: 'Aceitar convite', icon: <IconTicket size={14} />, onClick: () => navigate('/orgs/invite') },
         {
           label: 'Ver todas as organizações',
           icon: <IconArrowRight size={14} />,

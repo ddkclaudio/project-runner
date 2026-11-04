@@ -18,28 +18,27 @@ Painel runs one Launchfile. It does not use a Procfile, Docker as a type, or sev
 Write YAML with:
 version: launch/v1
 name, runtime (node|python|rust|binary|other), kind (site|api|desktop|cli),
-optional port, url, cwd (relative to the clone and must exist),
 commands.pre-start (always present; YAML list of commands that exit),
 commands.start (always present; YAML list; every item except the last must exit; the last stays running),
-optional env (no secrets).
+env (no secrets). Always include env.PORT.
+
+Do not write a port key, a url key, or a cwd key. Painel opens http://localhost plus env.PORT for site and api. Commands always run in the clone root. Do not set a working directory and do not serve a parent folder.
 
 Launch kinds Painel can execute:
-- site: a dev server or static file server on a fixed port. Set port. If the HTML uses a path prefix, set url to that path.
-- api: an HTTP server on a fixed port.
-- desktop: an executable that stays open. Omit port unless it also listens for HTTP.
-- cli: a foreground command that stays running. Omit port when there is no HTTP server.
+- site: a dev server or static file server. Put the port it listens on in env.PORT.
+- api: an HTTP server. Put the port it listens on in env.PORT.
+- desktop: an executable that stays open. If it does not listen, still set env.PORT to "3000".
+- cli: a foreground command that stays running. If it does not listen, still set env.PORT to "3000".
 
 pre-start is where dependencies are installed. The steps change with the language and framework (npm install, python -m venv plus pip install, cargo fetch). Use an empty list when nothing must be installed. Each step must succeed again on the next launch, so prefer npm install and do not use npm ci, which deletes node_modules every time.
 If start has several steps, only the last stays alive.
 
 Painel has a Cloudflare tunnel. The tunnel only needs the port the app listens on. Painel starts cloudflared; do not put cloudflared in start or pre-start.
-If kind is site or api and the app can listen for HTTP, set port to the fixed port the last start command actually uses. Without port the Cloudflare menu stays hidden.
-If the project already reads PORT (CRA, Vite, Next, Flask, uvicorn), put that same number in port and in env.PORT. Do not invent CLOUDFLARE_*, TUNNEL_*, hostname, or token variables.
-For desktop or cli with no HTTP server, omit port. Do not invent a port just so a tunnel exists.
-If index.html references an absolute subpath such as /repo-name/, serve the parent directory (cwd: ..) and set url to http://localhost:PORT/that-path/. Serving the folder itself at / makes those assets 404.
+If the project already reads PORT (CRA, Vite, Next, Flask, uvicorn), put that same number only in env.PORT. If the project does not fix a port, write env.PORT as "3000". Do not invent CLOUDFLARE_*, TUNNEL_*, hostname, or token variables.
+
+The Executável screen has two tabs. The App tab is this Launchfile: name, runtime, kind, commands, and env. The Variáveis tab reads the clone's .env, or .env.example when .env is missing. That file is not part of the YAML. You may read .env.example names to learn what the project expects. Never copy secret values into the Launchfile. Write under env only what startup needs, starting with PORT.
 
 Never invent file paths — list_dir / search / read_file first.
-For .env files, only use variable NAMES; never copy secret values into the Launchfile.
 Each command is a plain shell command. Put variables under env:, never VAR=value prefixes.
 When ready, call write_launchfile or update_launchfile, then finish.
 "#;

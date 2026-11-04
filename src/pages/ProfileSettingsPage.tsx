@@ -18,18 +18,15 @@ import { useAccountLocalPrefs } from '@/hooks/useAccountLocalPrefs';
 import { authErrorMessage } from '@/lib/auth-api';
 import {
   getDataLocation,
-  launcherApplyUpdate,
-  launcherCheckUpdate,
   launcherError,
   setDataLocation,
   settingsGet,
   settingsSave,
   type PublicSettings,
   type ServiceAccount,
-  type UpdateStatus,
 } from '@/lib/launcher-api';
 import { logOpenFolder, logPath } from '@/lib/activity-log';
-import { AccountForm, AccountLibrary, accountTitle } from '@/components/settings/AccountLibrary';
+import { AccountForm, AccountLibrary, accountTitle, GithubVersionRow, type AccountLibraryExtra } from '@/components/settings/AccountLibrary';
 import libraryStyles from './library.module.css';
 
 type Draft = Omit<PublicSettings, 'dataDir' | 'appVersion'>;
@@ -55,10 +52,25 @@ const EMPTY: Draft = {
   linuxWindowsLaunchCommand: '',
   appListRepository: 'SirDiabo/GHLAppList',
   painelUpdateRepository: '',
+  appListAccountName: '',
+  appListApiToken: '',
 };
 
 function firstToken(accounts: ServiceAccount[] | undefined) {
   return (accounts ?? []).find((account) => account.token.trim())?.token.trim() ?? '';
+}
+
+function githubCatalogExtra(draft: Draft): AccountLibraryExtra {
+  const repository = draft.appListRepository.trim();
+  const name = draft.appListAccountName.trim();
+  return {
+    id: 'catalog',
+    title: 'Catálogo',
+    subtitle: [name, repository].filter(Boolean).join(' · ') || 'Sem repositório',
+    badge: repository ? 'Configurado' : 'Sem repositório',
+    tone: repository ? 'success' : 'muted',
+    href: '/settings/github/catalog',
+  };
 }
 
 const GITHUB_HINT =
@@ -87,7 +99,6 @@ export function ProfileSettingsPage() {
   const [name, setName] = useState(user?.displayName ?? '');
   const [dataPath, setDataPath] = useState('');
   const [draft, setDraft] = useState<Draft>(EMPTY);
-  const [update, setUpdate] = useState<UpdateStatus | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [folderAlert, setFolderAlert] = useState<string | null>(null);
@@ -117,12 +128,11 @@ export function ProfileSettingsPage() {
       ...rest,
       githubAccounts: rest.githubAccounts ?? [],
       cloudflareAccounts: rest.cloudflareAccounts ?? [],
+      appListAccountName: rest.appListAccountName ?? '',
+      appListApiToken: rest.appListApiToken ?? '',
     });
   }, [settings.data]);
 
-  const cloudflareDirty = Boolean(
-    settings.data && draft.cloudflaredPath.trim() !== (settings.data.cloudflaredPath ?? '').trim(),
-  );
   const deepseekDirty = Boolean(
     settings.data && draft.deepseekApiToken.trim() !== (settings.data.deepseekApiToken ?? '').trim(),
   );
@@ -143,7 +153,9 @@ export function ProfileSettingsPage() {
   );
   const githubDirty = Boolean(
     settings.data &&
-      (draft.appListRepository.trim() !== (settings.data.appListRepository ?? '').trim() ||
+      (draft.appListAccountName.trim() !== (settings.data.appListAccountName ?? '').trim() ||
+        draft.appListApiToken.trim() !== (settings.data.appListApiToken ?? '').trim() ||
+        draft.appListRepository.trim() !== (settings.data.appListRepository ?? '').trim() ||
         draft.painelUpdateRepository.trim() !== (settings.data.painelUpdateRepository ?? '').trim()),
   );
 
@@ -168,7 +180,12 @@ export function ProfileSettingsPage() {
     if (!current) return false;
     const { dataDir: _dataDir, appVersion: _appVersion, ...rest } = current;
     const cleaned = accounts
-      .map((account) => ({ id: account.id, label: account.label.trim(), token: account.token.trim() }))
+      .map((account) => ({
+        id: account.id,
+        label: account.label.trim(),
+        token: account.token.trim(),
+        updateRepository: (account.updateRepository ?? '').trim(),
+      }))
       .filter((account) => account.token);
     setBusy(true);
     setError(null);
@@ -184,28 +201,6 @@ export function ProfileSettingsPage() {
     } catch (err) {
       setError(launcherError(err));
       return false;
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function saveCloudflare(event: React.FormEvent) {
-    event.preventDefault();
-    if (!cloudflareDirty || !settings.data) return;
-    setBusy(true);
-    setError(null);
-    try {
-      const accounts = settings.data.cloudflareAccounts ?? [];
-      await settingsSave({
-        ...draft,
-        cloudflareAccounts: accounts,
-        cloudflareApiToken: firstToken(accounts),
-        cloudflaredPath: draft.cloudflaredPath.trim(),
-      });
-      await queryClient.invalidateQueries({ queryKey: ['launcher', 'settings'] });
-      toast.success('Definições Cloudflare salvas.');
-    } catch (err) {
-      setError(launcherError(err));
     } finally {
       setBusy(false);
     }
@@ -238,6 +233,8 @@ export function ProfileSettingsPage() {
         ...draft,
         githubAccounts: accounts,
         githubApiToken: firstToken(accounts),
+        appListAccountName: draft.appListAccountName.trim(),
+        appListApiToken: draft.appListApiToken.trim(),
         appListRepository: draft.appListRepository.trim(),
         painelUpdateRepository: draft.painelUpdateRepository.trim(),
       });
@@ -322,6 +319,60 @@ export function ProfileSettingsPage() {
         : [];
   const basePath = serviceKind === 'github' ? '/settings/github' : '/settings/cloudflare';
 
+  if (accountId === 'catalog' && serviceKind === 'github') {
+    return (
+      <PageShell>
+        <PageShell.Heading subtitle="GitHub">Catálogo</PageShell.Heading>
+        {error ? <InlineAlert>{error}</InlineAlert> : null}
+        <FormCard onSubmit={(event) => void saveGithub(event)} aria-label="Catálogo e atualização">
+          <FormCard.Header
+            title="Catálogo e atualização"
+            subtitle="A Nova app lista os repositórios de todas as contas."
+          />
+          <FormRow label="Nome da conta">
+            <Input
+              value={draft.appListAccountName}
+              onChange={(event) => patchDraft({ appListAccountName: event.target.value })}
+              placeholder="Trabalho"
+            />
+          </FormRow>
+          <FormRow label="Token">
+            <Input
+              type="password"
+              value={draft.appListApiToken}
+              onChange={(event) => patchDraft({ appListApiToken: event.target.value })}
+              autoComplete="off"
+            />
+            <FormCard.Hint>O nome aparece na lista. O token fica só nesta conta.</FormCard.Hint>
+          </FormRow>
+          <FormRow label="Catálogo">
+            <Input
+              value={draft.appListRepository}
+              onChange={(event) => patchDraft({ appListRepository: event.target.value })}
+            />
+          </FormRow>
+          <FormRow label="Atualização">
+            <Input
+              value={draft.painelUpdateRepository}
+              onChange={(event) => patchDraft({ painelUpdateRepository: event.target.value })}
+            />
+            <FormCard.Hint>Vazio desliga a atualização. Não use o repositório Avalonia do GithubLauncher.</FormCard.Hint>
+          </FormRow>
+          <GithubVersionRow repository={draft.painelUpdateRepository} />
+          {githubDirty ? (
+            <FormCard.Footer
+              right={
+                <Button type="submit" variant="secondary" disabled={busy || settings.isLoading}>
+                  Salvar
+                </Button>
+              }
+            />
+          ) : null}
+        </FormCard>
+      </PageShell>
+    );
+  }
+
   if (accountId && serviceKind) {
     const isNew = accountId === 'new';
     const account = isNew ? undefined : savedAccounts.find((item) => item.id === accountId);
@@ -342,6 +393,7 @@ export function ProfileSettingsPage() {
             mode={isNew ? 'new' : 'edit'}
             account={account}
             hint={serviceKind === 'github' ? GITHUB_HINT : CLOUDFLARE_HINT}
+            githubExtras={serviceKind === 'github'}
             busy={busy || settings.isLoading}
             onSubmit={(next) => {
               const list = isNew ? [...savedAccounts, next] : savedAccounts.map((item) => (item.id === next.id ? next : item));
@@ -608,110 +660,24 @@ export function ProfileSettingsPage() {
               );
             }}
           />
-          <div className={libraryStyles.blockGap}>
-            <FormCard onSubmit={(event) => void saveCloudflare(event)} aria-label="cloudflared">
-              <FormCard.Header
-                title="cloudflared"
-                subtitle="O domínio escolhe-se em cada app. Estas contas entram todas na lista."
-              />
-              <FormRow label="Caminho cloudflared">
-                <Input
-                  value={draft.cloudflaredPath}
-                  onChange={(event) => patchDraft({ cloudflaredPath: event.target.value })}
-                  placeholder="Vazio = detectar automaticamente (where/which)"
-                />
-                <FormCard.Hint>
-                  Binário do agente de túnel. Se vazio, o Painel tenta <code>where cloudflared</code> (Windows) ou pastas
-                  comuns. Necessário para Quick e Domínio.
-                </FormCard.Hint>
-              </FormRow>
-              {cloudflareDirty ? (
-                <FormCard.Footer
-                  right={
-                    <Button type="submit" variant="secondary" disabled={busy || settings.isLoading}>
-                      Salvar
-                    </Button>
-                  }
-                />
-              ) : null}
-            </FormCard>
-          </div>
         </>
       ) : null}
 
       {section === 'github' ? (
-        <>
-          <AccountLibrary
-            accounts={savedAccounts}
-            loading={settings.isLoading && savedAccounts.length === 0}
-            basePath="/settings/github"
-            emptyMessage="Nenhuma conta GitHub. Adicione uma para listar repositórios."
-            onRemove={(account) => {
-              void commitAccounts(
-                'github',
-                savedAccounts.filter((item) => item.id !== account.id),
-                'Conta removida.',
-              );
-            }}
-          />
-          <div className={libraryStyles.blockGap}>
-            <FormCard onSubmit={(event) => void saveGithub(event)} aria-label="Catálogo e atualização">
-              <FormCard.Header
-                title="Catálogo e atualização"
-                subtitle="A Nova app lista os repositórios de todas as contas."
-              />
-              <FormRow label="Catálogo">
-                <Input
-                  value={draft.appListRepository}
-                  onChange={(event) => patchDraft({ appListRepository: event.target.value })}
-                />
-              </FormRow>
-              <FormRow label="Atualização">
-                <Input
-                  value={draft.painelUpdateRepository}
-                  onChange={(event) => patchDraft({ painelUpdateRepository: event.target.value })}
-                />
-                <FormCard.Hint>Vazio desliga a atualização. Não use o repositório Avalonia do GithubLauncher.</FormCard.Hint>
-              </FormRow>
-              <FormRow label="Versão" alignStart>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-                  {update ? (
-                    <InlineAlert variant={update.updateAvailable ? 'warning' : 'info'}>{update.message}</InlineAlert>
-                  ) : null}
-                  <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                    <Button
-                      type="button"
-                      onClick={() =>
-                        void launcherCheckUpdate(true)
-                          .then(setUpdate)
-                          .catch((err) => toast.error(launcherError(err)))
-                      }
-                    >
-                      Procurar atualização
-                    </Button>
-                    <Button
-                      type="button"
-                      variant="secondary"
-                      disabled={!update?.updateAvailable}
-                      onClick={() => void launcherApplyUpdate().catch((err) => toast.error(launcherError(err)))}
-                    >
-                      Aplicar
-                    </Button>
-                  </div>
-                </div>
-              </FormRow>
-              {githubDirty ? (
-                <FormCard.Footer
-                  right={
-                    <Button type="submit" variant="secondary" disabled={busy || settings.isLoading}>
-                      Salvar
-                    </Button>
-                  }
-                />
-              ) : null}
-            </FormCard>
-          </div>
-        </>
+        <AccountLibrary
+          accounts={savedAccounts}
+          extras={[githubCatalogExtra(draft)]}
+          loading={settings.isLoading && savedAccounts.length === 0}
+          basePath="/settings/github"
+          emptyMessage="Nenhuma conta GitHub. Adicione uma para listar repositórios."
+          onRemove={(account) => {
+            void commitAccounts(
+              'github',
+              savedAccounts.filter((item) => item.id !== account.id),
+              'Conta removida.',
+            );
+          }}
+        />
       ) : null}
 
       <Modal

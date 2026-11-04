@@ -10,9 +10,6 @@ pub struct LaunchfileDoc {
     pub name: String,
     pub runtime: String,
     pub kind: String,
-    pub port: Option<u16>,
-    pub url: Option<String>,
-    pub cwd: Option<String>,
     /// Passos que terminam antes do arranque (instalar dependências, etc.).
     pub pre_start: Vec<String>,
     /// Passos de arranque. O último fica vivo; os anteriores terminam.
@@ -38,15 +35,55 @@ pub fn read(root: &Path) -> Result<LaunchfileDoc, String> {
 }
 
 pub fn write(root: &Path, doc: &LaunchfileDoc) -> Result<(), String> {
-    validate(doc)?;
-    let raw = serialize(doc);
+    let mut doc = doc.clone();
+    prepare(&mut doc);
+    validate(&doc)?;
+    let raw = serialize(&doc);
     fs::write(path(root), raw).map_err(|err| err.to_string())
+}
+
+/// Substitui só a linha `name` do topo. O resto do ficheiro fica igual.
+pub fn set_name(root: &Path, name: &str) -> Result<(), String> {
+    let file = path(root);
+    if !file.is_file() {
+        return Ok(());
+    }
+    let raw = fs::read_to_string(&file).map_err(|err| err.to_string())?;
+    let Some(next) = replace_name_line(&raw, name) else {
+        return Ok(());
+    };
+    if next == raw {
+        return Ok(());
+    }
+    fs::write(&file, next).map_err(|err| err.to_string())
+}
+
+fn replace_name_line(raw: &str, name: &str) -> Option<String> {
+    let rendered = yaml_scalar(name.trim());
+    let mut found = false;
+    let mut out = String::new();
+    for line in raw.split_inclusive('\n') {
+        let body = line.trim_end_matches(['\r', '\n']);
+        let ending = &line[body.len()..];
+        if !found && !body.starts_with(' ') && !body.starts_with('\t') {
+            if let Some((key, _)) = split_kv(body) {
+                if key == "name" {
+                    out.push_str("name: ");
+                    out.push_str(&rendered);
+                    out.push_str(ending);
+                    found = true;
+                    continue;
+                }
+            }
+        }
+        out.push_str(line);
+    }
+    found.then_some(out)
 }
 
 pub fn write_raw(root: &Path, raw: &str) -> Result<LaunchfileDoc, String> {
     let doc = parse(raw)?;
-    validate(&doc)?;
-    fs::write(path(root), raw).map_err(|err| err.to_string())?;
+    write(root, &doc)?;
     Ok(doc)
 }
 
@@ -84,34 +121,38 @@ pub fn start_setup(doc: &LaunchfileDoc) -> Vec<String> {
     steps[..steps.len() - 1].to_vec()
 }
 
-/// Porta efectiva: campo `port` ou `env.PORT` / `env.PORTA`.
+/// Porta que o processo escuta: só `env.PORT`.
 pub fn effective_port(doc: &LaunchfileDoc) -> Option<u16> {
-    if let Some(port) = doc.port {
-        return Some(port);
-    }
-    for key in ["PORT", "Port", "port", "PORTA"] {
-        if let Some(raw) = doc.env.get(key) {
-            if let Ok(port) = raw.trim().parse::<u16>() {
-                if port > 0 {
-                    return Some(port);
-                }
-            }
-        }
-    }
-    None
+    doc.env.get("PORT").and_then(|raw| parse_port(raw))
 }
 
 pub fn open_url_of(doc: &LaunchfileDoc) -> Option<String> {
-    if let Some(url) = doc.url.as_ref().map(|item| item.trim()).filter(|item| !item.is_empty()) {
-        return Some(url.to_string());
+    let kind = doc.kind.to_lowercase();
+    if kind != "site" && kind != "api" {
+        return None;
     }
-    if let Some(port) = effective_port(doc) {
-        let kind = doc.kind.to_lowercase();
-        if kind == "site" || kind == "api" {
-            return Some(format!("http://localhost:{port}"));
-        }
+    effective_port(doc).map(|port| format!("http://localhost:{port}"))
+}
+
+/// Tira `BROWSER` do ficheiro e garante `env.PORT`. A porta em falta ou inválida fica `3000`.
+pub fn prepare(doc: &mut LaunchfileDoc) {
+    let browser: Vec<String> = doc
+        .env
+        .keys()
+        .filter(|key| key.eq_ignore_ascii_case("BROWSER"))
+        .cloned()
+        .collect();
+    for key in browser {
+        doc.env.remove(&key);
     }
-    None
+    if effective_port(doc).is_none() {
+        doc.env.insert("PORT".into(), "3000".into());
+    }
+}
+
+fn parse_port(raw: &str) -> Option<u16> {
+    let port = raw.trim().parse::<u16>().ok()?;
+    if port > 0 { Some(port) } else { None }
 }
 
 pub fn template_raw(name: &str) -> String {
@@ -121,9 +162,6 @@ version: launch/v1
 name: {name}
 runtime: node
 kind: site
-port: 3000
-url: http://localhost:3000
-cwd: .
 commands:
   pre-start:
     - "npm install"
@@ -149,25 +187,15 @@ pub fn serialize(doc: &LaunchfileDoc) -> String {
     out.push_str(&format!("name: {}\n", yaml_scalar(&doc.name)));
     out.push_str(&format!("runtime: {}\n", yaml_scalar(&doc.runtime)));
     out.push_str(&format!("kind: {}\n", yaml_scalar(&doc.kind)));
-    if let Some(port) = doc.port {
-        out.push_str(&format!("port: {port}\n"));
-    }
-    if let Some(url) = doc.url.as_ref().map(|item| item.trim()).filter(|item| !item.is_empty()) {
-        out.push_str(&format!("url: {}\n", yaml_scalar(url)));
-    }
-    let cwd = doc
-        .cwd
-        .as_ref()
-        .map(|item| item.trim())
-        .filter(|item| !item.is_empty())
-        .unwrap_or(".");
-    out.push_str(&format!("cwd: {}\n", yaml_scalar(cwd)));
     out.push_str("commands:\n");
     write_list(&mut out, "pre-start", &doc.pre_start);
     write_list(&mut out, "start", &doc.start);
     if !doc.env.is_empty() {
         out.push_str("env:\n");
         for (key, value) in &doc.env {
+            if key.eq_ignore_ascii_case("BROWSER") {
+                continue;
+            }
             out.push_str(&format!("  {}: {}\n", key, yaml_quoted(value)));
         }
     }
@@ -207,11 +235,6 @@ pub fn parse(raw: &str) -> Result<LaunchfileDoc, String> {
                     "name" => doc.name = unquote(value),
                     "runtime" => doc.runtime = unquote(value),
                     "kind" => doc.kind = unquote(value),
-                    "port" => {
-                        doc.port = unquote(value).parse().ok();
-                    }
-                    "url" => doc.url = Some(unquote(value)).filter(|item| !item.is_empty()),
-                    "cwd" => doc.cwd = Some(unquote(value)).filter(|item| !item.is_empty()),
                     "start" => push_step(&mut doc.start, value),
                     _ => {}
                 }
@@ -263,6 +286,7 @@ pub fn parse(raw: &str) -> Result<LaunchfileDoc, String> {
             Section::Root => {}
         }
     }
+    prepare(&mut doc);
     validate(&doc)?;
     Ok(doc)
 }
@@ -365,12 +389,37 @@ env:
         let doc = parse(raw).unwrap();
         assert_eq!(doc.start, vec!["npm start".to_string()]);
         assert_eq!(doc.pre_start, vec!["npm install".to_string()]);
-        assert_eq!(doc.port, Some(3000));
-        assert_eq!(doc.url.as_deref(), Some("http://localhost:3000/react-gh-pages"));
         assert_eq!(doc.env.get("PORT").map(String::as_str), Some("3000"));
+        assert_eq!(open_url_of(&doc).as_deref(), Some("http://localhost:3000"));
         let again = parse(&serialize(&doc)).unwrap();
         assert_eq!(again.start, doc.start);
         assert_eq!(again.pre_start, doc.pre_start);
+        let saved = serialize(&doc);
+        assert!(!saved.lines().any(|line| {
+            let key = line.trim().split_once(':').map(|(key, _)| key.trim()).unwrap_or("");
+            key == "port" || key == "url" || key == "cwd"
+        }));
+    }
+
+    #[test]
+    fn missing_port_becomes_3000_and_browser_is_dropped() {
+        let raw = r#"
+version: launch/v1
+name: demo
+runtime: node
+kind: cli
+port: 4000
+commands:
+  start:
+    - "npm start"
+env:
+  BROWSER: "chrome"
+"#;
+        let doc = parse(raw).unwrap();
+        assert_eq!(doc.env.get("PORT").map(String::as_str), Some("3000"));
+        assert!(!doc.env.keys().any(|key| key.eq_ignore_ascii_case("BROWSER")));
+        assert_eq!(open_url_of(&doc), None);
+        assert!(!serialize(&doc).contains("BROWSER"));
     }
 
     #[test]

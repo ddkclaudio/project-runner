@@ -1,4 +1,4 @@
-import { IconHome, IconAffiliate, IconBooks, IconSettings, IconComponents, IconLayoutSidebarLeftCollapse, IconLayoutSidebarLeftExpand, IconLayoutDashboard, IconVersions, IconTerminal2, IconLink, IconNotes, IconAdjustments, IconCloud } from '@tabler/icons-react';
+import { IconHome, IconAffiliate, IconBooks, IconSettings, IconLayoutSidebarLeftCollapse, IconLayoutSidebarLeftExpand, IconLayoutDashboard, IconTerminal2, IconAdjustments, IconCloud } from '@tabler/icons-react';
 import { useLocation } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { NavMenuItem } from '@/components/ui/NavMenuItem';
@@ -63,7 +63,6 @@ const LIBRARY: NavItem[] = [
   { label: 'Comunicações', href: '/comunicacoes', Icon: IconAffiliate, exact: true },
   { label: 'Catálogo', href: '/catalog', Icon: IconBooks, exact: false },
   { label: 'Definições', href: '/settings/profile', Icon: IconSettings, exact: false },
-  { label: 'Componentes', href: '/components', Icon: IconComponents, exact: false },
 ];
 
 export function LibrarySidebar() {
@@ -84,13 +83,10 @@ export function AppMenuSidebar({ repository: folder }: { repository: string }) {
 
   const items: NavItem[] = [
     { label: 'Visão geral', href: appHref(folder), Icon: IconLayoutDashboard, exact: true },
-    { label: 'Versões', href: appHref(folder, 'versions'), Icon: IconVersions, exact: true },
     { label: 'Executável', href: appHref(folder, 'executable'), Icon: IconTerminal2, exact: true },
-    { label: 'Atalhos', href: appHref(folder, 'shortcuts'), Icon: IconLink, exact: true },
     ...(showCloudflare
       ? [{ label: 'Cloudflare', href: appHref(folder, 'cloudflare'), Icon: IconCloud, exact: true } satisfies NavItem]
       : []),
-    { label: 'Changelog', href: appHref(folder, 'changelog'), Icon: IconNotes, exact: true },
     { label: 'Configuração', href: appHref(folder, 'settings'), Icon: IconAdjustments, exact: true },
   ];
   return <ShellSidebar label="Navegação da app" items={items} />;

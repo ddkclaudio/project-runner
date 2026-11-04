@@ -11,6 +11,8 @@ use crate::launcher::github;
 use crate::session::AppPaths;
 use serde::Serialize;
 use serde_json::Value;
+use std::collections::HashSet;
+use std::fs;
 use std::path::PathBuf;
 use tauri::{AppHandle, Emitter, Manager, State};
 
@@ -53,6 +55,9 @@ pub struct CatalogPayload {
     pub version: String,
     pub from_cache: bool,
     pub groups: Vec<CatalogGroup>,
+    /// Falhas parciais (catálogo ou uma conta). A lista que deu certo continua aqui.
+    #[serde(default)]
+    pub warnings: Vec<String>,
 }
 
 #[derive(Serialize)]
@@ -99,6 +104,128 @@ fn catalog_groups(value: &Value) -> Vec<CatalogGroup> {
     }]
 }
 
+/// Identidade de clone: `dono/nome`, sem maiúsculas e sem sufixo `.git`.
+fn repo_identity(value: &str) -> String {
+    let trimmed = value.trim().trim_matches('/');
+    let bytes = trimmed.as_bytes();
+    let trimmed = if bytes.len() >= 4 && bytes[bytes.len() - 4..].eq_ignore_ascii_case(b".git") {
+        &trimmed[..trimmed.len() - 4]
+    } else {
+        trimmed
+    };
+    trimmed.trim_matches('/').to_lowercase()
+}
+
+fn unique_group_name(groups: &[CatalogGroup], label: &str) -> String {
+    let base = {
+        let trimmed = label.trim();
+        if trimmed.is_empty() { "Conta" } else { trimmed }
+    };
+    if !groups.iter().any(|group| group.name.eq_ignore_ascii_case(base)) {
+        return base.to_string();
+    }
+    let suffixed = format!("{base} · Conta");
+    if !groups.iter().any(|group| group.name.eq_ignore_ascii_case(&suffixed)) {
+        return suffixed;
+    }
+    let mut index = 2usize;
+    loop {
+        let candidate = format!("{base} · Conta {index}");
+        if !groups.iter().any(|group| group.name.eq_ignore_ascii_case(&candidate)) {
+            return candidate;
+        }
+        index += 1;
+    }
+}
+
+fn entry_from_repo(repo: &github::GithubRepo) -> store::AppEntry {
+    let icon = repo.avatar_url.trim();
+    let name = repo.name.trim();
+    store::AppEntry {
+        name: if name.is_empty() { repo.full_name.trim().to_string() } else { name.to_string() },
+        repository: repo.full_name.trim().trim_matches('/').to_string(),
+        folder_name: String::new(),
+        install_path: None,
+        app_icon_url: if icon.is_empty() { None } else { Some(icon.to_string()) },
+        preferred_version: None,
+        skipped_update_version: None,
+    }
+}
+
+/// Projetos do catálogo primeiro. Repositórios das contas vêm a seguir, agrupados pelo nome da conta.
+/// O mesmo `dono/nome` fica uma vez: a entrada do catálogo ganha.
+fn append_account_projects(groups: &mut Vec<CatalogGroup>, repos: &[github::GithubRepo]) {
+    let mut seen: HashSet<String> = groups
+        .iter()
+        .flat_map(|group| group.apps.iter().map(|app| repo_identity(&app.repository)))
+        .filter(|key| !key.is_empty())
+        .collect();
+    let mut ordered: Vec<&github::GithubRepo> = repos.iter().collect();
+    ordered.sort_by(|left, right| {
+        left.account_label
+            .to_lowercase()
+            .cmp(&right.account_label.to_lowercase())
+            .then_with(|| left.full_name.to_lowercase().cmp(&right.full_name.to_lowercase()))
+            .then_with(|| left.account_id.cmp(&right.account_id))
+    });
+    let mut created: Vec<(String, String)> = Vec::new();
+    for repo in ordered {
+        let key = repo_identity(&repo.full_name);
+        if key.is_empty() || !seen.insert(key) {
+            continue;
+        }
+        let label_key = repo.account_label.trim().to_lowercase();
+        if let Some((_, name)) = created.iter().find(|(label, _)| label == &label_key) {
+            let name = name.clone();
+            if let Some(group) = groups.iter_mut().find(|group| group.name == name) {
+                group.apps.push(entry_from_repo(repo));
+            }
+            continue;
+        }
+        let name = unique_group_name(groups, &repo.account_label);
+        created.push((label_key, name.clone()));
+        groups.push(CatalogGroup {
+            name,
+            apps: vec![entry_from_repo(repo)],
+        });
+    }
+}
+
+/// Junta o apps.json do repositório Catálogo com os repositórios das contas GitHub.
+/// Uma fonte em falta ou com erro não apaga a outra.
+fn assemble_catalog(
+    repository: String,
+    catalog: Result<(String, Value, bool), String>,
+    accounts: Result<github::GithubRepoList, String>,
+) -> Result<CatalogPayload, String> {
+    let mut warnings = Vec::new();
+    let (version, from_cache, mut groups) = match catalog {
+        Ok((version, value, from_cache)) => (version, from_cache, catalog_groups(&value)),
+        Err(err) => {
+            warnings.push(format!("Catálogo: {err}"));
+            (String::new(), false, Vec::new())
+        }
+    };
+    groups.retain(|group| !group.apps.is_empty());
+    match accounts {
+        Ok(list) => {
+            warnings.extend(list.warnings);
+            append_account_projects(&mut groups, &list.repos);
+        }
+        Err(err) => warnings.push(err),
+    }
+    if groups.is_empty() && !warnings.is_empty() {
+        return Err(warnings.join(" "));
+    }
+    Ok(CatalogPayload {
+        repository,
+        version,
+        from_cache,
+        groups,
+        warnings,
+    })
+}
+
 fn roots(paths: &AppPaths) -> Result<(PathBuf, PathBuf), String> {
     Ok((paths.org_root()?, paths.workspace_root()?))
 }
@@ -130,9 +257,28 @@ pub async fn library_refresh(paths: State<'_, AppPaths>, force: bool) -> Result<
     store::snapshot(&meta, &workspace)
 }
 
+fn sync_launchfile_alias(workspace: &std::path::Path, app: &AppEntry) -> Result<(), String> {
+    crate::launcher::launchfile::set_name(&store::app_dir(workspace, app), &app.name)
+}
+
 #[tauri::command]
 pub fn library_save(paths: State<'_, AppPaths>, entry: AppEntry, previous: Option<String>) -> Result<AppEntry, String> {
-    store::upsert_app(&paths.org_root()?, entry, previous)
+    let (meta, workspace) = roots(&paths)?;
+    let previous_key = previous.clone().unwrap_or_default();
+    let previous_name = if previous_key.trim().is_empty() {
+        None
+    } else {
+        store::load_apps(&meta).into_iter().find(|app| {
+            app.folder_name.eq_ignore_ascii_case(previous_key.trim())
+                || app.repository.eq_ignore_ascii_case(previous_key.trim())
+        }).map(|app| app.name)
+    };
+    let saved = store::upsert_app(&meta, entry, previous)?;
+    if previous_name.as_deref().is_some_and(|name| name != saved.name) {
+        store::persist_app_alias(&meta, &saved)?;
+        sync_launchfile_alias(&workspace, &saved)?;
+    }
+    Ok(saved)
 }
 
 #[tauri::command]
@@ -353,6 +499,87 @@ pub fn app_launch_config_save(
     runners::save_launch_config(&launch_dir, input)
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectEnvEntry {
+    pub key: String,
+    pub value: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectEnvFile {
+    /// `dotenv` quando existe `.env`, `example` quando só existe `.env.example`, `none` quando nenhum existe.
+    pub source: String,
+    pub entries: Vec<ProjectEnvEntry>,
+}
+
+fn parse_env_file(raw: &str) -> Vec<ProjectEnvEntry> {
+    let mut entries = Vec::new();
+    for line in raw.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        let trimmed = trimmed.strip_prefix("export ").unwrap_or(trimmed).trim();
+        let Some((key, value)) = trimmed.split_once('=') else {
+            continue;
+        };
+        let key = key.trim();
+        if key.is_empty() || key.contains(char::is_whitespace) {
+            continue;
+        }
+        let value = value.trim();
+        let value = if value.len() >= 2 {
+            let quote = value.as_bytes()[0];
+            let end = value.as_bytes()[value.len() - 1];
+            if (quote == b'"' && end == b'"') || (quote == b'\'' && end == b'\'') {
+                value[1..value.len() - 1].to_string()
+            } else {
+                value.to_string()
+            }
+        } else {
+            value.to_string()
+        };
+        entries.push(ProjectEnvEntry {
+            key: key.to_string(),
+            value,
+        });
+    }
+    entries
+}
+
+#[tauri::command]
+pub fn app_project_env(paths: State<'_, AppPaths>, repository: String) -> Result<ProjectEnvFile, String> {
+    let (meta, workspace) = roots(&paths)?;
+    let apps = store::load_apps(&meta);
+    let app = store::find_app(&apps, &repository)?;
+    let project = store::install_dir(&workspace, app);
+    if !project.is_dir() {
+        return Err("Esta app não está instalada.".into());
+    }
+    let dotenv = project.join(".env");
+    if dotenv.is_file() {
+        let raw = fs::read_to_string(&dotenv).map_err(|err| err.to_string())?;
+        return Ok(ProjectEnvFile {
+            source: "dotenv".into(),
+            entries: parse_env_file(&raw),
+        });
+    }
+    let example = project.join(".env.example");
+    if example.is_file() {
+        let raw = fs::read_to_string(&example).map_err(|err| err.to_string())?;
+        return Ok(ProjectEnvFile {
+            source: "example".into(),
+            entries: parse_env_file(&raw),
+        });
+    }
+    Ok(ProjectEnvFile {
+        source: "none".into(),
+        entries: Vec::new(),
+    })
+}
+
 fn cloudflare_paths_full(
     paths: &AppPaths,
     repository: &str,
@@ -558,17 +785,37 @@ pub fn communications_open_dir(paths: State<'_, AppPaths>) -> Result<(), String>
     launch::reveal_dir(&root)
 }
 
+/// Abre o explorador com os arquivos selecionados. Vários caminhos no mesmo texto vão separados por quebra de linha.
+#[tauri::command]
+pub fn reveal_files(paths: Vec<String>) -> Result<(), String> {
+    launch::reveal_files(&paths)
+}
+
+/// Porta livre, ou quem a ocupa: app do Painel em execução e processo à escuta.
+#[tauri::command]
+pub fn port_check(paths: State<'_, AppPaths>, port: u16) -> Result<runtime::PortOccupancy, String> {
+    if port == 0 {
+        return Err("Porta inválida.".into());
+    }
+    let (meta, workspace) = roots(&paths)?;
+    Ok(runtime::inspect_port(&meta, &workspace, port))
+}
+
 #[tauri::command]
 pub async fn catalog_load(paths: State<'_, AppPaths>) -> Result<CatalogPayload, String> {
     let meta = paths.org_root()?;
-    let settings = store::public_settings(&meta);
-    let (version, value, from_cache) = github::fetch_catalog(&meta).await?;
-    Ok(CatalogPayload {
-        repository: settings.app_list_repository,
-        version,
-        from_cache,
-        groups: catalog_groups(&value),
-    })
+    let repository = store::public_settings(&meta).app_list_repository;
+    let accounts_configured = !store::github_accounts(&meta).is_empty();
+    let catalog = github::fetch_catalog(&meta).await;
+    let accounts = if accounts_configured {
+        github::list_account_repos(&meta).await
+    } else {
+        Ok(github::GithubRepoList {
+            repos: Vec::new(),
+            warnings: Vec::new(),
+        })
+    };
+    assemble_catalog(repository, catalog, accounts)
 }
 
 #[tauri::command]
@@ -577,13 +824,21 @@ pub fn catalog_add(paths: State<'_, AppPaths>, entry: AppEntry) -> Result<AppEnt
 }
 
 #[tauri::command]
-pub async fn launcher_check_update(paths: State<'_, AppPaths>, force: bool) -> Result<UpdateStatus, String> {
-    self_update::check(&paths.org_root()?, force).await
+pub async fn launcher_check_update(
+    paths: State<'_, AppPaths>,
+    force: bool,
+    repository: Option<String>,
+) -> Result<UpdateStatus, String> {
+    self_update::check(&paths.org_root()?, force, repository.as_deref()).await
 }
 
 #[tauri::command]
-pub async fn launcher_apply_update(app: AppHandle, paths: State<'_, AppPaths>) -> Result<String, String> {
-    let message = self_update::apply(&paths.org_root()?).await?;
+pub async fn launcher_apply_update(
+    app: AppHandle,
+    paths: State<'_, AppPaths>,
+    repository: Option<String>,
+) -> Result<String, String> {
+    let message = self_update::apply(&paths.org_root()?, repository.as_deref()).await?;
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.close();
     }
@@ -655,4 +910,154 @@ pub fn set_data_location(
         current: current.display().to_string(),
         restart_required: false,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{assemble_catalog, repo_identity};
+    use crate::launcher::github::{GithubRepo, GithubRepoList};
+    use serde_json::json;
+
+    fn repo(account_id: &str, label: &str, name: &str, full_name: &str) -> GithubRepo {
+        GithubRepo {
+            account_id: account_id.into(),
+            account_label: label.into(),
+            name: name.into(),
+            full_name: full_name.into(),
+            avatar_url: String::new(),
+        }
+    }
+
+    fn names(payload: &super::CatalogPayload) -> Vec<String> {
+        payload
+            .groups
+            .iter()
+            .flat_map(|group| group.apps.iter().map(|app| format!("{}:{}", group.name, app.repository)))
+            .collect()
+    }
+
+    #[test]
+    fn repo_identity_ignores_case_and_git_suffix() {
+        assert_eq!(repo_identity(" Acme/Shared.git "), "acme/shared");
+        assert_eq!(repo_identity("acme/shared"), repo_identity("ACME/Shared"));
+    }
+
+    #[test]
+    fn catalog_projects_stay_first_and_duplicates_drop() {
+        let catalog = Ok((
+            "v9".into(),
+            json!({
+                "standard": [
+                    {"name": "Alpha", "repository": "acme/alpha"},
+                    {"name": "Shared", "repository": "acme/shared"}
+                ]
+            }),
+            true,
+        ));
+        let accounts = Ok(GithubRepoList {
+            repos: vec![
+                repo("b", "Beta", "zeta", "acme/zeta"),
+                repo("a", "Alpha", "shared", "Acme/Shared.git"),
+                repo("a", "Alpha", "other", "acme/other"),
+            ],
+            warnings: vec![],
+        });
+        let payload = assemble_catalog("acme/catalog".into(), catalog, accounts).unwrap();
+        assert_eq!(payload.version, "v9");
+        assert!(payload.from_cache);
+        assert!(payload.warnings.is_empty());
+        assert_eq!(
+            names(&payload),
+            vec![
+                "standard:acme/alpha".to_string(),
+                "standard:acme/shared".to_string(),
+                "Alpha:acme/other".to_string(),
+                "Beta:acme/zeta".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn same_repo_from_two_accounts_is_kept_once() {
+        let catalog = Ok(("".into(), json!({}), false));
+        let accounts = Ok(GithubRepoList {
+            repos: vec![
+                repo("2", "Zeta", "app", "acme/app"),
+                repo("1", "Alpha", "app", "acme/app"),
+            ],
+            warnings: vec![],
+        });
+        let payload = assemble_catalog("acme/catalog".into(), catalog, accounts).unwrap();
+        assert_eq!(names(&payload), vec!["Alpha:acme/app".to_string()]);
+    }
+
+    #[test]
+    fn catalog_failure_keeps_account_projects() {
+        let accounts = Ok(GithubRepoList {
+            repos: vec![repo("1", "Conta", "app", "acme/app")],
+            warnings: vec!["Outra: O GitHub recusou o token.".into()],
+        });
+        let payload = assemble_catalog(
+            "acme/catalog".into(),
+            Err("O GitHub não encontrou esse repositório ou essa release.".into()),
+            accounts,
+        )
+        .unwrap();
+        assert_eq!(names(&payload), vec!["Conta:acme/app".to_string()]);
+        assert_eq!(payload.version, "");
+        assert_eq!(
+            payload.warnings,
+            vec![
+                "Catálogo: O GitHub não encontrou esse repositório ou essa release.".to_string(),
+                "Outra: O GitHub recusou o token.".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn account_failure_keeps_catalog_projects() {
+        let catalog = Ok((
+            "v1".into(),
+            json!({"apps": [{"name": "Alpha", "repository": "acme/alpha"}]}),
+            false,
+        ));
+        let payload = assemble_catalog(
+            "acme/catalog".into(),
+            catalog,
+            Err("O GitHub limitou os pedidos anónimos.".into()),
+        )
+        .unwrap();
+        assert_eq!(names(&payload), vec!["apps:acme/alpha".to_string()]);
+        assert_eq!(payload.warnings, vec!["O GitHub limitou os pedidos anónimos.".to_string()]);
+    }
+
+    #[test]
+    fn both_sources_failing_returns_both_errors() {
+        let err = match assemble_catalog(
+            "acme/catalog".into(),
+            Err("O catálogo não tem release.".into()),
+            Err("O GitHub recusou o token.".into()),
+        ) {
+            Err(err) => err,
+            Ok(_) => panic!("as duas fontes falharam"),
+        };
+        assert!(err.contains("Catálogo: O catálogo não tem release."));
+        assert!(err.contains("O GitHub recusou o token."));
+    }
+
+    #[test]
+    fn missing_account_still_returns_catalog() {
+        let catalog = Ok((
+            "v1".into(),
+            json!({"standard": [{"name": "Alpha", "repository": "acme/alpha"}]}),
+            false,
+        ));
+        let accounts = Ok(GithubRepoList {
+            repos: vec![],
+            warnings: vec![],
+        });
+        let payload = assemble_catalog("acme/catalog".into(), catalog, accounts).unwrap();
+        assert!(payload.warnings.is_empty());
+        assert_eq!(names(&payload), vec!["standard:acme/alpha".to_string()]);
+    }
 }

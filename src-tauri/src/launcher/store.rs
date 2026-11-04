@@ -75,6 +75,9 @@ pub struct ServiceAccount {
     pub label: String,
     #[serde(default)]
     pub token: String,
+    /// Repositório de atualização desta conta. Vazio não mexe no do Catálogo.
+    #[serde(default)]
+    pub update_repository: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -102,6 +105,10 @@ pub struct SettingsInput {
     pub linux_windows_launch_command: String,
     pub app_list_repository: String,
     pub painel_update_repository: String,
+    #[serde(default)]
+    pub app_list_account_name: String,
+    #[serde(default)]
+    pub app_list_api_token: String,
 }
 
 #[derive(Serialize)]
@@ -127,6 +134,8 @@ pub struct PublicSettings {
     pub linux_windows_launch_command: String,
     pub app_list_repository: String,
     pub painel_update_repository: String,
+    pub app_list_account_name: String,
+    pub app_list_api_token: String,
     pub data_dir: String,
     pub app_version: String,
 }
@@ -350,6 +359,8 @@ fn default_settings() -> Value {
         "EnableGamepadInput": true,
         "LinuxWindowsLaunchCommand": "",
         "AppListRepository": "SirDiabo/GHLAppList",
+        "AppListAccountName": "",
+        "AppListApiToken": "",
         "AppListCachedVersion": "",
         "PainelUpdateRepository": ""
     })
@@ -447,6 +458,8 @@ pub fn public_settings(root: &Path) -> PublicSettings {
             if value.is_empty() { "SirDiabo/GHLAppList".into() } else { value }
         },
         painel_update_repository: setting_str(&settings, "PainelUpdateRepository"),
+        app_list_account_name: clip_account_label(&setting_str(&settings, "AppListAccountName")),
+        app_list_api_token: clip_token(&setting_str(&settings, "AppListApiToken")),
         data_dir: root.display().to_string(),
         app_version: env!("CARGO_PKG_VERSION").to_string(),
     }
@@ -489,6 +502,14 @@ pub fn apply_settings(root: &Path, input: SettingsInput) -> Result<PublicSetting
     map.insert(
         "PainelUpdateRepository".into(),
         json!(input.painel_update_repository.trim()),
+    );
+    map.insert(
+        "AppListAccountName".into(),
+        json!(clip_account_label(&input.app_list_account_name)),
+    );
+    map.insert(
+        "AppListApiToken".into(),
+        json!(clip_token(&input.app_list_api_token)),
     );
     save_settings(root, &settings)?;
     Ok(public_settings(root))
@@ -554,6 +575,7 @@ fn accounts_of(settings: &Value, list_key: &str, legacy_key: &str) -> Vec<Servic
         id: "legacy".into(),
         label: String::new(),
         token: legacy.trim().to_string(),
+        update_repository: String::new(),
     }]
 }
 
@@ -583,7 +605,8 @@ fn normalize_accounts(accounts: Vec<ServiceAccount>) -> Vec<ServiceAccount> {
         out.push(ServiceAccount {
             id,
             label: clip_account_label(&account.label),
-            token: token.chars().take(800).collect(),
+            token: clip_token(token),
+            update_repository: clip_repo(&account.update_repository),
         });
     }
     out
@@ -601,12 +624,21 @@ fn reconcile_accounts(accounts: Vec<ServiceAccount>, flat_token: &str) -> Vec<Se
     vec![ServiceAccount {
         id: "legacy".into(),
         label: String::new(),
-        token: flat.chars().take(800).collect(),
+        token: clip_token(flat),
+        update_repository: String::new(),
     }]
 }
 
 fn clip_account_label(value: &str) -> String {
     value.trim().chars().take(80).collect()
+}
+
+fn clip_token(value: &str) -> String {
+    value.trim().chars().take(800).collect()
+}
+
+fn clip_repo(value: &str) -> String {
+    value.trim().chars().take(300).collect()
 }
 
 fn new_account_id(index: usize) -> String {
@@ -942,9 +974,15 @@ pub fn app_dir(workspace: &Path, app: &AppEntry) -> PathBuf {
     workspace.join(folder)
 }
 
-/// Ícones locais da app: `{workspace}/{appFolder}/images/`.
+/// Ícones locais antigos: `{workspace}/{appFolder}/images/`.
 pub fn images_dir(workspace: &Path, app: &AppEntry) -> PathBuf {
     app_dir(workspace, app).join("images")
+}
+
+/// Avatar do projeto, na raiz de `launch-info/` (não na pasta da branch).
+/// O Launchfile vive em `launch-info/branches/{branch}/`; a imagem é do projeto.
+pub fn project_avatar_path(info: &Path) -> PathBuf {
+    info.join("avatar").join("icon.webp")
 }
 
 /// Nome da pasta que contém os clones dentro da app.
@@ -1157,6 +1195,10 @@ fn first_image_in(dir: &Path) -> Option<PathBuf> {
 }
 
 fn icon_file(meta: &Path, workspace: &Path, app: &AppEntry) -> Option<PathBuf> {
+    let avatar = project_avatar_path(&launch_info_dir(workspace, app));
+    if avatar.is_file() {
+        return Some(avatar);
+    }
     if let Some(path) = first_image_in(&images_dir(workspace, app)) {
         return Some(path);
     }
@@ -1472,7 +1514,7 @@ pub struct CommunicationNode {
     pub y: f64,
     #[serde(default)]
     pub always_on: bool,
-    /// `increment`, `decrement`, `value` ou `get`. Vazio ou desconhecido é node de app e não é gravado.
+    /// `increment`, `decrement`, `value`, `get`, `primitive` ou `port`. Vazio ou desconhecido é node de app e não é gravado.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub kind: String,
     /// App ou outra operação de onde o valor sai. Só em node de operação.
@@ -1481,12 +1523,34 @@ pub struct CommunicationNode {
     /// Campo da app de origem (`port`, `env.PORT`). Vazio quando a origem é outra operação.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub source_field: String,
-    /// Texto guardado por um node `value`.
+    /// Texto guardado por um node `value` ou `primitive`, ou a porta de um node `port`.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub literal: String,
+    /// `number`, `text`, `multiline`, `boolean`, `url` ou `file`. Só em node `primitive`.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub value_type: String,
     /// Quanto somar ou subtrair. Ausente num grafo antigo vale 1. Só em incrementar e decrementar.
     #[serde(default = "default_step", skip_serializing_if = "String::is_empty")]
     pub step: String,
+    /// Última verificação de `port_check`. Só em node `port`. Ausente até verificar.
+    /// `in_use` falso é porta livre e não carrega processo.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub port_status: Option<PortStatus>,
+}
+
+/// Resultado gravado da verificação da porta. Ausente no node significa que ainda não foi verificada.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PortStatus {
+    pub in_use: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pid: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub process_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub app_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub folder_name: Option<String>,
 }
 
 fn default_step() -> String {
@@ -1531,15 +1595,99 @@ fn clip_line(value: &str, max: usize) -> String {
     out
 }
 
-/// Kind desconhecido ou vazio continua node de app. `get` copia o valor sem o alterar.
+fn clip_block(value: &str, max: usize) -> String {
+    let mut out = String::new();
+    for ch in value.trim().chars() {
+        if out.chars().count() >= max {
+            break;
+        }
+        if ch == '\r' {
+            continue;
+        }
+        out.push(ch);
+    }
+    out
+}
+
+/// Kind desconhecido ou vazio continua node de app. `get` copia o valor. `port` guarda a porta.
 fn op_kind(kind: &str) -> &'static str {
     match kind.trim() {
         "increment" => "increment",
         "decrement" => "decrement",
         "value" => "value",
         "get" => "get",
+        "primitive" => "primitive",
+        "port" => "port",
         _ => "",
     }
+}
+
+fn normalize_port_literal(literal: &str) -> Option<String> {
+    let clipped = clip_line(literal, 8);
+    let port = clipped.parse::<u16>().ok()?;
+    if port == 0 {
+        None
+    } else {
+        Some(port.to_string())
+    }
+}
+
+fn status_text(value: &Option<String>, max: usize) -> Option<String> {
+    let clipped = clip_line(value.as_deref().unwrap_or(""), max);
+    if clipped.is_empty() {
+        None
+    } else {
+        Some(clipped)
+    }
+}
+
+/// Só nodes `port` guardam a verificação. Porta livre não fica com processo antigo.
+fn sanitize_port_status(status: Option<PortStatus>, port: bool) -> Option<PortStatus> {
+    if !port {
+        return None;
+    }
+    let status = status?;
+    if !status.in_use {
+        return Some(PortStatus {
+            in_use: false,
+            pid: None,
+            process_name: None,
+            app_name: None,
+            folder_name: None,
+        });
+    }
+    Some(PortStatus {
+        in_use: true,
+        pid: status.pid.filter(|pid| *pid > 0),
+        process_name: status_text(&status.process_name, 200),
+        app_name: status_text(&status.app_name, 200),
+        folder_name: status_text(&status.folder_name, 300),
+    })
+}
+
+fn primitive_value_type(kind: &str, value_type: &str) -> String {
+    if kind != "primitive" {
+        return String::new();
+    }
+    match value_type.trim() {
+        "number" | "text" | "multiline" | "boolean" | "url" | "file" => value_type.trim().to_string(),
+        _ => "text".into(),
+    }
+}
+
+fn primitive_literal(value_type: &str, literal: &str) -> String {
+    // Arquivo pode guardar vários caminhos, um por linha. O resto do literal é uma linha só.
+    if value_type == "multiline" || value_type == "file" {
+        return clip_block(literal, MAX_COMMUNICATION_LITERAL);
+    }
+    let clipped = clip_line(literal, MAX_COMMUNICATION_LITERAL);
+    if value_type == "boolean" {
+        return match clipped.to_ascii_lowercase().as_str() {
+            "true" | "yes" | "on" | "1" => "true".into(),
+            _ => "false".into(),
+        };
+    }
+    clipped
 }
 
 pub fn empty_communications() -> CommunicationsGraph {
@@ -1556,14 +1704,29 @@ pub fn sanitize_communications(graph: CommunicationsGraph) -> CommunicationsGrap
         if nodes.len() >= MAX_COMMUNICATION_NODES {
             break;
         }
+        let kind = op_kind(&node.kind).to_string();
+        let primitive = kind == "primitive";
+        let port = kind == "port";
+        let port_literal = if port {
+            match normalize_port_literal(&node.literal) {
+                Some(value) => value,
+                None => continue,
+            }
+        } else {
+            String::new()
+        };
         let id = clip_line(&node.id, 80);
         if id.is_empty() || !seen_nodes.insert(id.clone()) || !node.x.is_finite() || !node.y.is_finite() {
             continue;
         }
-        let kind = op_kind(&node.kind).to_string();
-        let op = !kind.is_empty();
+        let op = !kind.is_empty() && !primitive && !port;
+        let value_type = primitive_value_type(&kind, &node.value_type);
         let literal = if kind == "value" {
             clip_line(&node.literal, MAX_COMMUNICATION_LITERAL)
+        } else if primitive {
+            primitive_literal(&value_type, &node.literal)
+        } else if port {
+            port_literal
         } else {
             String::new()
         };
@@ -1573,14 +1736,18 @@ pub fn sanitize_communications(graph: CommunicationsGraph) -> CommunicationsGrap
         } else {
             String::new()
         };
+        let mut name = clip_line(&node.name, 200);
+        if port && name.is_empty() {
+            name = "Porta".into();
+        }
         nodes.push(CommunicationNode {
             id,
             folder_name: clip_line(&node.folder_name, 300),
             repository: clip_line(&node.repository, 300),
-            name: clip_line(&node.name, 200),
+            name,
             x: node.x,
             y: node.y,
-            always_on: node.always_on,
+            always_on: node.always_on && !primitive && !port,
             kind,
             source_node_id: if op {
                 clip_line(&node.source_node_id, 80)
@@ -1593,7 +1760,9 @@ pub fn sanitize_communications(graph: CommunicationsGraph) -> CommunicationsGrap
                 String::new()
             },
             literal,
+            value_type,
             step,
+            port_status: sanitize_port_status(node.port_status, port),
         });
     }
     let app_ids: std::collections::HashSet<String> = nodes
@@ -1667,6 +1836,43 @@ pub fn save_communications(root: &Path, graph: CommunicationsGraph) -> Result<Co
     let raw = serde_json::to_string_pretty(&clean).map_err(|err| err.to_string())?;
     fs::write(communications_path(root), raw).map_err(|err| err.to_string())?;
     Ok(clean)
+}
+
+/// O nome é só um rótulo. Atualiza nós de app com a mesma pasta, ou, sem pasta, o mesmo repositório.
+/// Operações e primitivos ficam como estão. Pasta e repositório do nó não mudam.
+pub fn apply_app_alias(
+    mut graph: CommunicationsGraph,
+    folder: &str,
+    repository: &str,
+    name: &str,
+) -> CommunicationsGraph {
+    let name = clip_line(name, 200);
+    if name.is_empty() {
+        return graph;
+    }
+    let folder = folder.trim();
+    let repository = repository.trim();
+    for node in &mut graph.nodes {
+        if !node.kind.is_empty() {
+            continue;
+        }
+        let matches = if !node.folder_name.trim().is_empty() {
+            !folder.is_empty() && node.folder_name.eq_ignore_ascii_case(folder)
+        } else {
+            !repository.is_empty() && node.repository.eq_ignore_ascii_case(repository)
+        };
+        if matches {
+            node.name = name.clone();
+        }
+    }
+    graph
+}
+
+pub fn persist_app_alias(meta: &Path, app: &AppEntry) -> Result<(), String> {
+    let graph = load_communications(meta)?;
+    let next = apply_app_alias(graph, &app.folder_name, &app.repository, &app.name);
+    save_communications(meta, next)?;
+    Ok(())
 }
 
 #[cfg(test)]
@@ -1781,6 +1987,178 @@ mod tests {
     }
 
     #[test]
+    fn rename_updates_only_app_alias() {
+        let raw = r#"{
+            "nodes": [
+                {"id": "a", "folderName": "hello", "repository": "acme/hello", "name": "Hello", "x": 0, "y": 0},
+                {"id": "b", "folderName": "other", "repository": "acme/other", "name": "Other", "x": 10, "y": 0},
+                {"id": "c", "folderName": "", "repository": "acme/hello", "name": "Copia", "x": 30, "y": 0},
+                {"id": "num", "kind": "primitive", "valueType": "number", "name": "Número", "literal": "1", "folderName": "hello", "repository": "acme/hello", "x": 20, "y": 0}
+            ],
+            "edges": []
+        }"#;
+        let graph: CommunicationsGraph = serde_json::from_str(raw).unwrap();
+        let next = apply_app_alias(graph, "hello", "acme/hello", "Olá");
+        let renamed = next.nodes.iter().find(|node| node.id == "a").unwrap();
+        assert_eq!(renamed.name, "Olá");
+        assert_eq!(renamed.folder_name, "hello");
+        assert_eq!(renamed.repository, "acme/hello");
+        assert!(renamed.kind.is_empty());
+        let other = next.nodes.iter().find(|node| node.id == "b").unwrap();
+        assert_eq!(other.name, "Other");
+        assert_eq!(other.folder_name, "other");
+        assert_eq!(other.repository, "acme/other");
+        let copy = next.nodes.iter().find(|node| node.id == "c").unwrap();
+        assert_eq!(copy.name, "Olá");
+        assert_eq!(copy.folder_name, "");
+        assert_eq!(copy.repository, "acme/hello");
+        let primitive = next.nodes.iter().find(|node| node.id == "num").unwrap();
+        assert_eq!(primitive.name, "Número");
+        assert_eq!(primitive.kind, "primitive");
+        assert_eq!(primitive.folder_name, "hello");
+    }
+
+    #[test]
+    fn communications_keep_primitives() {
+        let raw = r#"{
+            "nodes": [
+                {"id": "app", "name": "App", "x": 0, "y": 0},
+                {"id": "num", "kind": "primitive", "valueType": "number", "name": "Número", "literal": " 42 ", "sourceNodeId": "app", "sourceField": "port", "alwaysOn": true, "x": 10, "y": 10},
+                {"id": "note", "kind": "primitive", "valueType": "multiline", "literal": " linha \n duas ", "x": 10, "y": 40},
+                {"id": "flag", "kind": "primitive", "valueType": "boolean", "literal": "", "x": 10, "y": 70},
+                {"id": "odd", "kind": "primitive", "valueType": "nope", "literal": "oi", "x": 10, "y": 100},
+                {"id": "bad", "kind": "nope", "literal": "1", "valueType": "number", "x": 10, "y": 130}
+            ],
+            "edges": [
+                {"id": "to-app", "source": "num", "target": "app", "targetField": " port "},
+                {"id": "to-note", "source": "num", "target": "note", "targetField": "port"}
+            ]
+        }"#;
+        let graph = sanitize_communications(serde_json::from_str(raw).unwrap());
+        let num = graph.nodes.iter().find(|node| node.id == "num").unwrap();
+        assert_eq!(num.kind, "primitive");
+        assert_eq!(num.value_type, "number");
+        assert_eq!(num.literal, "42");
+        assert!(num.source_node_id.is_empty());
+        assert!(num.source_field.is_empty());
+        assert!(!num.always_on);
+
+        let note = graph.nodes.iter().find(|node| node.id == "note").unwrap();
+        assert_eq!(note.value_type, "multiline");
+        assert_eq!(note.literal, "linha \n duas");
+
+        let flag = graph.nodes.iter().find(|node| node.id == "flag").unwrap();
+        assert_eq!(flag.value_type, "boolean");
+        assert_eq!(flag.literal, "false");
+
+        let odd = graph.nodes.iter().find(|node| node.id == "odd").unwrap();
+        assert_eq!(odd.value_type, "text", "tipo desconhecido cai em texto");
+        assert_eq!(odd.literal, "oi");
+
+        let bad = graph.nodes.iter().find(|node| node.id == "bad").unwrap();
+        assert!(bad.kind.is_empty(), "kind desconhecido continua node de app");
+        assert!(bad.literal.is_empty());
+        assert!(bad.value_type.is_empty());
+
+        let to_app = graph.edges.iter().find(|edge| edge.id == "to-app").unwrap();
+        assert_eq!(to_app.target_field, "port");
+        let to_note = graph.edges.iter().find(|edge| edge.id == "to-note").unwrap();
+        assert!(to_note.target_field.is_empty(), "primitivo não é destino de campo");
+
+        let saved = serde_json::to_value(&graph).unwrap();
+        let saved_num = saved["nodes"].as_array().unwrap().iter().find(|node| node["id"] == "num").unwrap();
+        assert_eq!(saved_num["kind"], "primitive");
+        assert_eq!(saved_num["valueType"], "number");
+        assert_eq!(saved_num["literal"], "42");
+        assert!(saved_num.get("sourceNodeId").is_none());
+        assert!(saved_num.get("sourceField").is_none());
+    }
+
+    #[test]
+    fn communications_keep_port_nodes() {
+        let raw = r#"{
+            "nodes": [
+                {"id": "app", "name": "App", "portStatus": {"inUse": true, "processName": "nope"}, "x": 0, "y": 0},
+                {"id": "p", "kind": "port", "name": "Porta", "literal": " 3000 ", "folderName": "hello", "alwaysOn": true, "sourceNodeId": "app", "sourceField": "port", "valueType": "number", "portStatus": {"inUse": true, "pid": 4242, "processName": " node\n ", "appName": " Hello ", "folderName": " hello "}, "x": 12, "y": 8},
+                {"id": "bare", "kind": "port", "literal": "8080", "portStatus": {"inUse": false, "pid": 9, "processName": "stale", "appName": "Nope"}, "x": 4, "y": 4},
+                {"id": "fresh", "kind": "port", "literal": "81", "x": 5, "y": 5},
+                {"id": "nopid", "kind": "port", "literal": "90", "portStatus": {"inUse": true, "pid": 0, "processName": ""}, "x": 6, "y": 6},
+                {"id": "zero", "kind": "port", "literal": "0", "x": 1, "y": 1},
+                {"id": "wide", "kind": "port", "literal": "70000", "x": 2, "y": 2},
+                {"id": "nope", "kind": "nope", "literal": "1", "portStatus": {"inUse": true, "pid": 1, "processName": "ghost"}, "x": 3, "y": 3}
+            ],
+            "edges": [
+                {"id": "e", "source": "p", "target": "app", "targetField": " env.PORT "}
+            ]
+        }"#;
+        let graph = sanitize_communications(serde_json::from_str(raw).unwrap());
+        assert!(graph.nodes.iter().all(|node| node.id != "zero" && node.id != "wide"));
+        let port = graph.nodes.iter().find(|node| node.id == "p").unwrap();
+        assert_eq!(port.kind, "port");
+        assert_eq!(port.literal, "3000");
+        assert_eq!(port.name, "Porta");
+        assert!(!port.always_on);
+        assert!(port.source_node_id.is_empty());
+        assert!(port.source_field.is_empty());
+        assert!(port.value_type.is_empty());
+        assert!(port.step.is_empty());
+        let occupied = port.port_status.as_ref().unwrap();
+        assert!(occupied.in_use);
+        assert_eq!(occupied.pid, Some(4242));
+        assert_eq!(occupied.process_name.as_deref(), Some("node"));
+        assert_eq!(occupied.app_name.as_deref(), Some("Hello"));
+        assert_eq!(occupied.folder_name.as_deref(), Some("hello"));
+        let bare = graph.nodes.iter().find(|node| node.id == "bare").unwrap();
+        assert_eq!(bare.kind, "port");
+        assert_eq!(bare.name, "Porta");
+        assert_eq!(bare.literal, "8080");
+        let free = bare.port_status.as_ref().unwrap();
+        assert!(!free.in_use);
+        assert!(free.pid.is_none());
+        assert!(free.process_name.is_none());
+        assert!(free.app_name.is_none());
+        let fresh = graph.nodes.iter().find(|node| node.id == "fresh").unwrap();
+        assert!(fresh.port_status.is_none(), "porta sem verificação continua sem estado");
+        let nopid = graph.nodes.iter().find(|node| node.id == "nopid").unwrap();
+        let nopid_status = nopid.port_status.as_ref().unwrap();
+        assert!(nopid_status.in_use);
+        assert!(nopid_status.pid.is_none());
+        assert!(nopid_status.process_name.is_none());
+        let app = graph.nodes.iter().find(|node| node.id == "app").unwrap();
+        assert!(app.port_status.is_none(), "node de app não guarda verificação de porta");
+        let nope = graph.nodes.iter().find(|node| node.id == "nope").unwrap();
+        assert!(nope.kind.is_empty(), "kind desconhecido continua node de app");
+        assert!(nope.port_status.is_none(), "kind desconhecido não guarda verificação de porta");
+        let edge = graph.edges.iter().find(|edge| edge.id == "e").unwrap();
+        assert_eq!(edge.target_field, "env.PORT", "porta numérica grava o campo de destino");
+
+        let saved = serde_json::to_value(&graph).unwrap();
+        let nodes = saved["nodes"].as_array().unwrap();
+        let saved_port = nodes.iter().find(|node| node["id"] == "p").unwrap();
+        assert_eq!(saved_port["kind"], "port");
+        assert_eq!(saved_port["literal"], "3000");
+        assert!(saved_port.get("sourceNodeId").is_none());
+        assert!(saved_port.get("valueType").is_none());
+        assert_eq!(saved_port["portStatus"]["inUse"], true);
+        assert_eq!(saved_port["portStatus"]["pid"], 4242);
+        assert_eq!(saved_port["portStatus"]["processName"], "node");
+        assert_eq!(saved_port["portStatus"]["appName"], "Hello");
+        assert_eq!(saved_port["portStatus"]["folderName"], "hello");
+        let saved_bare = nodes.iter().find(|node| node["id"] == "bare").unwrap();
+        assert_eq!(saved_bare["portStatus"], serde_json::json!({ "inUse": false }));
+        let saved_fresh = nodes.iter().find(|node| node["id"] == "fresh").unwrap();
+        assert!(saved_fresh.get("portStatus").is_none());
+        let saved_nopid = nodes.iter().find(|node| node["id"] == "nopid").unwrap();
+        assert_eq!(saved_nopid["portStatus"], serde_json::json!({ "inUse": true }));
+        let saved_app = nodes.iter().find(|node| node["id"] == "app").unwrap();
+        assert!(saved_app.get("portStatus").is_none());
+        let saved_nope = nodes.iter().find(|node| node["id"] == "nope").unwrap();
+        assert!(saved_nope.get("portStatus").is_none());
+        let again = sanitize_communications(serde_json::from_str(&serde_json::to_string(&graph).unwrap()).unwrap());
+        assert_eq!(serde_json::to_value(&again).unwrap(), saved);
+    }
+
+    #[test]
     fn branch_dir_replaces_slashes() {
         assert_eq!(sanitize_branch_dir("feature/foo"), "feature__foo");
         assert_eq!(sanitize_branch_dir("gh-pages"), "gh-pages");
@@ -1872,10 +2250,84 @@ mod tests {
     #[test]
     fn duplicate_account_labels_keep_the_login() {
         let accounts = vec![
-            ServiceAccount { id: "a".into(), label: "Trabalho".into(), token: "1".into() },
-            ServiceAccount { id: "b".into(), label: "Trabalho".into(), token: "2".into() },
+            ServiceAccount { id: "a".into(), label: "Trabalho".into(), token: "1".into(), update_repository: String::new() },
+            ServiceAccount { id: "b".into(), label: "Trabalho".into(), token: "2".into(), update_repository: String::new() },
         ];
         let labels = account_labels(&accounts, &["octo".into(), "hub".into()]);
         assert_eq!(labels, vec!["Trabalho · octo".to_string(), "Trabalho · hub".to_string()]);
+    }
+
+    #[test]
+    fn file_literal_keeps_newline_separated_paths() {
+        let literal = " C:\\a.txt \n D:\\b.txt ";
+        let raw = json!({
+            "nodes": [{
+                "id": "file",
+                "kind": "primitive",
+                "valueType": "file",
+                "literal": literal,
+                "x": 0,
+                "y": 0
+            }],
+            "edges": []
+        });
+        let graph = sanitize_communications(serde_json::from_value(raw).unwrap());
+        assert_eq!(graph.nodes[0].value_type, "file");
+        assert_eq!(graph.nodes[0].literal, "C:\\a.txt \n D:\\b.txt");
+    }
+
+    #[test]
+    fn catalog_account_name_keeps_github_account() {
+        let root = std::env::temp_dir().join(format!("painel-catalog-name-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        ensure_root(&root).unwrap();
+        let saved = apply_settings(
+            &root,
+            SettingsInput {
+                apps_path: String::new(),
+                github_api_token: "ghp_acc".into(),
+                github_accounts: vec![ServiceAccount {
+                    id: "acc-1".into(),
+                    label: "Trabalho".into(),
+                    token: "ghp_acc".into(),
+                    update_repository: "acme/painel".into(),
+                }],
+                deepseek_api_token: String::new(),
+                cloudflare_api_token: String::new(),
+                cloudflare_accounts: Vec::new(),
+                cloudflared_path: String::new(),
+                platform: "Auto".into(),
+                sort_by: "LastPlayed".into(),
+                use_grid_view: true,
+                start_fullscreen: false,
+                close_after_launch: false,
+                background_image_path: String::new(),
+                launcher_music_path: String::new(),
+                music_volume: 0.2,
+                background_opacity: 0.15,
+                enable_gamepad_input: true,
+                linux_windows_launch_command: String::new(),
+                app_list_repository: "SirDiabo/GHLAppList".into(),
+                painel_update_repository: "acme/painel-app".into(),
+                app_list_account_name: "Catálogo público".into(),
+                app_list_api_token: "ghp_cat".into(),
+            },
+        )
+        .unwrap();
+        assert_eq!(saved.app_list_account_name, "Catálogo público");
+        assert_eq!(saved.app_list_api_token, "ghp_cat");
+        assert_eq!(saved.app_list_repository, "SirDiabo/GHLAppList");
+        assert_eq!(saved.painel_update_repository, "acme/painel-app");
+        assert_eq!(saved.github_accounts.len(), 1);
+        assert_eq!(saved.github_accounts[0].label, "Trabalho");
+        assert_eq!(saved.github_accounts[0].token, "ghp_acc");
+        assert_eq!(saved.github_accounts[0].update_repository, "acme/painel");
+        assert_eq!(saved.github_api_token, "ghp_acc");
+        let again = public_settings(&root);
+        assert_eq!(again.app_list_account_name, "Catálogo público");
+        assert_eq!(again.github_accounts[0].label, "Trabalho");
+        assert_eq!(again.github_accounts[0].token, "ghp_acc");
+        assert_eq!(again.github_accounts[0].update_repository, "acme/painel");
+        let _ = fs::remove_dir_all(&root);
     }
 }

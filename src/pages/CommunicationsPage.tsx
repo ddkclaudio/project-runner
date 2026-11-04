@@ -3,6 +3,7 @@ import { useQuery, useQueryClient, type QueryClient } from '@tanstack/react-quer
 import { useNavigate } from 'react-router-dom';
 import {
   MarkerType,
+  Panel,
   ReactFlowProvider,
   useReactFlow,
   applyEdgeChanges,
@@ -17,11 +18,14 @@ import {
   type NodeProps,
   type OnConnectEnd,
 } from '@xyflow/react';
-import { IconArrowBackUp, IconArrowForwardUp, IconExternalLink, IconFolder, IconPlayerPlay } from '@tabler/icons-react';
+import { IconArrowBackUp, IconArrowForwardUp, IconExternalLink, IconFolder, IconGrid4x4, IconPlayerPlay, IconRefresh, IconSearch } from '@tabler/icons-react';
+import { open as openDialog } from '@tauri-apps/plugin-dialog';
+import { openUrl } from '@tauri-apps/plugin-opener';
 import { FlowCanvas } from '@/components/ui/FlowCanvas';
 import { Button } from '@/components/ui/Button';
 import { InlineAlert } from '@/components/ui/InlineAlert';
 import { Input } from '@/components/ui/Input';
+import { Textarea } from '@/components/ui/Textarea';
 import { Modal } from '@/components/ui/Modal';
 import { PreferenceToggleRow } from '@/components/ui/PreferenceToggleRow';
 import { SearchableListPanel } from '@/components/ui/SearchableListPanel';
@@ -38,14 +42,19 @@ import {
   communicationsOpenDir,
   communicationsSave,
   launcherError,
+  revealFiles,
   libraryList,
+  portCheck,
   statusLabel,
   type AppView,
+  type PortOccupancy,
+  type PortStatus,
   type CommunicationEdge,
   type CommunicationNode,
   type CommunicationOpKind,
   type CommunicationsGraph,
   type LaunchField,
+  type PrimitiveValueType,
 } from '@/lib/launcher-api';
 import {
   applyComputed,
@@ -65,9 +74,13 @@ import styles from './communications.module.css';
 type Graph = CommunicationsGraph;
 type AppNodeData = { label: string; repository: string };
 type OpNodeData = { label: string };
+type PrimitiveNodeData = { label: string };
+type PortNodeData = { label: string };
 type AppFlowNode = Node<AppNodeData, 'app'>;
 type OpFlowNode = Node<OpNodeData, 'op'>;
-type FlowNode = AppFlowNode | OpFlowNode;
+type PrimitiveFlowNode = Node<PrimitiveNodeData, 'primitive'>;
+type PortFlowNode = Node<PortNodeData, 'port'>;
+type FlowNode = AppFlowNode | OpFlowNode | PrimitiveFlowNode | PortFlowNode;
 type ValueType = 'number' | 'boolean' | 'url' | 'text';
 type ChainReason =
   | 'cycle'
@@ -124,17 +137,39 @@ type OpMenuState = {
 const HISTORY_LIMIT = 50;
 const EMPTY_APPS: AppView[] = [];
 const EMPTY_TAKEN = new Set<string>();
+/** Grade invisível, em px. Arrasto, nodes novos e alinhar à grelha usam este valor. */
+const FLOW_SNAP = 20;
+const SNAP_GRID: [number, number] = [FLOW_SNAP, FLOW_SNAP];
+
+function snapFlow(value: number): number {
+  return FLOW_SNAP * Math.round(value / FLOW_SNAP);
+}
+
+/** O pane de seleção escuta pointerdown/mousedown. Estes controlos ficam por cima e não deixam o gesto seguir. */
+function shieldCanvasEvent(event: { stopPropagation: () => void }) {
+  event.stopPropagation();
+}
 const OP_MENU: { kind: CommunicationOpKind; label: string }[] = [
   { kind: 'increment', label: 'Incrementar' },
   { kind: 'decrement', label: 'Decrementar' },
   { kind: 'value', label: 'Definir valor' },
   { kind: 'get', label: 'Get' },
 ];
+const PRIMITIVES: { valueType: PrimitiveValueType; label: string }[] = [
+  { valueType: 'number', label: 'Número' },
+  { valueType: 'text', label: 'Texto' },
+  { valueType: 'multiline', label: 'Texto longo' },
+  { valueType: 'boolean', label: 'Booleano' },
+  { valueType: 'url', label: 'URL' },
+  { valueType: 'file', label: 'Arquivo' },
+];
 
 type CommunicationsContextValue = {
   graph: Graph;
   apps: AppView[];
   libraryPending: boolean;
+  checkingPorts: ReadonlySet<string>;
+  recheckPort: (nodeId: string) => void;
 };
 
 const CommunicationsContext = createContext<CommunicationsContextValue | null>(null);
@@ -160,7 +195,9 @@ function signature(graph: Graph): string {
         node.sourceNodeId ?? '',
         node.sourceField ?? '',
         node.literal ?? '',
+        node.valueType ?? '',
         node.step ?? '',
+        portStatusSignature(node.portStatus),
       ].join('\t'),
     )
     .sort()
@@ -174,6 +211,31 @@ function signature(graph: Graph): string {
 
 function opKind(kind: CommunicationNode['kind']): CommunicationOpKind | undefined {
   return kind === 'increment' || kind === 'decrement' || kind === 'value' || kind === 'get' ? kind : undefined;
+}
+
+function primitiveType(node: CommunicationNode | undefined): PrimitiveValueType | undefined {
+  if (node?.kind !== 'primitive') return undefined;
+  const type = node.valueType;
+  if (type === 'number' || type === 'text' || type === 'multiline' || type === 'boolean' || type === 'url' || type === 'file') {
+    return type;
+  }
+  return 'text';
+}
+
+function primitiveLabel(type: PrimitiveValueType): string {
+  return PRIMITIVES.find((item) => item.valueType === type)?.label ?? 'Valor';
+}
+
+function isAppNode(node: CommunicationNode): boolean {
+  return !opKind(node.kind) && node.kind !== 'primitive' && node.kind !== 'port';
+}
+
+function isProducer(node: CommunicationNode | undefined): boolean {
+  return Boolean(node && (opKind(node.kind) || node.kind === 'primitive' || node.kind === 'port'));
+}
+
+function primitiveTruth(value: string | undefined): boolean {
+  return ['true', 'yes', 'on', '1'].includes((value ?? '').trim().toLowerCase());
 }
 
 function opLabel(kind: CommunicationOpKind): string {
@@ -199,14 +261,54 @@ function kindLabel(kind: string): string {
 }
 
 function nodeTitle(node: CommunicationNode): string {
+  if (node.kind === 'port') {
+    const port = node.literal?.trim();
+    return port ? `Porta ${port}` : 'Porta';
+  }
+  const primitive = primitiveType(node);
+  if (primitive) return node.name || primitiveLabel(primitive);
   const kind = opKind(node.kind);
   const label = kind ? opLabel(kind) : node.name || 'App';
   return node.sourceField ? `${label} (${node.sourceField})` : label;
 }
 
+function appAlias(apps: AppView[], node: CommunicationNode): string {
+  return liveApp(apps, node)?.name?.trim() || node.name || 'App';
+}
+
 function normalize(graph: CommunicationsGraph): Graph {
   return {
     nodes: (graph.nodes ?? []).map((node) => {
+      if (node.kind === 'primitive') {
+        const valueType = primitiveType(node) ?? 'text';
+        return {
+          id: node.id,
+          folderName: node.folderName,
+          repository: node.repository,
+          name: node.name || primitiveLabel(valueType),
+          x: node.x,
+          y: node.y,
+          alwaysOn: false,
+          kind: 'primitive' as const,
+          valueType,
+          literal: valueType === 'boolean' ? (primitiveTruth(node.literal) ? 'true' : 'false') : (node.literal ?? ''),
+        };
+      }
+      if (node.kind === 'port') {
+        const portStatus = normalizePortStatus(node.portStatus);
+        return {
+          id: node.id,
+          folderName: '',
+          repository: '',
+          name: node.name?.trim() || 'Porta',
+          x: node.x,
+          y: node.y,
+          alwaysOn: false,
+          kind: 'port' as const,
+          literal: (node.literal ?? '').trim(),
+          ...(portStatus ? { portStatus } : {}),
+        };
+      }
       const kind = opKind(node.kind);
       const next: CommunicationNode = {
         id: node.id,
@@ -233,8 +335,27 @@ function normalize(graph: CommunicationsGraph): Graph {
   };
 }
 
-function toFlow(graph: Graph, selectedId: string | null): FlowNode[] {
+function toFlow(graph: Graph, apps: AppView[], selectedId: string | null): FlowNode[] {
   return graph.nodes.map((node) => {
+    if (node.kind === 'port') {
+      return {
+        id: node.id,
+        type: 'port' as const,
+        position: { x: node.x, y: node.y },
+        selected: node.id === selectedId,
+        data: { label: node.literal?.trim() || 'Porta' },
+      };
+    }
+    const primitive = primitiveType(node);
+    if (primitive) {
+      return {
+        id: node.id,
+        type: 'primitive' as const,
+        position: { x: node.x, y: node.y },
+        selected: node.id === selectedId,
+        data: { label: node.name || primitiveLabel(primitive) },
+      };
+    }
     const kind = opKind(node.kind);
     if (kind) {
       return {
@@ -250,7 +371,7 @@ function toFlow(graph: Graph, selectedId: string | null): FlowNode[] {
       type: 'app',
       position: { x: node.x, y: node.y },
       selected: node.id === selectedId,
-      data: { label: node.name || 'App', repository: node.repository },
+      data: { label: appAlias(apps, node), repository: node.repository },
     };
   });
 }
@@ -264,12 +385,17 @@ function toEdges(graph: Graph): Edge[] {
   }));
 }
 
-function mergeNodes(next: FlowNode[], previous: FlowNode[]): FlowNode[] {
+function mergeNodes(next: FlowNode[], previous: FlowNode[], keepSelection = false): FlowNode[] {
   const prior = new Map(previous.map((node) => [node.id, node]));
   return next.map((node) => {
     const old = prior.get(node.id);
-    if (old?.dragging && old.position) return { ...node, position: old.position, dragging: true };
-    return node;
+    if (!old) return node;
+    const selected = keepSelection ? (old.selected ?? node.selected) : node.selected;
+    if (old.dragging && old.position) {
+      return { ...old, ...node, position: old.position, dragging: true, selected };
+    }
+    if (!keepSelection) return node;
+    return { ...old, ...node, selected, dragging: false };
   });
 }
 
@@ -278,7 +404,84 @@ function fold(value: string) {
 }
 
 function isTypingTarget(target: EventTarget | null) {
-  return target instanceof HTMLElement && Boolean(target.closest('input, textarea, select, [contenteditable="true"]'));
+  if (!(target instanceof HTMLElement)) return false;
+  if (target.isContentEditable) return true;
+  return Boolean(target.closest('input, textarea, select, [contenteditable="true"]'));
+}
+
+type AlignAxis = 'row' | 'column';
+
+function isAlignBlocked(overlay: { picker: boolean; port: boolean; prompt: boolean; menu: boolean }) {
+  if (overlay.picker || overlay.port || overlay.prompt || overlay.menu) return true;
+  return Boolean(document.querySelector('[role="dialog"][aria-modal="true"]:not([aria-hidden="true"])'));
+}
+
+/** Menor x (depois menor y, depois id) na linha; menor y (depois menor x, depois id) na coluna. */
+function referenceNode(selected: FlowNode[], axis: AlignAxis): FlowNode {
+  return selected.reduce((best, node) => {
+    if (axis === 'row') {
+      if (node.position.x !== best.position.x) return node.position.x < best.position.x ? node : best;
+      if (node.position.y !== best.position.y) return node.position.y < best.position.y ? node : best;
+    } else {
+      if (node.position.y !== best.position.y) return node.position.y < best.position.y ? node : best;
+      if (node.position.x !== best.position.x) return node.position.x < best.position.x ? node : best;
+    }
+    return node.id < best.id ? node : best;
+  });
+}
+
+function nodeSpan(node: FlowNode, axis: 'width' | 'height'): number | null {
+  const measured = node.measured?.[axis];
+  const direct = node[axis];
+  const value = typeof measured === 'number' ? measured : direct;
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : null;
+}
+
+function alignMoves(nodes: FlowNode[], axis: AlignAxis): { id: string; x: number; y: number }[] {
+  const selected = nodes.filter((node) => node.selected);
+  if (selected.length < 2) return [];
+  const reference = referenceNode(selected, axis);
+  const moved: { id: string; x: number; y: number }[] = [];
+  if (axis === 'row') {
+    const refHeight = nodeSpan(reference, 'height');
+    const center = refHeight == null ? null : snapFlow(reference.position.y + refHeight / 2);
+    for (const node of selected) {
+      const own = nodeSpan(node, 'height');
+      const y = center == null || own == null ? reference.position.y : center - own / 2;
+      if ((node.id === reference.id && (center == null || own == null)) || y === node.position.y) continue;
+      moved.push({ id: node.id, x: node.position.x, y });
+    }
+    return moved;
+  }
+  const refWidth = nodeSpan(reference, 'width');
+  const center = refWidth == null ? null : snapFlow(reference.position.x + refWidth / 2);
+  for (const node of selected) {
+    const own = nodeSpan(node, 'width');
+    const x = center == null || own == null ? reference.position.x : center - own / 2;
+    if ((node.id === reference.id && (center == null || own == null)) || x === node.position.x) continue;
+    moved.push({ id: node.id, x, y: node.position.y });
+  }
+  return moved;
+}
+
+/** Origem da grelha: menor x, depois menor y, depois id. Esse node não se move. */
+function alignGraphToLattice(current: Graph, spacing: number): Graph {
+  if (current.nodes.length < 2 || !(spacing > 0)) return current;
+  const origin = current.nodes.reduce((best, node) => {
+    if (node.x !== best.x) return node.x < best.x ? node : best;
+    if (node.y !== best.y) return node.y < best.y ? node : best;
+    return node.id < best.id ? node : best;
+  });
+  let changed = false;
+  const nodes = current.nodes.map((node) => {
+    if (node.id === origin.id) return node;
+    const x = origin.x + Math.round((node.x - origin.x) / spacing) * spacing;
+    const y = origin.y + Math.round((node.y - origin.y) / spacing) * spacing;
+    if (x === node.x && y === node.y) return node;
+    changed = true;
+    return { ...node, x, y };
+  });
+  return changed ? { ...current, nodes } : current;
 }
 
 function liveApp(apps: AppView[], node: CommunicationNode) {
@@ -288,11 +491,70 @@ function liveApp(apps: AppView[], node: CommunicationNode) {
   );
 }
 
-function anchorStyle(x: number, y: number) {
+function anchorStyle(x: number, y: number, height = 280) {
   return {
     left: Math.max(8, Math.min(x, window.innerWidth - 300)),
-    top: Math.max(8, Math.min(y, window.innerHeight - 280)),
+    top: Math.max(8, Math.min(y, window.innerHeight - height)),
   };
+}
+
+function parsePort(raw: string): number | null {
+  const trimmed = raw.trim();
+  if (!/^\d+$/.test(trimmed)) return null;
+  const value = Number(trimmed);
+  if (!Number.isInteger(value) || value < 1 || value > 65535) return null;
+  return value;
+}
+
+function portOccupantText(result: PortOccupancy): string {
+  const app = result.appName?.trim();
+  const process = result.processName?.trim();
+  const pid = result.pid && result.pid > 0 ? result.pid : undefined;
+  const processLabel = process && pid ? `${process} (PID ${pid})` : process || (pid ? `PID ${pid}` : '');
+  if (app && processLabel) return `Em uso por ${app} — ${processLabel}.`;
+  if (app) return `Em uso por ${app}.`;
+  if (processLabel) return `Em uso por ${processLabel}.`;
+  return 'Esta porta está em uso.';
+}
+
+function clipStatusText(value: string | null | undefined, max = 200): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const cleaned = Array.from(value.replace(/[\r\n]/g, '').trim()).slice(0, max).join('');
+  return cleaned || undefined;
+}
+
+function statusFromOccupancy(result: PortOccupancy): PortStatus {
+  if (!result.inUse) return { inUse: false };
+  const status: PortStatus = { inUse: true };
+  if (typeof result.pid === 'number' && Number.isInteger(result.pid) && result.pid > 0) status.pid = result.pid;
+  const processName = clipStatusText(result.processName);
+  const appName = clipStatusText(result.appName);
+  const folderName = clipStatusText(result.folderName, 300);
+  if (processName) status.processName = processName;
+  if (appName) status.appName = appName;
+  if (folderName) status.folderName = folderName;
+  return status;
+}
+
+function normalizePortStatus(raw: PortStatus | null | undefined): PortStatus | undefined {
+  if (!raw || typeof raw !== 'object' || typeof raw.inUse !== 'boolean') return undefined;
+  return statusFromOccupancy(raw);
+}
+
+function portStatusSignature(status: PortStatus | undefined): string {
+  if (!status) return '';
+  return [status.inUse ? 1 : 0, status.pid ?? '', status.processName ?? '', status.appName ?? '', status.folderName ?? ''].join('|');
+}
+
+function portStatusCanvas(status: PortStatus | undefined): string | null {
+  if (!status) return null;
+  if (!status.inUse) return 'Livre';
+  const app = status.appName?.trim();
+  const process = status.processName?.trim();
+  const pid = status.pid && status.pid > 0 ? status.pid : undefined;
+  const processLabel = process && pid ? `${process} (PID ${pid})` : process || (pid ? `PID ${pid}` : '');
+  const parts = [app, processLabel].filter((part): part is string => Boolean(part));
+  return parts.length > 0 ? `Em uso · ${parts.join(' · ')}` : 'Em uso';
 }
 
 function pointerClient(event: MouseEvent | TouchEvent): { x: number; y: number } | null {
@@ -311,13 +573,15 @@ function disconnectSource(node: CommunicationNode): CommunicationNode {
   return next;
 }
 
-function dropNodes(current: Graph, removed: string[], moved: { id: string; x: number; y: number }[]): Graph {
+function dropNodes(current: Graph, removed: string[], moved: { id: string; x: number; y: number }[], snap = true): Graph {
   const drop = new Set(removed);
   const nodes = current.nodes
     .filter((node) => !drop.has(node.id))
     .map((node) => {
       const move = moved.find((item) => item.id === node.id);
-      let next = move ? { ...node, x: Math.round(move.x), y: Math.round(move.y) } : node;
+      let next = move
+        ? { ...node, x: snap ? snapFlow(move.x) : move.x, y: snap ? snapFlow(move.y) : move.y }
+        : node;
       if (next.sourceNodeId && drop.has(next.sourceNodeId)) next = disconnectSource(next);
       return next;
     });
@@ -337,11 +601,13 @@ function dropEdges(current: Graph, removed: string[]): Graph {
   return { nodes, edges: current.edges.filter((edge) => !drop.has(edge.id)) };
 }
 
+function isRetiredLaunchField(key: string): boolean {
+  return key === 'port' || key === 'url' || key === 'cwd';
+}
+
 function isLaunchVariable(key: string): boolean {
+  if (isRetiredLaunchField(key)) return false;
   return (
-    key === 'port' ||
-    key === 'url' ||
-    key === 'cwd' ||
     key === 'pre-start' ||
     key.startsWith('pre-start.') ||
     key === 'start' ||
@@ -351,12 +617,10 @@ function isLaunchVariable(key: string): boolean {
 }
 
 function isNumericField(field: LaunchField): boolean {
-  if (field.key === 'port') return true;
   return (field.fieldType || '').toLowerCase() === 'number';
 }
 
 function normalizedFieldType(field: LaunchField): string {
-  if (field.key === 'port') return 'number';
   return (field.fieldType || 'text').toLowerCase();
 }
 
@@ -453,7 +717,13 @@ function applyStep(node: CommunicationNode, upstream: ChainSuccess): ChainResult
  */
 function evaluateChain(graph: Graph, apps: AppView[], nodeId: string, seen: Set<string>): ChainResult {
   const node = graph.nodes.find((item) => item.id === nodeId);
-  if (!node || !opKind(node.kind)) return failure(node, nodeId, 'missing-source');
+  if (!node) return failure(node, nodeId, 'missing-source');
+  if (node.kind === 'primitive' || node.kind === 'port') {
+    const literal = node.literal ?? '';
+    const numericKind = node.kind === 'port' || primitiveType(node) === 'number';
+    return { ok: true, value: literal, numeric: numericKind && parseChainNumber(literal) !== null };
+  }
+  if (!opKind(node.kind)) return failure(node, nodeId, 'missing-source');
   if (node.kind === 'value') {
     const literal = node.literal ?? '';
     return { ok: true, value: literal, numeric: parseChainNumber(literal) !== null };
@@ -465,7 +735,7 @@ function evaluateChain(graph: Graph, apps: AppView[], nodeId: string, seen: Set<
   const source = graph.nodes.find((item) => item.id === node.sourceNodeId);
   if (!source) return failure(node, node.id, 'missing-source');
   let upstream: ChainResult;
-  if (opKind(source.kind)) {
+  if (source.kind === 'primitive' || source.kind === 'port' || opKind(source.kind)) {
     upstream = evaluateChain(graph, apps, source.id, nextSeen);
   } else {
     const live = liveApp(apps, source);
@@ -484,12 +754,18 @@ function evaluateChain(graph: Graph, apps: AppView[], nodeId: string, seen: Set<
 }
 
 function outputType(source: CommunicationNode, value: string): ValueType {
+  if (source.kind === 'port') return 'number';
+  const primitive = primitiveType(source);
+  if (primitive === 'number') return 'number';
+  if (primitive === 'boolean') return 'boolean';
+  if (primitive === 'url') return 'url';
+  if (primitive) return 'text';
   if (source.kind === 'increment' || source.kind === 'decrement') return 'number';
   return classifyValue(value);
 }
 
 function producedValue(graph: Graph, apps: AppView[], source: CommunicationNode): string {
-  if (source.kind === 'value') return source.literal ?? '';
+  if (source.kind === 'value' || source.kind === 'primitive' || source.kind === 'port') return source.literal ?? '';
   if (source.kind === 'increment' || source.kind === 'decrement') return '0';
   const result = evaluateChain(graph, apps, source.id, new Set());
   return result.ok ? result.value : '';
@@ -497,14 +773,19 @@ function producedValue(graph: Graph, apps: AppView[], source: CommunicationNode)
 
 function outputIsNumeric(graph: Graph, apps: AppView[], nodeId: string): boolean {
   const node = graph.nodes.find((item) => item.id === nodeId);
-  const kind = opKind(node?.kind);
-  if (!node || !kind) return false;
+  if (!node) return false;
+  if (node.kind === 'port' || primitiveType(node) === 'number') return parseChainNumber(node.literal ?? '') !== null;
+  const kind = opKind(node.kind);
+  if (!kind) return false;
   if (kind === 'value') return parseChainNumber(node.literal ?? '') !== null;
   const result = evaluateChain(graph, apps, nodeId, new Set());
   return result.ok && result.numeric;
 }
 
 function showMathForSource(graph: Graph, apps: AppView[], source: CommunicationNode): boolean {
+  if (source.kind === 'port') return true;
+  const primitive = primitiveType(source);
+  if (primitive) return primitive === 'number';
   if (!opKind(source.kind)) return true;
   return outputIsNumeric(graph, apps, source.id);
 }
@@ -520,6 +801,7 @@ function chainAppNode(graph: Graph, nodeId: string): CommunicationNode | null {
     if (!sourceId) return null;
     const source = graph.nodes.find((node) => node.id === sourceId);
     if (!source) return null;
+    if (source.kind === 'primitive' || source.kind === 'port') return null;
     if (!opKind(source.kind)) return source;
     current = source;
   }
@@ -559,7 +841,7 @@ function appKey(apps: AppView[], node: CommunicationNode): string {
 function dirtyLaunchIds(graph: Graph, apps: AppView[]): string[] {
   const ids = new Set<string>();
   for (const node of graph.nodes) {
-    if (opKind(node.kind)) continue;
+    if (opKind(node.kind) || node.kind === 'primitive' || node.kind === 'port') continue;
     const live = liveApp(apps, node);
     if (!live || live.status === 'not_installed') continue;
     const id = appId(live);
@@ -580,13 +862,13 @@ function planWrites(graph: Graph, apps: AppView[]): WritePlan {
   const seen = new Set<string>();
   for (const edge of graph.edges) {
     const key = edge.targetField?.trim() ?? '';
-    if (!key) continue;
+    if (!key || isRetiredLaunchField(key)) continue;
     const source = graph.nodes.find((node) => node.id === edge.source);
     const dest = graph.nodes.find((node) => node.id === edge.target);
-    if (!source || !opKind(source.kind)) {
+    if (!source || !isProducer(source)) {
       return { ok: false, message: 'Uma ligação falhou: a origem não está no grafo.' };
     }
-    if (!dest || opKind(dest.kind)) {
+    if (!dest || !isAppNode(dest)) {
       return { ok: false, message: `${nodeTitle(source)} falhou: o destino não é uma app.` };
     }
     const live = liveApp(apps, dest);
@@ -617,6 +899,9 @@ function sourceLabel(graph: Graph, node: CommunicationNode): string {
   if (!node.sourceNodeId) return 'Origem ausente';
   const source = graph.nodes.find((item) => item.id === node.sourceNodeId);
   if (!source) return 'Origem ausente';
+  if (source.kind === 'port') return 'Porta';
+  const primitive = primitiveType(source);
+  if (primitive) return primitiveLabel(primitive);
   const kind = opKind(source.kind);
   return kind ? opLabel(kind) : source.name || 'App';
 }
@@ -790,9 +1075,9 @@ function OpNode({ id, selected }: NodeProps<OpFlowNode>) {
   return (
     <div className={cx(styles.node, styles.opNode, selected && styles.nodeSelected)}>
       <Handle type="target" position={Position.Left} />
-      <NodeHeader>Get</NodeHeader>
+      <NodeHeader>{graph.edges.some((edge) => edge.source === id && edge.targetField?.trim()) ? 'Set' : 'Get'}</NodeHeader>
       <div className={styles.nodeBody}>
-        <div className={styles.nodeTitle}>{kind ? opLabel(kind) : 'Operação'}</div>
+        <div className={styles.nodeTitle}>{node?.name || (kind ? opLabel(kind) : 'Operação')}</div>
         {node && kind ? <ChainPreview nodeId={node.id} /> : null}
       </div>
       <Handle type="source" position={Position.Right} />
@@ -800,7 +1085,200 @@ function OpNode({ id, selected }: NodeProps<OpFlowNode>) {
   );
 }
 
-const nodeTypes = { app: AppNode, op: OpNode };
+function primitivePreview(node: CommunicationNode | undefined): string {
+  const type = primitiveType(node);
+  const literal = node?.literal ?? '';
+  if (type === 'boolean') return primitiveTruth(literal) ? 'Verdadeiro' : 'Falso';
+  const trimmed = literal.trim();
+  return trimmed || 'Sem valor';
+}
+
+function openLiteralUrl(literal: string, onError: (message: string) => void) {
+  const raw = literal.trim();
+  if (!raw) {
+    onError('Indique uma URL para abrir.');
+    return;
+  }
+  const href = /^https?:\/\//i.test(raw) ? raw : `https://${raw}`;
+  try {
+    const parsed = new URL(href);
+    if ((parsed.protocol !== 'http:' && parsed.protocol !== 'https:') || !parsed.hostname) {
+      onError('Indique uma URL para abrir.');
+      return;
+    }
+  } catch {
+    onError('Indique uma URL para abrir.');
+    return;
+  }
+  void openUrl(href).catch((err) => onError(launcherError(err)));
+}
+
+function OpenUrlButton({ literal }: { literal: string }) {
+  const toast = useToast();
+  return (
+    <Button
+      type="button"
+      variant="ghost"
+      size="sm"
+      className={cx(styles.urlOpen, 'nodrag', 'nopan')}
+      aria-label="Abrir URL"
+      title="Abrir URL"
+      style={{ width: 22, height: 22, padding: 0 }}
+      onPointerDown={(event) => event.stopPropagation()}
+      onClick={(event) => {
+        event.stopPropagation();
+        openLiteralUrl(literal, toast.error);
+      }}
+      leftIcon={<IconExternalLink size={14} aria-hidden="true" />}
+    />
+  );
+}
+
+function openLiteralFiles(literal: string, onError: (message: string) => void) {
+  if (!literal.trim()) {
+    onError('Indique um arquivo para mostrar.');
+    return;
+  }
+  void revealFiles([literal]).catch((err) => onError(launcherError(err)));
+}
+
+function RevealFileButton({ literal }: { literal: string }) {
+  const toast = useToast();
+  return (
+    <Button
+      type="button"
+      variant="ghost"
+      size="sm"
+      className={cx(styles.urlOpen, 'nodrag', 'nopan')}
+      aria-label="Mostrar na pasta"
+      title="Mostrar na pasta"
+      style={{ width: 22, height: 22, padding: 0 }}
+      onPointerDown={(event) => event.stopPropagation()}
+      onClick={(event) => {
+        event.stopPropagation();
+        openLiteralFiles(literal, toast.error);
+      }}
+      leftIcon={<IconFolder size={14} aria-hidden="true" />}
+    />
+  );
+}
+
+function PrimitiveNode({ id, selected }: NodeProps<PrimitiveFlowNode>) {
+  const { graph } = useCommunicationsGraph();
+  const node = graph.nodes.find((item) => item.id === id);
+  const type = primitiveType(node);
+  const label = type ? primitiveLabel(type) : 'Valor';
+  return (
+    <div className={cx(styles.node, styles.opNode, selected && styles.nodeSelected)}>
+      {type === 'url' || type === 'file' ? (
+        <div className={cx(styles.nodeHeader, styles.nodeHeaderRow)}>
+          <span className={styles.nodeHeaderLabel}>{label}</span>
+          {type === 'url' ? <OpenUrlButton literal={node?.literal ?? ''} /> : <RevealFileButton literal={node?.literal ?? ''} />}
+        </div>
+      ) : (
+        <NodeHeader>{label}</NodeHeader>
+      )}
+      <div className={styles.nodeBody}>
+        <div className={cx(styles.nodeTitle, styles.opValue)}>{primitivePreview(node)}</div>
+      </div>
+      <Handle type="source" position={Position.Right} />
+    </div>
+  );
+}
+
+function RecheckPortButton({ nodeId }: { nodeId: string }) {
+  const { recheckPort, checkingPorts } = useCommunicationsGraph();
+  const busy = checkingPorts.has(nodeId);
+  return (
+    <span className={cx(styles.urlOpen, 'nodrag', 'nopan')} onPointerDown={(event) => event.stopPropagation()} onClick={(event) => event.stopPropagation()}>
+      <Button
+        type="button"
+        variant="ghost"
+        size="sm"
+        aria-label="Verificar porta de novo"
+        title="Verificar porta de novo"
+        aria-busy={busy}
+        disabled={busy}
+        style={{ width: 22, height: 22, padding: 0 }}
+        onPointerDown={(event) => event.stopPropagation()}
+        onClick={(event) => {
+          event.stopPropagation();
+          void recheckPort(nodeId);
+        }}
+        leftIcon={<IconRefresh size={14} className={busy ? styles.portSpin : undefined} aria-hidden="true" />}
+      />
+    </span>
+  );
+}
+
+function PortNode({ id, selected }: NodeProps<PortFlowNode>) {
+  const { graph } = useCommunicationsGraph();
+  const node = graph.nodes.find((item) => item.id === id);
+  const port = node?.literal?.trim() || '—';
+  const status = portStatusCanvas(node?.portStatus);
+  return (
+    <div className={cx(styles.node, styles.opNode, selected && styles.nodeSelected)}>
+      <div className={cx(styles.nodeHeader, styles.nodeHeaderRow)}>
+        <span className={styles.nodeHeaderLabel}>Porta</span>
+        <RecheckPortButton nodeId={id} />
+      </div>
+      <div className={styles.nodeBody}>
+        <div className={cx(styles.nodeTitle, styles.opValue)}>{port}</div>
+        {status ? <div className={styles.nodeMeta}>{status}</div> : null}
+      </div>
+      <Handle type="source" position={Position.Right} />
+    </div>
+  );
+}
+
+const nodeTypes = { app: AppNode, op: OpNode, primitive: PrimitiveNode, port: PortNode };
+
+function PortDetails({ node }: { node: CommunicationNode }) {
+  const status = node.portStatus;
+  return (
+    <div className={styles.details}>
+      <dl className={styles.facts}>
+        <div className={styles.fact}>
+          <dt className={styles.configLabelRow}>
+            <span>Porta</span>
+            <RecheckPortButton nodeId={node.id} />
+          </dt>
+          <dd className={styles.uuid}>{node.literal?.trim() || '—'}</dd>
+        </div>
+        {status ? (
+          <div className={styles.fact}>
+            <dt>Estado</dt>
+            <dd>{status.inUse ? 'Em uso.' : 'Porta livre.'}</dd>
+          </div>
+        ) : null}
+        {status?.inUse && status.appName ? (
+          <div className={styles.fact}>
+            <dt>App</dt>
+            <dd>{status.appName}</dd>
+          </div>
+        ) : null}
+        {status?.inUse && status.processName ? (
+          <div className={styles.fact}>
+            <dt>Processo</dt>
+            <dd>{status.processName}</dd>
+          </div>
+        ) : null}
+        {status?.inUse && status.pid ? (
+          <div className={styles.fact}>
+            <dt>PID</dt>
+            <dd className={styles.uuid}>{status.pid}</dd>
+          </div>
+        ) : null}
+        {status?.inUse && status.folderName ? (
+          <div className={styles.fact}>
+            <dt>Pasta da app</dt>
+            <dd>{status.folderName}</dd>
+          </div>
+        ) : null}
+      </dl>
+    </div>
+  );
+}
 
 function NodeDetails({
   node,
@@ -920,6 +1398,66 @@ function OpDetails({
   );
 }
 
+function PrimitiveDetails({ node, onLiteral }: { node: CommunicationNode; onLiteral: (literal: string) => void }) {
+  const toast = useToast();
+  const type = primitiveType(node) ?? 'text';
+  const literal = node.literal ?? '';
+
+  async function pickFile() {
+    try {
+      const selected = await openDialog({ multiple: false, title: 'Escolher arquivo' });
+      if (typeof selected !== 'string' || !selected) return;
+      onLiteral(selected);
+    } catch (err) {
+      toast.error(launcherError(err));
+    }
+  }
+
+  return (
+    <div className={styles.details}>
+      <div className={styles.configField}>
+        {type === 'url' || type === 'file' ? (
+          <div className={styles.configLabelRow}>
+            <span className={styles.configLabel}>{primitiveLabel(type)}</span>
+            {type === 'url' ? <OpenUrlButton literal={literal} /> : <RevealFileButton literal={literal} />}
+          </div>
+        ) : (
+          <span className={styles.configLabel}>{primitiveLabel(type)}</span>
+        )}
+        {type === 'boolean' ? (
+          <PreferenceToggleRow title="Valor" checked={primitiveTruth(literal)} onChange={(checked) => onLiteral(checked ? 'true' : 'false')} />
+        ) : type === 'multiline' ? (
+          <Textarea
+            value={literal}
+            onChange={(event) => onLiteral(event.target.value)}
+            rows={4}
+            autoComplete="off"
+            spellCheck={false}
+            maxLength={2000}
+          />
+        ) : type === 'file' ? (
+          <div className={styles.fileField}>
+            <Input value={literal} onChange={(event) => onLiteral(event.target.value)} autoComplete="off" spellCheck={false} maxLength={2000} />
+            <Button type="button" variant="secondary" onClick={() => void pickFile()}>
+              Escolher
+            </Button>
+          </div>
+        ) : (
+          <Input
+            value={literal}
+            onChange={(event) => onLiteral(event.target.value)}
+            inputMode={type === 'number' ? 'decimal' : undefined}
+            type={type === 'url' ? 'url' : 'text'}
+            autoComplete="off"
+            spellCheck={false}
+            maxLength={2000}
+          />
+        )}
+      </div>
+    </div>
+  );
+}
+
 function FieldList({
   launchId,
   numeric,
@@ -981,7 +1519,7 @@ function FieldModal({
   const { graph, apps, libraryPending } = useCommunicationsGraph();
   const appNodeId = prompt.purpose === 'bind' ? prompt.targetId : prompt.sourceId;
   const appNode = graph.nodes.find((node) => node.id === appNodeId);
-  const live = appNode && !opKind(appNode.kind) ? liveApp(apps, appNode) : undefined;
+  const live = appNode && isAppNode(appNode) ? liveApp(apps, appNode) : undefined;
   const launchId = live ? appId(live) : '';
   const status = libraryPending ? 'pending' : !live ? 'missing' : live.status === 'not_installed' ? 'not-installed' : 'ready';
   const numeric =
@@ -999,15 +1537,17 @@ function FieldModal({
   const sourceLaunchId = sourceLive && sourceLive.status !== 'not_installed' ? appId(sourceLive) : '';
   useLaunchConfig(sourceLaunchId, Boolean(sourceLaunchId));
   const valueType: ValueType | null =
-    prompt.purpose === 'bind' && source && opKind(source.kind)
-      ? source.kind === 'increment' || source.kind === 'decrement'
-        ? 'number'
-        : source.kind === 'value'
-          ? classifyValue(source.literal ?? '')
-          : (() => {
-              const result = evaluateChain(graph, apps, source.id, new Set());
-              return result.ok ? classifyValue(result.value) : 'text';
-            })()
+    prompt.purpose === 'bind' && source && isProducer(source)
+      ? source.kind === 'primitive' || source.kind === 'port'
+        ? outputType(source, source.literal ?? '')
+        : source.kind === 'increment' || source.kind === 'decrement'
+          ? 'number'
+          : source.kind === 'value'
+            ? classifyValue(source.literal ?? '')
+            : (() => {
+                const result = evaluateChain(graph, apps, source.id, new Set());
+                return result.ok ? classifyValue(result.value) : 'text';
+              })()
       : null;
   const taken = prompt.purpose === 'bind' && appNode ? takenTargetFields(graph, apps, appNode) : EMPTY_TAKEN;
   const statusText =
@@ -1081,6 +1621,128 @@ function LiteralModal({
   );
 }
 
+type PortPhase =
+  | { status: 'idle' }
+  | { status: 'invalid' }
+  | { status: 'waiting'; port: number }
+  | { status: 'checking'; port: number }
+  | { status: 'free'; port: number }
+  | { status: 'busy'; port: number; message: string }
+  | { status: 'error'; port: number; message: string };
+
+function PortModal({ onConfirm, onClose }: { onConfirm: (port: number) => void; onClose: () => void }) {
+  const [raw, setRaw] = useState('');
+  const [phase, setPhase] = useState<PortPhase>({ status: 'idle' });
+  const [pending, setPending] = useState(false);
+  const requestId = useRef(0);
+
+  useEffect(() => {
+    const id = ++requestId.current;
+    let cancel = false;
+    const parsed = parsePort(raw);
+    if (parsed === null) {
+      setPhase(raw.trim() ? { status: 'invalid' } : { status: 'idle' });
+      return () => {
+        cancel = true;
+      };
+    }
+    setPhase({ status: 'waiting', port: parsed });
+    const timer = window.setTimeout(() => {
+      if (cancel || requestId.current !== id) return;
+      setPhase({ status: 'checking', port: parsed });
+      void portCheck(parsed)
+        .then((result) => {
+          if (cancel || requestId.current !== id) return;
+          if (result.inUse) setPhase({ status: 'busy', port: parsed, message: portOccupantText(result) });
+          else setPhase({ status: 'free', port: parsed });
+        })
+        .catch((err) => {
+          if (cancel || requestId.current !== id) return;
+          setPhase({ status: 'error', port: parsed, message: launcherError(err) });
+        });
+    }, 2000);
+    return () => {
+      cancel = true;
+      window.clearTimeout(timer);
+    };
+  }, [raw]);
+
+  const parsed = parsePort(raw);
+  const canConfirm = !pending && phase.status === 'free' && parsed === phase.port;
+
+  async function confirm() {
+    if (parsed === null || phase.status !== 'free' || phase.port !== parsed || pending) return;
+    const id = ++requestId.current;
+    setPending(true);
+    let closed = false;
+    try {
+      const result = await portCheck(parsed);
+      if (requestId.current !== id) return;
+      if (result.inUse) {
+        setPhase({ status: 'busy', port: parsed, message: portOccupantText(result) });
+        return;
+      }
+      closed = true;
+      onConfirm(parsed);
+    } catch (err) {
+      if (requestId.current !== id) return;
+      setPhase({ status: 'error', port: parsed, message: launcherError(err) });
+    } finally {
+      if (!closed) setPending(false);
+    }
+  }
+
+  return (
+    <Modal isOpen onClose={onClose} title="Porta" maxWidth={440}>
+      <Modal.Content>
+        <Modal.Text>A verificação corre 2 segundos depois de parar de escrever.</Modal.Text>
+        <Modal.Field label="Porta">
+          <Input
+            value={raw}
+            onChange={(event) => setRaw(event.target.value)}
+            type="number"
+            min={1}
+            max={65535}
+            step={1}
+            inputMode="numeric"
+            autoFocus
+            autoComplete="off"
+            spellCheck={false}
+            disabled={pending}
+            onKeyDown={(event) => {
+              if (['e', 'E', '+', '-', '.'].includes(event.key)) {
+                event.preventDefault();
+                return;
+              }
+              if (event.key === 'Enter') {
+                event.preventDefault();
+                void confirm();
+              }
+            }}
+          />
+        </Modal.Field>
+        <div aria-live="polite">
+          {phase.status === 'invalid' ? <p className={styles.portHint}>Indique uma porta de 1 a 65535.</p> : null}
+          {(phase.status === 'waiting' || phase.status === 'checking') ? (
+            <p className={styles.portHint}>A verificar a porta…</p>
+          ) : null}
+          {phase.status === 'free' ? <p className={styles.portHint}>Porta livre.</p> : null}
+          {phase.status === 'busy' ? <InlineAlert variant="warning">{phase.message}</InlineAlert> : null}
+          {phase.status === 'error' ? <InlineAlert variant="error">{phase.message}</InlineAlert> : null}
+        </div>
+      </Modal.Content>
+      <Modal.Footer>
+        <Button type="button" onClick={onClose}>
+          Cancelar
+        </Button>
+        <Button type="button" variant="primary" loading={pending} disabled={!canConfirm} onClick={() => void confirm()}>
+          Adicionar
+        </Button>
+      </Modal.Footer>
+    </Modal>
+  );
+}
+
 function CommunicationsCanvas({ orgId, initial }: { orgId: string; initial: Graph }) {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
@@ -1095,10 +1757,11 @@ function CommunicationsCanvas({ orgId, initial }: { orgId: string; initial: Grap
   const [graph, setGraph] = useState(initial);
   const [baseline, setBaseline] = useState(() => signature(initial));
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [nodes, setNodes] = useState<FlowNode[]>(() => toFlow(initial, null));
+  const [nodes, setNodes] = useState<FlowNode[]>(() => toFlow(initial, [], null));
   const [edges, setEdges] = useState(() => toEdges(initial));
   const [picker, setPicker] = useState<{ x: number; y: number; flowX: number; flowY: number } | null>(null);
   const [pickerQuery, setPickerQuery] = useState('');
+  const [portPrompt, setPortPrompt] = useState<{ flowX: number; flowY: number } | null>(null);
   const [opMenu, setOpMenu] = useState<OpMenuState | null>(null);
   const [prompt, setPrompt] = useState<Prompt | null>(null);
   const [saving, setSaving] = useState(false);
@@ -1117,13 +1780,33 @@ function CommunicationsCanvas({ orgId, initial }: { orgId: string; initial: Grap
   const fitOnce = useRef(initial.nodes.length > 0);
   const runningRef = useRef(false);
   const suppressPaneRef = useRef(false);
+  const selectingRef = useRef(false);
   const menuToken = useRef(0);
+  const checkingPortsRef = useRef<Set<string>>(new Set());
+  const recheckPortRef = useRef<(nodeId: string) => void>(() => {});
+  const nodesRef = useRef(nodes);
+  const overlayRef = useRef({ picker: false, port: false, prompt: false, menu: false });
+  const selectedIdRef = useRef(selectedId);
+  const [checkingPorts, setCheckingPorts] = useState<ReadonlySet<string>>(() => new Set());
   graphRef.current = graph;
   appsRef.current = apps;
+  nodesRef.current = nodes;
+  overlayRef.current = {
+    picker: picker !== null,
+    port: portPrompt !== null,
+    prompt: prompt !== null,
+    menu: opMenu !== null,
+  };
 
   const contextValue = useMemo(
-    () => ({ graph, apps, libraryPending: library.isPending }),
-    [graph, apps, library.isPending],
+    () => ({
+      graph,
+      apps,
+      libraryPending: library.isPending,
+      checkingPorts,
+      recheckPort: (nodeId: string) => recheckPortRef.current(nodeId),
+    }),
+    [graph, apps, library.isPending, checkingPorts],
   );
 
   function syncSteps() {
@@ -1162,6 +1845,7 @@ function CommunicationsCanvas({ orgId, initial }: { orgId: string; initial: Grap
     setGraph(prev);
     setSelectedId((id) => (id && prev.nodes.some((node) => node.id === id) ? id : null));
     setPicker(null);
+    setPortPrompt(null);
     setOpMenu(null);
     setPrompt(null);
     syncSteps();
@@ -1176,6 +1860,7 @@ function CommunicationsCanvas({ orgId, initial }: { orgId: string; initial: Grap
     setGraph(next);
     setSelectedId((id) => (id && next.nodes.some((node) => node.id === id) ? id : null));
     setPicker(null);
+    setPortPrompt(null);
     setOpMenu(null);
     setPrompt(null);
     syncSteps();
@@ -1185,11 +1870,41 @@ function CommunicationsCanvas({ orgId, initial }: { orgId: string; initial: Grap
   const redoRef = useRef(redo);
   undoRef.current = undo;
   redoRef.current = redo;
+  const alignRef = useRef<(axis: AlignAxis) => void>(() => {});
+  alignRef.current = (axis) => {
+    const moved = alignMoves(nodesRef.current, axis);
+    if (moved.length === 0) return;
+    // O centro já foi à grelha uma vez. SnapFlow de novo em cada topo/esquerda separa os centros.
+    queueCommit((current) => dropNodes(current, [], moved, false));
+  };
+  function alignCanvasToLattice() {
+    queueCommit((current) => alignGraphToLattice(current, FLOW_SNAP));
+  }
+  const followSingleSelection = selectedIdRef.current !== selectedId;
 
   useEffect(() => {
-    setNodes((prev) => mergeNodes(toFlow(graph, selectedId), prev));
+    setNodes((prev) => mergeNodes(toFlow(graph, apps, selectedId), prev, !followSingleSelection));
     setEdges(toEdges(graph));
-  }, [graph, selectedId]);
+    selectedIdRef.current = selectedId;
+  }, [graph, apps, selectedId, followSingleSelection]);
+
+  useEffect(() => {
+    const current = graphRef.current;
+    let changed = false;
+    const nodes = current.nodes.map((node) => {
+      if (!isAppNode(node)) return node;
+      const live = liveApp(apps, node)?.name?.trim();
+      if (!live || live === node.name) return node;
+      changed = true;
+      return { ...node, name: live };
+    });
+    if (!changed) return;
+    const next = { ...current, nodes };
+    const clean = signature(current) === baseline;
+    graphRef.current = next;
+    setGraph(next);
+    if (clean) setBaseline(signature(next));
+  }, [apps, baseline]);
 
   useEffect(() => {
     if (!fitOnce.current) return;
@@ -1204,15 +1919,22 @@ function CommunicationsCanvas({ orgId, initial }: { orgId: string; initial: Grap
     function onKey(event: KeyboardEvent) {
       if (isTypingTarget(event.target)) return;
       const meta = event.ctrlKey || event.metaKey;
-      if (!meta) return;
-      const key = event.key.toLowerCase();
-      if (key === 'z' && !event.shiftKey) {
-        event.preventDefault();
-        undoRef.current();
-      } else if (key === 'y' || (key === 'z' && event.shiftKey)) {
-        event.preventDefault();
-        redoRef.current();
+      if (meta) {
+        const key = event.key.toLowerCase();
+        if (key === 'z' && !event.shiftKey) {
+          event.preventDefault();
+          undoRef.current();
+        } else if (key === 'y' || (key === 'z' && event.shiftKey)) {
+          event.preventDefault();
+          redoRef.current();
+        }
+        return;
       }
+      if (!event.shiftKey || event.altKey) return;
+      const axis = event.code === 'KeyL' ? 'row' : event.code === 'KeyC' ? 'column' : null;
+      if (!axis || isAlignBlocked(overlayRef.current)) return;
+      event.preventDefault();
+      alignRef.current(axis);
     }
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
@@ -1269,7 +1991,10 @@ function CommunicationsCanvas({ orgId, initial }: { orgId: string; initial: Grap
     };
   }, [graph, apps, queryClient]);
   const term = fold(pickerQuery.trim());
-  const pickerItems = apps.filter((app) => !term || fold(`${app.name} ${app.repository} ${app.folderName}`).includes(term));
+  const pickerApps = apps.filter((app) => !term || fold(`${app.name} ${app.repository} ${app.folderName}`).includes(term));
+  const pickerPrimitives = PRIMITIVES.filter((item) => !term || fold(item.label).includes(term));
+  const showPort = !term || fold('Porta').includes(term);
+  const pickerEmpty = pickerApps.length === 0 && pickerPrimitives.length === 0 && !showPort;
   const menuItems = OP_MENU.filter((item) => item.kind === 'value' || item.kind === 'get' || opMenu?.showMath);
 
   function openPicker(event: { clientX: number; clientY: number; preventDefault: () => void }) {
@@ -1277,8 +2002,16 @@ function CommunicationsCanvas({ orgId, initial }: { orgId: string; initial: Grap
     const flow = screenToFlowPosition({ x: event.clientX, y: event.clientY });
     setSelectedId(null);
     setPickerQuery('');
+    setPortPrompt(null);
     setOpMenu(null);
-    setPicker({ x: event.clientX, y: event.clientY, flowX: flow.x, flowY: flow.y });
+    setPicker({ x: event.clientX, y: event.clientY, flowX: snapFlow(flow.x), flowY: snapFlow(flow.y) });
+  }
+
+  function openPortPrompt() {
+    if (!picker) return;
+    const place = { flowX: picker.flowX, flowY: picker.flowY };
+    setPicker(null);
+    setPortPrompt(place);
   }
 
   function addApp(app: AppView) {
@@ -1293,8 +2026,8 @@ function CommunicationsCanvas({ orgId, initial }: { orgId: string; initial: Grap
           folderName: app.folderName,
           repository: app.repository,
           name: app.name,
-          x: Math.round(picker.flowX),
-          y: Math.round(picker.flowY),
+          x: snapFlow(picker.flowX),
+          y: snapFlow(picker.flowY),
           alwaysOn: false,
         },
       ],
@@ -1303,12 +2036,64 @@ function CommunicationsCanvas({ orgId, initial }: { orgId: string; initial: Grap
     setPicker(null);
   }
 
+  function addPrimitive(valueType: PrimitiveValueType) {
+    if (!picker) return;
+    const id = crypto.randomUUID();
+    const label = primitiveLabel(valueType);
+    commit({
+      ...graphRef.current,
+      nodes: [
+        ...graphRef.current.nodes,
+        {
+          id,
+          folderName: '',
+          repository: '',
+          name: label,
+          x: snapFlow(picker.flowX),
+          y: snapFlow(picker.flowY),
+          alwaysOn: false,
+          kind: 'primitive',
+          valueType,
+          literal: valueType === 'boolean' ? 'false' : '',
+        },
+      ],
+    });
+    setSelectedId(id);
+    setPicker(null);
+  }
+
+  function addPort(port: number) {
+    const place = portPrompt;
+    if (!place) return;
+    const id = crypto.randomUUID();
+    commit({
+      ...graphRef.current,
+      nodes: [
+        ...graphRef.current.nodes,
+        {
+          id,
+          folderName: '',
+          repository: '',
+          name: 'Porta',
+          x: snapFlow(place.flowX),
+          y: snapFlow(place.flowY),
+          alwaysOn: false,
+          kind: 'port',
+          literal: String(port),
+        },
+      ],
+    });
+    setSelectedId(id);
+    setPortPrompt(null);
+  }
+
   function canConnect(connection: Connection | Edge) {
     if (!connection.source || !connection.target || connection.source === connection.target) return false;
     if (graphRef.current.edges.some((edge) => edge.source === connection.source && edge.target === connection.target)) {
       return false;
     }
     const target = graphRef.current.nodes.find((node) => node.id === connection.target);
+    if (target?.kind === 'primitive' || target?.kind === 'port') return false;
     if (target && opKind(target.kind) && wouldCycle(graphRef.current, connection.source, connection.target)) return false;
     return true;
   }
@@ -1321,7 +2106,7 @@ function CommunicationsCanvas({ orgId, initial }: { orgId: string; initial: Grap
     sourceField?: string;
     literal?: string;
   }) {
-    const sourceIsApp = !opKind(input.source.kind);
+    const sourceIsApp = isAppNode(input.source);
     if (sourceIsApp && !input.sourceField) return;
     if (input.kind === 'value' && input.literal === undefined) return;
     const id = crypto.randomUUID();
@@ -1330,8 +2115,8 @@ function CommunicationsCanvas({ orgId, initial }: { orgId: string; initial: Grap
       folderName: '',
       repository: '',
       name: opLabel(input.kind),
-      x: Math.round(input.flowX),
-      y: Math.round(input.flowY),
+      x: snapFlow(input.flowX),
+      y: snapFlow(input.flowY),
       alwaysOn: false,
       kind: input.kind,
       sourceNodeId: input.source.id,
@@ -1355,7 +2140,7 @@ function CommunicationsCanvas({ orgId, initial }: { orgId: string; initial: Grap
     const source = current.nodes.find((node) => node.id === sourceId);
     const target = current.nodes.find((node) => node.id === targetId);
     if (!source || !target || !opKind(target.kind)) return;
-    const sourceIsApp = !opKind(source.kind);
+    const sourceIsApp = isAppNode(source);
     if (sourceIsApp) {
       if (!field || !isLaunchVariable(field.key)) return;
       if ((target.kind === 'increment' || target.kind === 'decrement') && !isNumericField(field)) return;
@@ -1376,7 +2161,7 @@ function CommunicationsCanvas({ orgId, initial }: { orgId: string; initial: Grap
     const current = graphRef.current;
     const source = current.nodes.find((node) => node.id === sourceId);
     const target = current.nodes.find((node) => node.id === targetId);
-    if (!source || !target || !opKind(source.kind) || opKind(target.kind)) return;
+    if (!source || !target || !isProducer(source) || !isAppNode(target)) return;
     if (!isLaunchVariable(field.key) || !fieldAccepts(field, outputType(source, producedValue(current, appsRef.current, source)))) {
       toast.error(`${nodeTitle(source)} falhou: tipo incompatível com ${field.label || field.key}.`);
       return;
@@ -1384,6 +2169,34 @@ function CommunicationsCanvas({ orgId, initial }: { orgId: string; initial: Grap
     if (current.edges.some((edge) => edge.source === sourceId && edge.target === targetId)) return;
     if (takenTargetFields(current, appsRef.current, target).has(field.key)) {
       toast.error('Este campo já tem uma ligação.');
+      return;
+    }
+    const produced = producedValue(current, appsRef.current, source);
+    if (outputType(source, produced) === 'number') {
+      const id = crypto.randomUUID();
+      const variable = field.key.replace(/^env\./i, '');
+      commit({
+        nodes: [
+          ...current.nodes,
+          {
+            id,
+            folderName: '',
+            repository: '',
+            name: variable,
+            x: snapFlow(target.x - 240),
+            y: snapFlow(target.y),
+            alwaysOn: false,
+            kind: 'get',
+            sourceNodeId: source.id,
+            sourceField: field.key,
+          },
+        ],
+        edges: [
+          ...current.edges,
+          { id: crypto.randomUUID(), source: source.id, target: id },
+          { id: crypto.randomUUID(), source: id, target: target.id, targetField: field.key },
+        ],
+      });
       return;
     }
     commit({
@@ -1459,11 +2272,15 @@ function CommunicationsCanvas({ orgId, initial }: { orgId: string; initial: Grap
     const source = graphRef.current.nodes.find((node) => node.id === menu.sourceId);
     setOpMenu(null);
     if (!source) return;
-    if ((kind === 'increment' || kind === 'decrement') && opKind(source.kind) && !outputIsNumeric(graphRef.current, appsRef.current, source.id)) {
+    if (
+      (kind === 'increment' || kind === 'decrement') &&
+      (opKind(source.kind) || source.kind === 'primitive' || source.kind === 'port') &&
+      !outputIsNumeric(graphRef.current, appsRef.current, source.id)
+    ) {
       toast.error(`${opLabel(kind)} precisa de um valor numérico.`);
       return;
     }
-    if (opKind(source.kind)) {
+    if (opKind(source.kind) || source.kind === 'primitive' || source.kind === 'port') {
       if (kind === 'value') {
         const result = evaluateChain(graphRef.current, appsRef.current, source.id, new Set());
         setPrompt({
@@ -1498,8 +2315,9 @@ function CommunicationsCanvas({ orgId, initial }: { orgId: string; initial: Grap
     if (!source || !target) return;
     setPicker(null);
     setOpMenu(null);
-    const sourceIsOp = Boolean(opKind(source.kind));
+    const sourceIsOp = Boolean(opKind(source.kind) || source.kind === 'primitive' || source.kind === 'port');
     const targetIsOp = Boolean(opKind(target.kind));
+    if (target.kind === 'primitive' || target.kind === 'port') return;
     if (!sourceIsOp && !targetIsOp) {
       commit({
         ...current,
@@ -1542,8 +2360,8 @@ function CommunicationsCanvas({ orgId, initial }: { orgId: string; initial: Grap
     setOpMenu({
       x: point.x,
       y: point.y,
-      flowX: flow.x,
-      flowY: flow.y,
+      flowX: snapFlow(flow.x),
+      flowY: snapFlow(flow.y),
       sourceId,
       showMath: showMathForSource(graphRef.current, appsRef.current, latest),
     });
@@ -1568,7 +2386,6 @@ function CommunicationsCanvas({ orgId, initial }: { orgId: string; initial: Grap
   };
 
   function onNodesChange(changes: NodeChange<FlowNode>[]) {
-    setNodes((current) => applyNodeChanges(changes, current));
     const removed: string[] = [];
     const moved: { id: string; x: number; y: number }[] = [];
     for (const change of changes) {
@@ -1576,7 +2393,20 @@ function CommunicationsCanvas({ orgId, initial }: { orgId: string; initial: Grap
       if (change.type === 'position' && change.dragging === false && change.position) {
         moved.push({ id: change.id, x: change.position.x, y: change.position.y });
       }
-      if (change.type === 'select' && removed.length === 0 && moved.length === 0) {
+    }
+    const dragStopped = moved.length > 0;
+    setNodes((current) => {
+      const selected = new Map(current.map((node) => [node.id, node.selected]));
+      const next = applyNodeChanges(dragStopped ? changes.filter((change) => change.type !== 'select') : changes, current);
+      if (!dragStopped) return next;
+      return next.map((node) => {
+        const wasSelected = selected.get(node.id);
+        return node.selected === wasSelected ? node : { ...node, selected: wasSelected };
+      });
+    });
+    if (!dragStopped && removed.length === 0 && !selectingRef.current) {
+      for (const change of changes) {
+        if (change.type !== 'select') continue;
         setSelectedId((id) => (change.selected ? change.id : id === change.id ? null : id));
       }
     }
@@ -1672,7 +2502,7 @@ function CommunicationsCanvas({ orgId, initial }: { orgId: string; initial: Grap
   async function runFlow() {
     if (runningRef.current || saving) return;
     const current = graphRef.current;
-    const enabled = current.nodes.filter((node) => node.alwaysOn && !opKind(node.kind));
+    const enabled = current.nodes.filter((node) => node.alwaysOn && isAppNode(node));
     if (enabled.length === 0) {
       setError('Nenhuma app marcada como sempre ligada.');
       return;
@@ -1721,6 +2551,54 @@ function CommunicationsCanvas({ orgId, initial }: { orgId: string; initial: Grap
       nodes: graphRef.current.nodes.map((node) => (node.id === id ? { ...node, ...patch } : node)),
     });
   }
+
+  function setPortChecking(nodeId: string, checking: boolean) {
+    const next = new Set(checkingPortsRef.current);
+    if (checking) next.add(nodeId);
+    else next.delete(nodeId);
+    checkingPortsRef.current = next;
+    setCheckingPorts(next);
+  }
+
+  async function recheckPort(nodeId: string) {
+    if (checkingPortsRef.current.has(nodeId)) return;
+    const node = graphRef.current.nodes.find((item) => item.id === nodeId);
+    if (!node || node.kind !== 'port') return;
+    const parsed = parsePort(node.literal ?? '');
+    if (parsed === null) {
+      toast.error('Indique uma porta de 1 a 65535.');
+      if (node.portStatus) {
+        commit({
+          ...graphRef.current,
+          nodes: graphRef.current.nodes.map((item) => {
+            if (item.id !== nodeId) return item;
+            const next = { ...item };
+            delete next.portStatus;
+            return next;
+          }),
+        });
+      }
+      return;
+    }
+    setPortChecking(nodeId, true);
+    try {
+      const result = await portCheck(parsed);
+      const current = graphRef.current.nodes.find((item) => item.id === nodeId);
+      if (!current || current.kind !== 'port' || parsePort(current.literal ?? '') !== parsed) return;
+      const portStatus = statusFromOccupancy(result);
+      commit({
+        ...graphRef.current,
+        nodes: graphRef.current.nodes.map((item) => (item.id === nodeId ? { ...item, portStatus } : item)),
+      });
+    } catch (err) {
+      toast.error(launcherError(err));
+    } finally {
+      setPortChecking(nodeId, false);
+    }
+  }
+  recheckPortRef.current = (nodeId: string) => {
+    void recheckPort(nodeId);
+  };
 
   async function save() {
     if (!needsSave || saving || runningRef.current) return;
@@ -1842,6 +2720,8 @@ function CommunicationsCanvas({ orgId, initial }: { orgId: string; initial: Grap
               defaultViewport={{ x: 0, y: 0, zoom: 1 }}
               fill
               dragToSelect
+              snapToGrid
+              snapGrid={SNAP_GRID}
               defaultEdgeOptions={{
                 type: 'smoothstep',
                 markerEnd: { type: MarkerType.ArrowClosed, width: 12, height: 12, color: 'context-stroke' },
@@ -1853,6 +2733,13 @@ function CommunicationsCanvas({ orgId, initial }: { orgId: string; initial: Grap
                 setOpMenu(null);
               }}
               onPaneContextMenu={openPicker}
+              onSelectionStart={() => {
+                selectingRef.current = true;
+                setSelectedId(null);
+              }}
+              onSelectionEnd={() => {
+                selectingRef.current = false;
+              }}
               onNodeClick={(_event, node) => {
                 setSelectedId(node.id);
                 setPicker(null);
@@ -1864,26 +2751,78 @@ function CommunicationsCanvas({ orgId, initial }: { orgId: string; initial: Grap
                 setPicker(null);
                 setOpMenu(null);
               }}
-              empty={<p className={styles.emptyHint}>Clique com o botão direito para adicionar um app.</p>}
-            />
+              empty={<p className={styles.emptyHint}>Clique com o botão direito para adicionar um app, um valor ou uma porta.</p>}
+            >
+              <Panel
+                position="top-left"
+                className={cx(styles.gridSnap, 'nodrag', 'nowheel', 'nopan')}
+                onPointerDown={shieldCanvasEvent}
+                onMouseDown={shieldCanvasEvent}
+                onClick={shieldCanvasEvent}
+              >
+                <button
+                  type="button"
+                  className={cx(styles.gridSnapButton, 'nodrag', 'nowheel', 'nopan')}
+                  aria-label="Alinhar à grelha"
+                  title="Alinhar à grelha"
+                  onPointerDown={shieldCanvasEvent}
+                  onMouseDown={shieldCanvasEvent}
+                  onClick={(event) => {
+                    shieldCanvasEvent(event);
+                    alignCanvasToLattice();
+                  }}
+                >
+                  <IconGrid4x4 size={14} stroke={1.75} aria-hidden="true" />
+                </button>
+              </Panel>
+            </FlowCanvas>
             {picker ? (
-              <div ref={pickerRef} className={styles.picker} style={anchorStyle(picker.x, picker.y)}>
-                <SearchableListPanel
-                  query={pickerQuery}
-                  onQueryChange={setPickerQuery}
-                  placeholder="Buscar app..."
-                  emptyMessage="Nenhum app"
-                  aria-label="Adicionar app"
-                  items={pickerItems}
-                  renderItem={(app) => (
-                    <button type="button" className={styles.item} onClick={() => addApp(app)}>
-                      <span className={styles.itemBody}>
-                        <span className={styles.itemLabel}>{app.name}</span>
-                        <span className={styles.itemDetail}>{app.repository}</span>
-                      </span>
-                    </button>
-                  )}
-                />
+              <div ref={pickerRef} className={styles.picker} style={anchorStyle(picker.x, picker.y, 400)}>
+                <div className={styles.pickerSearch}>
+                  <IconSearch size={13} className={styles.pickerSearchIcon} aria-hidden="true" />
+                  <input
+                    className={styles.pickerInput}
+                    placeholder="Buscar..."
+                    value={pickerQuery}
+                    onChange={(event) => setPickerQuery(event.target.value)}
+                    autoFocus
+                    autoComplete="off"
+                    spellCheck={false}
+                    aria-label="Buscar no menu"
+                  />
+                </div>
+                <div className={styles.pickerList}>
+                  {pickerEmpty ? <p className={styles.pickerEmpty}>Nenhum resultado</p> : null}
+                  {pickerApps.length > 0 ? (
+                    <>
+                      <p className={styles.groupLabel}>Apps</p>
+                      {pickerApps.map((app) => (
+                        <button key={app.folderName || app.repository} type="button" className={styles.item} onClick={() => addApp(app)}>
+                          <span className={styles.itemBody}>
+                            <span className={styles.itemLabel}>{app.name}</span>
+                            <span className={styles.itemDetail}>{app.repository}</span>
+                          </span>
+                        </button>
+                      ))}
+                    </>
+                  ) : null}
+                  {pickerApps.length > 0 && (pickerPrimitives.length > 0 || showPort) ? <div className={styles.separator} /> : null}
+                  {pickerPrimitives.length > 0 || showPort ? (
+                    <>
+                      <p className={styles.groupLabel}>Primitivos</p>
+                      {pickerPrimitives.map((item) => (
+                        <button key={item.valueType} type="button" className={styles.item} onClick={() => addPrimitive(item.valueType)}>
+                          {item.label}
+                        </button>
+                      ))}
+                      {showPort ? (
+                        <button type="button" className={styles.item} onClick={openPortPrompt}>
+                          Porta
+                        </button>
+                      ) : null}
+                    </>
+                  ) : null}
+                </div>
               </div>
             ) : null}
             {opMenu ? (
@@ -1901,10 +2840,10 @@ function CommunicationsCanvas({ orgId, initial }: { orgId: string; initial: Grap
             lockScroll={false}
             open={selected !== null}
             onClose={() => setSelectedId(null)}
-            title={selected?.name || 'App'}
-            ariaLabel={selected ? `Detalhes de ${selected.name || 'app'}` : 'Detalhes'}
+            title={selected ? (isAppNode(selected) ? appAlias(apps, selected) : nodeTitle(selected)) : 'App'}
+            ariaLabel={selected ? `Detalhes de ${isAppNode(selected) ? appAlias(apps, selected) : nodeTitle(selected)}` : 'Detalhes'}
             headerActions={
-              selected && !opKind(selected.kind) && liveApp(apps, selected) ? (
+              selected && isAppNode(selected) && liveApp(apps, selected) ? (
                 <SideDrawerIconButton
                   label="Abrir no Painel"
                   onClick={() => {
@@ -1918,7 +2857,11 @@ function CommunicationsCanvas({ orgId, initial }: { orgId: string; initial: Grap
             }
           >
             {selected ? (
-              opKind(selected.kind) ? (
+              selected.kind === 'primitive' ? (
+                <PrimitiveDetails node={selected} onLiteral={(literal) => patchNode(selected.id, { literal })} />
+              ) : selected.kind === 'port' ? (
+                <PortDetails node={selected} />
+              ) : opKind(selected.kind) ? (
                 <OpDetails
                   node={selected}
                   onStep={(step) => patchNode(selected.id, { step })}
@@ -1934,6 +2877,7 @@ function CommunicationsCanvas({ orgId, initial }: { orgId: string; initial: Grap
         {prompt?.step === 'literal' ? (
           <LiteralModal initial={prompt.initial} onConfirm={confirmLiteral} onClose={() => setPrompt(null)} />
         ) : null}
+        {portPrompt ? <PortModal onConfirm={addPort} onClose={() => setPortPrompt(null)} /> : null}
       </div>
     </CommunicationsContext.Provider>
   );

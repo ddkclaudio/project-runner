@@ -52,6 +52,8 @@ const DEFAULT_EDGE: DefaultEdgeOptions = {
   style: { stroke: 'var(--edge-stroke)', strokeWidth: 2 },
   type: 'smoothstep',
 };
+/** Grade usada quando `snapToGrid` está ligado e `snapGrid` não é passado. */
+const DEFAULT_SNAP: [number, number] = [20, 20];
 
 export interface FlowCanvasProps<N extends Node = Node> {
   nodes: N[];
@@ -64,6 +66,10 @@ export interface FlowCanvasProps<N extends Node = Node> {
   onPaneClick?: (event: React.MouseEvent) => void;
   onPaneContextMenu?: (event: MouseEvent | React.MouseEvent<Element, MouseEvent>) => void;
   onNodeContextMenu?: (event: React.MouseEvent, node: N) => void;
+  /** Começa o arrasto da caixa de seleção. */
+  onSelectionStart?: (event: React.MouseEvent) => void;
+  /** Termina o arrasto da caixa de seleção. */
+  onSelectionEnd?: (event: React.MouseEvent) => void;
   /** Teclas que removem a seleção (padrão do React Flow: Backspace). */
   deleteKeyCode?: string | string[] | null;
   /** Recusa ligações (ao arrastar entre handles) quando retorna false. */
@@ -97,6 +103,13 @@ export interface FlowCanvasProps<N extends Node = Node> {
   loading?: boolean;
   /** Distância, em coordenadas do fluxo, em que soltar perto de um handle ainda liga. */
   connectionRadius?: number;
+  /**
+   * Alinha os nodes a `snapGrid` enquanto são arrastados. Desligado por padrão,
+   * para os outros canvases continuarem livres. Não desenha a grade.
+   */
+  snapToGrid?: boolean;
+  /** Tamanho da grade em coordenadas do fluxo. Só vale com `snapToGrid`. */
+  snapGrid?: [number, number];
   className?: string;
 }
 
@@ -111,6 +124,8 @@ export function FlowCanvas<N extends Node = Node>({
   onPaneClick,
   onPaneContextMenu,
   onNodeContextMenu,
+  onSelectionStart,
+  onSelectionEnd,
   deleteKeyCode,
   isValidConnection,
   nodeTypes,
@@ -130,6 +145,8 @@ export function FlowCanvas<N extends Node = Node>({
   dragToSelect = false,
   loading = false,
   connectionRadius,
+  snapToGrid = false,
+  snapGrid,
   className,
 }: FlowCanvasProps<N>) {
   const showSkeleton = useMinimumLoading(loading);
@@ -160,9 +177,12 @@ export function FlowCanvas<N extends Node = Node>({
         onPaneClick={onPaneClick}
         onPaneContextMenu={onPaneContextMenu}
         onNodeContextMenu={onNodeContextMenu}
+        onSelectionStart={onSelectionStart}
+        onSelectionEnd={onSelectionEnd}
         {...(deleteKeyCode !== undefined && { deleteKeyCode })}
         isValidConnection={isValidConnection}
         {...(connectionRadius !== undefined && { connectionRadius })}
+        {...(snapToGrid ? { snapToGrid: true, snapGrid: snapGrid ?? DEFAULT_SNAP } : {})}
         nodeTypes={nodeTypes}
         edgeTypes={edgeTypes}
         selectNodesOnDrag={false}

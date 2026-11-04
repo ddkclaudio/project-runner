@@ -295,6 +295,18 @@ fn peel_unix_env_prefix(line: &str) -> (std::collections::BTreeMap<String, Strin
     (extra, rest)
 }
 
+/// O Painel abre o browser. `BROWSER` não fica no Launchfile; entra aqui, com `PORT` se faltar.
+fn ensure_process_env(env: &mut std::collections::BTreeMap<String, String>) {
+    let port_ok = env
+        .get("PORT")
+        .and_then(|raw| raw.trim().parse::<u16>().ok())
+        .is_some_and(|port| port > 0);
+    if !port_ok {
+        env.insert("PORT".into(), "3000".into());
+    }
+    env.insert("BROWSER".into(), "none".into());
+}
+
 /// `CI=false` em Node é truthy e o CRA trata como CI (pode sair). Omitir valores “falsos”.
 fn sanitize_launch_env(
     env: &std::collections::BTreeMap<String, String>,
@@ -401,7 +413,8 @@ pub(crate) fn spawn_command_line_with_env(
     for (key, value) in peeled {
         merged.entry(key).or_insert(value);
     }
-    let merged = sanitize_launch_env(&merged);
+    let mut merged = sanitize_launch_env(&merged);
+    ensure_process_env(&mut merged);
     let work = cwd.unwrap_or(root);
     let image = line
         .split_whitespace()

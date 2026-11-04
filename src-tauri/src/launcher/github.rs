@@ -68,7 +68,10 @@ fn map_status(status: reqwest::StatusCode, body: &str) -> Result<(), String> {
 }
 
 pub async fn fetch_release(root: &Path, repository: &str, tag: Option<&str>, etag: Option<&str>) -> Result<Option<ReleaseInfo>, String> {
-    let token = token_of(root);
+    fetch_release_with(repository, tag, etag, &token_of(root)).await
+}
+
+async fn fetch_release_with(repository: &str, tag: Option<&str>, etag: Option<&str>, token: &str) -> Result<Option<ReleaseInfo>, String> {
     let url = match tag {
         Some(tag) if !tag.is_empty() => format!("https://api.github.com/repos/{repository}/releases/tags/{tag}"),
         _ => format!("https://api.github.com/repos/{repository}/releases/latest"),
@@ -255,6 +258,20 @@ pub async fn download_file(root: &Path, url: &str, dest: &Path, on_progress: imp
     Ok(())
 }
 
+fn catalog_download_token(root: &Path) -> String {
+    let dedicated = load_settings(root)
+        .get("AppListApiToken")
+        .and_then(|item| item.as_str())
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    if dedicated.is_empty() {
+        token_of(root)
+    } else {
+        dedicated
+    }
+}
+
 pub async fn fetch_catalog(root: &Path) -> Result<(String, Value, bool), String> {
     let settings = load_settings(root);
     let repository = settings
@@ -262,8 +279,9 @@ pub async fn fetch_catalog(root: &Path) -> Result<(String, Value, bool), String>
         .and_then(|item| item.as_str())
         .unwrap_or("SirDiabo/GHLAppList");
     let repository = if repository.trim().is_empty() { "SirDiabo/GHLAppList" } else { repository.trim() };
+    let token = catalog_download_token(root);
     let cached_version = std::fs::read_to_string(root.join("app_catalog_version.txt")).unwrap_or_default();
-    let release = fetch_release(root, repository, None, None).await?.ok_or_else(|| "O catálogo não tem release.".to_string())?;
+    let release = fetch_release_with(repository, None, None, &token).await?.ok_or_else(|| "O catálogo não tem release.".to_string())?;
     let cache_file = root.join("app_catalog_cache.json");
     if cached_version.trim() == release.tag && cache_file.is_file() {
         if let Ok(raw) = std::fs::read_to_string(&cache_file) {
@@ -274,7 +292,7 @@ pub async fn fetch_catalog(root: &Path) -> Result<(String, Value, bool), String>
     }
     let url = format!("https://github.com/{repository}/releases/download/{}/apps.json", release.tag);
     let http = client(60)?;
-    let response = auth(http.get(&url), &token_of(root)).send().await.map_err(|err| err.to_string())?;
+    let response = auth(http.get(&url), &token).send().await.map_err(|err| err.to_string())?;
     let status = response.status();
     let body = response.text().await.map_err(|err| err.to_string())?;
     map_status(status, &body)?;

@@ -13,12 +13,10 @@ Se o ficheiro não existir, no primeiro **Start** o agente DeepSeek (token em Pe
 | `name` | sim | Nome da app |
 | `runtime` | sim | `node` \| `python` \| `rust` \| `binary` \| `other` |
 | `kind` | sim | `site` \| `api` \| `desktop` \| `cli` |
-| `port` | não | Porta local (ex. 3000) |
-| `url` | não | URL Abrir no browser |
-| `cwd` | não | Pasta de trabalho relativa (default `.`) |
-| `commands.install` | não | Instalar dependências |
-| `commands.start` | **sim** | Comando de arranque |
-| `env` | não | Variáveis (sem segredos) |
+| `commands.pre-start` | não | Passos que terminam (instalar dependências) |
+| `commands.start` | **sim** | Comando de arranque. O último fica vivo |
+| `env` | não | Variáveis (sem segredos). `PORT` é a porta; se faltar, o Painel grava `3000` |
+| `env.PORT` | sim | Porta local. A URL de abrir é `http://localhost` mais este número, para `site` e `api` |
 
 ## Exemplo
 
