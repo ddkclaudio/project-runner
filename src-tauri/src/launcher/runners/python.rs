@@ -1,8 +1,7 @@
 use super::{
-    relative_to, spawn_command_line, write_text, CandidateKind, LaunchCandidate, LaunchConfigSave,
-    LaunchConfigView, LaunchField, ProjectRunner,
+    relative_to, write_text, CandidateKind, LaunchCandidate, LaunchConfigSave, LaunchConfigView,
+    LaunchField, ProjectRunner,
 };
-use serde_json::Value;
 use std::fs;
 use std::path::Path;
 
@@ -54,23 +53,6 @@ impl ProjectRunner for PythonRunner {
             });
         }
         Ok(out)
-    }
-
-    fn spawn(
-        &self,
-        root: &Path,
-        candidate: &LaunchCandidate,
-        _settings: &Value,
-    ) -> Result<Option<(u32, String)>, String> {
-        let line = match candidate.id.as_str() {
-            "py:main" => "python main.py",
-            "py:app" => "python app.py",
-            "py:django" => "python manage.py runserver",
-            "py:module" => "python -m app",
-            other if other.starts_with("cmd:") => other.strip_prefix("cmd:").unwrap_or(other),
-            _ => candidate.label.as_str(),
-        };
-        spawn_command_line(root, line, None)
     }
 
     fn config_view(&self, root: &Path) -> Result<LaunchConfigView, String> {

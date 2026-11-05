@@ -2,7 +2,6 @@
 mod binary;
 mod manifest;
 pub mod node;
-mod open_url;
 #[allow(dead_code)]
 mod procfile;
 #[allow(dead_code)]
@@ -10,11 +9,9 @@ mod python;
 #[allow(dead_code)]
 mod rust_runner;
 
-pub use open_url::detect as detect_open_url;
 // Runners legados mantidos no crate (templates/docs) mas não entram em active_runner.
 
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use std::fs;
 use std::path::Path;
 use std::process::Command;
@@ -96,12 +93,6 @@ pub trait ProjectRunner: Send + Sync {
     fn label(&self) -> &'static str;
     fn detect(&self, root: &Path) -> bool;
     fn candidates(&self, root: &Path) -> Result<Vec<LaunchCandidate>, String>;
-    fn spawn(
-        &self,
-        root: &Path,
-        candidate: &LaunchCandidate,
-        settings: &Value,
-    ) -> Result<Option<(u32, String)>, String>;
     fn config_view(&self, root: &Path) -> Result<LaunchConfigView, String>;
     fn save_config(&self, root: &Path, input: &LaunchConfigSave) -> Result<LaunchConfigView, String>;
 }
@@ -130,38 +121,6 @@ pub fn resolve_candidates(root: &Path) -> Result<(String, Vec<LaunchCandidate>),
     let id = runner.id().to_string();
     let list = runner.candidates(root)?;
     Ok((id, list))
-}
-
-pub fn find_candidate(root: &Path, id: &str) -> Result<(Box<dyn ProjectRunner>, LaunchCandidate), String> {
-    let runner = active_runner(root)?;
-    if let Some(candidate) = runner.candidates(root)?.into_iter().find(|item| item.id == id || item.label == id) {
-        return Ok((runner, candidate));
-    }
-    if id.starts_with("cmd:") {
-        return Ok((
-            runner,
-            LaunchCandidate {
-                id: id.to_string(),
-                label: id.strip_prefix("cmd:").unwrap_or(id).to_string(),
-                kind: CandidateKind::Command,
-            },
-        ));
-    }
-    Err("O comando do Launchfile já não é válido.".into())
-}
-
-pub fn spawn_candidate(
-    root: &Path,
-    candidate: &LaunchCandidate,
-    settings: &Value,
-) -> Result<Option<(u32, String)>, String> {
-    let (runner, resolved) = find_candidate(root, &candidate.id).or_else(|_| {
-        Ok::<_, String>((
-            active_runner(root)?,
-            candidate.clone(),
-        ))
-    })?;
-    runner.spawn(root, &resolved, settings)
 }
 
 pub fn get_launch_config(root: &Path) -> Result<LaunchConfigView, String> {
@@ -383,20 +342,6 @@ fn spawn_windows_cmd(
         .map_err(|err| format!("Falha ao executar: {err}"))
 }
 
-pub(crate) fn spawn_command_line(
-    root: &Path,
-    command_line: &str,
-    cwd: Option<&Path>,
-) -> Result<Option<(u32, String)>, String> {
-    spawn_command_line_with_env(
-        root,
-        command_line,
-        cwd,
-        &std::collections::BTreeMap::new(),
-        None,
-    )
-}
-
 pub(crate) fn spawn_command_line_with_env(
     root: &Path,
     command_line: &str,
@@ -522,14 +467,6 @@ pub(crate) fn tail_launch_logs(log_dir: &Path, max_lines: usize) -> String {
         parts.push(format!("--- {name} ---\n{}", body.join("\n")));
     }
     parts.join("\n")
-}
-
-pub(crate) fn spawn_binary(
-    root: &Path,
-    exe: &Path,
-    settings: &Value,
-) -> Result<Option<(u32, String)>, String> {
-    crate::launcher::launch::spawn_process_public(exe, root, settings)
 }
 
 pub(crate) fn write_text(path: &Path, raw: &str) -> Result<(), String> {

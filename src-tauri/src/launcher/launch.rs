@@ -2,7 +2,6 @@ use crate::launcher::runners;
 use crate::launcher::store::{self, find_app, install_dir, load_apps};
 use chrono::Local;
 use serde::Serialize;
-use serde_json::Value;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -93,11 +92,32 @@ pub async fn launch(
         ),
     );
 
-    // Porta ocupada pelo processo desta app: reinicia sem modal. Outro processo pede Forçar.
+    // Já a correr: o Run flow e um segundo Lançar não matam o processo nem repetem o pre-start.
+    // Forçar continua a libertar a porta e a arrancar de novo.
+    if !force && crate::launcher::runtime::is_running(meta, &runtime_key) {
+        crate::launcher::activity_log::info(
+            "launch",
+            &format!("já a correr folder={runtime_key}, sem reiniciar"),
+        );
+        on_progress(100, "A correr");
+        return Ok(LaunchResult {
+            started: true,
+            needs_choice: false,
+            needs_force: false,
+            executables: vec![start_cmd],
+            close_after_launch: false,
+            message: format!("{} já está a correr.", app.name),
+            open_url: None,
+            force_port: None,
+            force_pid: None,
+            force_process_name: None,
+        });
+    }
+
+    // Porta ocupada por outro processo: pede Forçar. Com Forçar, liberta e arranca.
     if let Some(port) = port {
         if let Some((pid, process_name)) = crate::launcher::runtime::port_occupant(port) {
-            let own = crate::launcher::runtime::is_running(meta, &runtime_key);
-            if !force && !own {
+            if !force {
                 crate::launcher::activity_log::warn(
                     "launch",
                     &format!("needs_force port={port} pid={pid} name={process_name}"),
@@ -117,15 +137,13 @@ pub async fn launch(
                     force_process_name: Some(process_name),
                 });
             }
-            if own {
-                let _ = crate::launcher::cloudflare::stop_tunnel(meta, workspace, &info, &app);
-                let _ = crate::launcher::runtime::stop(meta, &runtime_key);
-            }
             on_progress(48, &format!("A libertar porta {port}…"));
             crate::launcher::activity_log::info(
                 "launch",
-                &format!("a libertar porta {port} (occupant {process_name}/{pid} own={own})"),
+                &format!("a libertar porta {port} (occupant {process_name}/{pid})"),
             );
+            let _ = crate::launcher::cloudflare::stop_tunnel(meta, workspace, &info, &app);
+            let _ = crate::launcher::runtime::stop(meta, &runtime_key);
             crate::launcher::runtime::free_port(port)?;
             let _ = crate::launcher::runtime::clear_running_for_port(meta, port);
             let _ = crate::launcher::runtime::clear(meta, &runtime_key);
@@ -146,7 +164,15 @@ pub async fn launch(
     let work = project.clone();
 
     let pre_start = crate::launcher::launchfile::finished_steps(&doc.pre_start);
+    let deps_ready = work.join("node_modules").is_dir();
     for (index, step) in pre_start.iter().enumerate() {
+        if !force && deps_ready && is_install_step(step) {
+            crate::launcher::activity_log::info(
+                "launch",
+                &format!("pre-start ignorado (node_modules já existe): {step}"),
+            );
+            continue;
+        }
         on_progress(52, &format!("Pre-start {}/{}…", index + 1, pre_start.len()));
         crate::launcher::activity_log::info("launch", &format!("pre-start: {step}"));
         runners::run_command_wait(&work, step)?;
@@ -277,6 +303,14 @@ pub async fn launch(
     })
 }
 
+fn is_install_step(step: &str) -> bool {
+    let trimmed = step.trim();
+    trimmed == "npm install"
+        || trimmed == "npm ci"
+        || trimmed.starts_with("npm install ")
+        || trimmed.starts_with("npm ci ")
+}
+
 fn launch_out_grew_with_port_busy(info: &Path, mark: u64) -> bool {
     let path = info.join("launch.out.log");
     let Ok(raw) = fs::read_to_string(&path) else {
@@ -331,121 +365,6 @@ pub async fn generate_launchfile(
         .await?;
     on_progress(100, "Launchfile gerado");
     Ok(())
-}
-
-fn process_image_name(exe: &Path) -> String {
-    exe.file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or(if cfg!(windows) { "unknown.exe" } else { "unknown" })
-        .to_string()
-}
-
-pub(crate) fn spawn_process_public(exe: &Path, dir: &Path, settings: &Value) -> Result<Option<(u32, String)>, String> {
-    spawn_process(exe, dir, settings)
-}
-
-fn spawn_process(exe: &Path, dir: &Path, settings: &Value) -> Result<Option<(u32, String)>, String> {
-    let ext = exe.extension().and_then(|ext| ext.to_str()).unwrap_or("").to_lowercase();
-    let image = process_image_name(exe);
-    if cfg!(target_os = "macos") && ext == "app" {
-        let mut command = Command::new("open");
-        command.arg(exe);
-        runners::apply_detached(&mut command);
-        let child = command.spawn().map_err(|err| err.to_string())?;
-        return Ok(Some((child.id(), image)));
-    }
-    if cfg!(target_os = "linux") && ext == "exe" {
-        return spawn_linux_windows(exe, dir, settings).map(|pid| pid.map(|id| (id, image)));
-    }
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        if let Ok(meta) = fs::metadata(exe) {
-            let mut permissions = meta.permissions();
-            permissions.set_mode(permissions.mode() | 0o111);
-            let _ = fs::set_permissions(exe, permissions);
-        }
-    }
-    let mut command = Command::new(exe);
-    if let Some(parent) = exe.parent() {
-        command.current_dir(parent);
-    }
-    runners::apply_detached(&mut command);
-    let child = command.spawn().map_err(|err| err.to_string())?;
-    Ok(Some((child.id(), image)))
-}
-
-fn spawn_linux_windows(exe: &Path, dir: &Path, settings: &serde_json::Value) -> Result<Option<u32>, String> {
-    let template = settings
-        .get("LinuxWindowsLaunchCommand")
-        .and_then(|value| value.as_str())
-        .unwrap_or("")
-        .trim()
-        .to_string();
-    if !template.is_empty() {
-        let exe_text = exe.display().to_string();
-        let dir_text = dir.display().to_string();
-        let parent = exe.parent().unwrap_or(dir).display().to_string();
-        let mut rendered = template
-            .replace("{exe}", &exe_text)
-            .replace("{gamePath}", &dir_text)
-            .replace("{exeDir}", &parent);
-        if !rendered.contains(&exe_text) {
-            rendered.push(' ');
-            rendered.push_str(&exe_text);
-        }
-        let mut command = Command::new("sh");
-        command.arg("-c").arg(rendered);
-        runners::apply_detached(&mut command);
-        let child = command.spawn().map_err(|err| err.to_string())?;
-        return Ok(Some(child.id()));
-    }
-    for binary in ["wine64", "wine"] {
-        let mut command = Command::new(binary);
-        command.arg(exe).current_dir(dir);
-        runners::apply_detached(&mut command);
-        if let Ok(child) = command.spawn() {
-            return Ok(Some(child.id()));
-        }
-    }
-    if let Some(proton) = find_proton() {
-        let compat = dir.join(".steam-compat-data");
-        let _ = fs::create_dir_all(&compat);
-        let mut command = Command::new(proton);
-        command.arg("run").arg(exe).current_dir(dir);
-        command.env("STEAM_COMPAT_DATA_PATH", &compat);
-        command.env("STEAM_COMPAT_CLIENT_INSTALL_PATH", dir);
-        runners::apply_detached(&mut command);
-        let child = command.spawn().map_err(|err| err.to_string())?;
-        return Ok(Some(child.id()));
-    }
-    Err("No Linux, instale wine64, wine ou Proton, ou defina o comando de lançamento.".into())
-}
-
-fn find_proton() -> Option<PathBuf> {
-    let home = std::env::var("HOME").ok()?;
-    let roots = [
-        format!("{home}/.steam/root"),
-        format!("{home}/.steam/steam"),
-        format!("{home}/.local/share/Steam"),
-        format!("{home}/.var/app/com.valvesoftware.Steam/data/Steam"),
-    ];
-    for root in roots {
-        for folder in ["steamapps/common", "compatibilitytools.d"] {
-            let base = PathBuf::from(&root).join(folder);
-            let Ok(entries) = fs::read_dir(&base) else { continue };
-            for entry in entries.flatten() {
-                let name = entry.file_name().to_string_lossy().to_lowercase();
-                if name.starts_with("proton") {
-                    let candidate = entry.path().join("proton");
-                    if candidate.is_file() {
-                        return Some(candidate);
-                    }
-                }
-            }
-        }
-    }
-    None
 }
 
 pub fn open_folder(meta: &Path, workspace: &Path, repository: &str) -> Result<(), String> {
@@ -1360,6 +1279,15 @@ mod reveal_tests {
         let braced = super::parse_xdg_desktop("/home/a", "# comment\nXDG_DESKTOP_DIR=\"${HOME}/Desktop\"\n");
         assert_eq!(braced, Some(PathBuf::from("/home/a/Desktop")));
         assert!(super::parse_xdg_desktop("/home/a", "XDG_DOWNLOAD_DIR=\"$HOME/Downloads\"\n").is_none());
+    }
+
+    #[test]
+    fn install_step_is_npm_install_or_ci() {
+        assert!(super::is_install_step("npm install"));
+        assert!(super::is_install_step("  npm ci  "));
+        assert!(super::is_install_step("npm install --omit=dev"));
+        assert!(!super::is_install_step("npm start"));
+        assert!(!super::is_install_step("npm run build"));
     }
 
     fn paths_end_with(paths: &[PathBuf], name: &str) -> bool {

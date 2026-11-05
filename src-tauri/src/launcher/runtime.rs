@@ -858,19 +858,8 @@ pub fn stop(root: &Path, repository: &str) -> Result<(), String> {
     let Some(item) = entry(root, repository) else {
         return Err("Esta app não está em execução.".into());
     };
-    #[cfg(windows)]
-    let killed = Command::new("taskkill")
-        .args(["/PID", &item.pid.to_string(), "/T", "/F"])
-        .status()
-        .map(|status| status.success())
-        .unwrap_or(false)
-        || Command::new("taskkill")
-            .args(["/IM", &item.process_name, "/T", "/F"])
-            .status()
-            .map(|status| status.success())
-            .unwrap_or(false);
-    #[cfg(not(windows))]
-    let killed = unix_kill_tree(item.pid);
+    // Só a árvore deste PID. `taskkill /IM node.exe` matava as outras apps do flow.
+    let killed = kill_pid_tree(item.pid).is_ok();
     let _ = clear(root, repository);
     if !killed {
         // Se a porta ainda responder, o kill falhou de facto.

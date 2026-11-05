@@ -1,8 +1,6 @@
 use super::{
-    spawn_binary, CandidateKind, LaunchCandidate, LaunchConfigSave, LaunchConfigView, LaunchField,
-    ProjectRunner,
+    CandidateKind, LaunchCandidate, LaunchConfigSave, LaunchConfigView, LaunchField, ProjectRunner,
 };
-use serde_json::Value;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -124,24 +122,6 @@ impl ProjectRunner for BinaryRunner {
                 }
             })
             .collect())
-    }
-
-    fn spawn(
-        &self,
-        root: &Path,
-        candidate: &LaunchCandidate,
-        settings: &Value,
-    ) -> Result<Option<(u32, String)>, String> {
-        let path = PathBuf::from(&candidate.id);
-        let path = if path.is_absolute() {
-            path
-        } else {
-            root.join(&candidate.id)
-        };
-        if !path.exists() {
-            return Err("O executável escolhido já não existe.".into());
-        }
-        spawn_binary(root, &path, settings)
     }
 
     fn config_view(&self, root: &Path) -> Result<LaunchConfigView, String> {

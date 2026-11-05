@@ -520,6 +520,22 @@ function parsePort(raw: string): number | null {
   return value;
 }
 
+// Portas que o Chromium recusa (net::kRestrictedPorts), incluindo 6000 (X11).
+const BLOCKED_BROWSER_PORTS = new Set([
+  1, 7, 9, 11, 13, 15, 17, 19, 20, 21, 22, 23, 25, 37, 42, 43, 53, 69, 77, 79, 87, 95, 101, 102, 103,
+  104, 109, 110, 111, 113, 115, 117, 119, 123, 135, 137, 139, 143, 161, 179, 389, 427, 465, 512, 513,
+  514, 515, 526, 530, 531, 532, 540, 548, 554, 556, 563, 587, 601, 636, 989, 990, 993, 995, 1719, 1720,
+  1723, 2049, 3659, 4045, 5060, 5061, 6000, 6566, 6665, 6666, 6667, 6668, 6669, 6697, 10080,
+]);
+
+function blockedBrowserPort(port: number): boolean {
+  return BLOCKED_BROWSER_PORTS.has(port);
+}
+
+function blockedPortMessage(port: number): string {
+  return `O navegador bloqueia a porta ${port}. Escolha outra.`;
+}
+
 function portOccupantText(result: PortOccupancy): string {
   const app = result.appName?.trim();
   const process = result.processName?.trim();
@@ -1664,6 +1680,7 @@ function LiteralModal({
 type PortPhase =
   | { status: 'idle' }
   | { status: 'invalid' }
+  | { status: 'blocked'; port: number }
   | { status: 'waiting'; port: number }
   | { status: 'checking'; port: number }
   | { status: 'free'; port: number }
@@ -1682,6 +1699,12 @@ function PortModal({ onConfirm, onClose }: { onConfirm: (port: number) => void; 
     const parsed = parsePort(raw);
     if (parsed === null) {
       setPhase(raw.trim() ? { status: 'invalid' } : { status: 'idle' });
+      return () => {
+        cancel = true;
+      };
+    }
+    if (blockedBrowserPort(parsed)) {
+      setPhase({ status: 'blocked', port: parsed });
       return () => {
         cancel = true;
       };
@@ -1763,6 +1786,7 @@ function PortModal({ onConfirm, onClose }: { onConfirm: (port: number) => void; 
         </Modal.Field>
         <div aria-live="polite">
           {phase.status === 'invalid' ? <p className={styles.portHint}>Indique uma porta de 1 a 65535.</p> : null}
+          {phase.status === 'blocked' ? <p className={styles.portHint}>{blockedPortMessage(phase.port)}</p> : null}
           {(phase.status === 'waiting' || phase.status === 'checking') ? (
             <p className={styles.portHint}>A verificar a porta…</p>
           ) : null}
@@ -2101,7 +2125,7 @@ function CommunicationsCanvas({ orgId, initial }: { orgId: string; initial: Grap
 
   function addPort(port: number) {
     const place = portPrompt;
-    if (!place) return;
+    if (!place || blockedBrowserPort(port)) return;
     const id = crypto.randomUUID();
     commit({
       ...graphRef.current,
@@ -2549,11 +2573,11 @@ function CommunicationsCanvas({ orgId, initial }: { orgId: string; initial: Grap
     setError('');
     try {
       const seen = new Set<string>();
+      let snapshot = await libraryList();
       for (const node of enabled) {
         const key = node.folderName || node.repository;
         if (!key || seen.has(key)) continue;
         seen.add(key);
-        const snapshot = await libraryList();
         const app = liveApp(snapshot.apps, node);
         if (!app || app.running) continue;
         setFlowPhase(`A iniciar ${app.name}…`);
@@ -2602,6 +2626,10 @@ function CommunicationsCanvas({ orgId, initial }: { orgId: string; initial: Grap
     const node = graphRef.current.nodes.find((item) => item.id === nodeId);
     if (!node || node.kind !== 'port') return;
     const parsed = parsePort(node.literal ?? '');
+    if (parsed !== null && blockedBrowserPort(parsed)) {
+      toast.error(blockedPortMessage(parsed));
+      return;
+    }
     if (parsed === null) {
       toast.error('Indique uma porta de 1 a 65535.');
       if (node.portStatus) {

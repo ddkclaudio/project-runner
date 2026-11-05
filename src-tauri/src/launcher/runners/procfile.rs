@@ -1,8 +1,7 @@
 use super::{
-    relative_to, spawn_command_line, write_text, CandidateKind, LaunchCandidate, LaunchConfigSave,
-    LaunchConfigView, LaunchField, ProjectRunner,
+    relative_to, write_text, CandidateKind, LaunchCandidate, LaunchConfigSave, LaunchConfigView,
+    LaunchField, ProjectRunner,
 };
-use serde_json::Value;
 use std::fs;
 use std::path::Path;
 
@@ -61,24 +60,6 @@ impl ProjectRunner for ProcfileRunner {
                 kind: CandidateKind::Command,
             })
             .collect())
-    }
-
-    fn spawn(
-        &self,
-        root: &Path,
-        candidate: &LaunchCandidate,
-        _settings: &Value,
-    ) -> Result<Option<(u32, String)>, String> {
-        let raw = fs::read_to_string(path(root)).map_err(|err| err.to_string())?;
-        let items = parse(&raw);
-        let name = candidate.id.strip_prefix("proc:").unwrap_or("");
-        let cmd = items
-            .iter()
-            .find(|(item, _)| item == name)
-            .map(|(_, cmd)| cmd.clone())
-            .or_else(|| items.first().map(|(_, cmd)| cmd.clone()))
-            .ok_or_else(|| "Processo do Procfile em falta.".to_string())?;
-        spawn_command_line(root, &cmd, None)
     }
 
     fn config_view(&self, root: &Path) -> Result<LaunchConfigView, String> {

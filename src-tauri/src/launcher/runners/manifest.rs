@@ -1,9 +1,8 @@
 use super::{
-    relative_to, spawn_command_line_with_env, write_text, CandidateKind, LaunchCandidate,
-    LaunchConfigSave, LaunchConfigView, LaunchField, ProjectRunner,
+    relative_to, write_text, CandidateKind, LaunchCandidate, LaunchConfigSave, LaunchConfigView,
+    LaunchField, ProjectRunner,
 };
 use crate::launcher::launchfile::{self, LaunchfileDoc};
-use serde_json::Value;
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;
@@ -31,22 +30,6 @@ impl ProjectRunner for ManifestRunner {
             label: start,
             kind: CandidateKind::Command,
         }])
-    }
-
-    fn spawn(
-        &self,
-        root: &Path,
-        candidate: &LaunchCandidate,
-        _settings: &Value,
-    ) -> Result<Option<(u32, String)>, String> {
-        let doc = launchfile::read(root)?;
-        let command = candidate
-            .id
-            .strip_prefix("cmd:")
-            .unwrap_or(candidate.id.as_str());
-        let lasting = launchfile::lasting_start(&doc);
-        let command = if command.is_empty() { lasting.as_str() } else { command };
-        spawn_command_line_with_env(root, command, None, &doc.env, None)
     }
 
     fn config_view(&self, root: &Path) -> Result<LaunchConfigView, String> {

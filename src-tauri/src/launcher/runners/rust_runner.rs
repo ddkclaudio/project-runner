@@ -1,6 +1,6 @@
 use super::{
-    relative_to, spawn_command_line, write_text, CandidateKind, LaunchCandidate, LaunchConfigSave,
-    LaunchConfigView, LaunchField, ProjectRunner,
+    relative_to, write_text, CandidateKind, LaunchCandidate, LaunchConfigSave, LaunchConfigView,
+    LaunchField, ProjectRunner,
 };
 use serde_json::Value;
 use std::fs;
@@ -39,20 +39,6 @@ impl ProjectRunner for RustRunner {
                 kind: CandidateKind::Command,
             },
         ])
-    }
-
-    fn spawn(
-        &self,
-        root: &Path,
-        candidate: &LaunchCandidate,
-        _settings: &Value,
-    ) -> Result<Option<(u32, String)>, String> {
-        let line = match candidate.id.as_str() {
-            "cargo:run-release" => "cargo run --release",
-            other if other.starts_with("cmd:") => other.strip_prefix("cmd:").unwrap_or("cargo run"),
-            _ => "cargo run",
-        };
-        spawn_command_line(root, line, None)
     }
 
     fn config_view(&self, root: &Path) -> Result<LaunchConfigView, String> {

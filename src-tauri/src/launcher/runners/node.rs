@@ -1,6 +1,6 @@
 use super::{
-    relative_to, run_command_wait, spawn_command_line, write_text, CandidateKind, LaunchCandidate,
-    LaunchConfigSave, LaunchConfigView, LaunchField, ProjectRunner,
+    relative_to, run_command_wait, write_text, CandidateKind, LaunchCandidate, LaunchConfigSave,
+    LaunchConfigView, LaunchField, ProjectRunner,
 };
 use serde_json::{json, Value};
 use std::fs;
@@ -94,22 +94,6 @@ impl ProjectRunner for NodeRunner {
             return Err("package.json sem scripts.start/dev.".into());
         }
         Ok(out)
-    }
-
-    fn spawn(
-        &self,
-        root: &Path,
-        candidate: &LaunchCandidate,
-        _settings: &Value,
-    ) -> Result<Option<(u32, String)>, String> {
-        ensure_dependencies(root)?;
-        let script = candidate.id.strip_prefix("npm:").unwrap_or("start");
-        let line = if script == "start" {
-            "npm start".to_string()
-        } else {
-            format!("npm run {script}")
-        };
-        spawn_command_line(root, &line, None)
     }
 
     fn config_view(&self, root: &Path) -> Result<LaunchConfigView, String> {
