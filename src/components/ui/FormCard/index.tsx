@@ -5,11 +5,13 @@ import styles from './FormCard.module.css';
 interface FormCardProps extends React.FormHTMLAttributes<HTMLFormElement> {
   children: React.ReactNode;
   className?: string;
+  /** Sem borda nem fundo. O painel em volta já é a superfície. */
+  plain?: boolean;
 }
 
-function FormCardRoot({ children, className, ...props }: FormCardProps) {
+function FormCardRoot({ children, className, plain, ...props }: FormCardProps) {
   return (
-    <form className={cx(styles.card, className)} noValidate {...props}>
+    <form className={cx(styles.card, plain && styles.plain, className)} noValidate {...props}>
       {children}
     </form>
   );
@@ -51,6 +53,8 @@ interface FormRowProps {
   optionalLabel?: string;
   children: React.ReactNode;
   alignStart?: boolean;
+  /** Rótulo acima do valor. Cabe em painéis estreitos. */
+  stack?: boolean;
   error?: string;
   /** Mostra o texto de erro abaixo do controle (ex.: Select sem error built-in). */
   showErrorText?: boolean;
@@ -61,11 +65,12 @@ function FormRow({
   optionalLabel,
   children,
   alignStart,
+  stack,
   error,
   showErrorText = false,
 }: FormRowProps) {
   return (
-    <div className={cx(styles.row, alignStart && styles.rowAlignStart)}>
+    <div className={cx(styles.row, stack && styles.rowStack, alignStart && styles.rowAlignStart)}>
       <div className={cx(styles.rowLabel, error && styles.rowLabelError)}>
         {label}
         {optionalLabel && <span className={styles.optional}> {optionalLabel}</span>}

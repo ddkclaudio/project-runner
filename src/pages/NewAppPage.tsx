@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/Button';
 import { FormCard, FormRow } from '@/components/ui/FormCard';
 import { Modal } from '@/components/ui/Modal';
 import { InlineAlert } from '@/components/ui/InlineAlert';
+import { StatusMessage } from '@/components/StatusMessage';
 import { appHref, githubRepos, launcherError, librarySave, settingsGet, type GithubRepo } from '@/lib/launcher-api';
 import { cx } from '@/utils';
 import styles from './new-app.module.css';
@@ -129,12 +130,16 @@ export function NewAppPage() {
           {choice === 'github' ? (
             <div className={styles.repos}>
               {repos.isPending ? <p className={styles.choiceText}>A carregar repositórios…</p> : null}
-              {repos.error ? <InlineAlert>{launcherError(repos.error)}</InlineAlert> : null}
+              {repos.error ? (
+                <InlineAlert>
+                  <StatusMessage text={launcherError(repos.error)} />
+                </InlineAlert>
+              ) : null}
               {warnings.length > 0 ? (
                 <div className={styles.warnings}>
                   {warnings.map((warning) => (
                     <InlineAlert key={warning} variant="warning">
-                      {warning}
+                      <StatusMessage text={warning} />
                     </InlineAlert>
                   ))}
                 </div>

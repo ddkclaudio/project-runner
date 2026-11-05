@@ -623,6 +623,8 @@ pub fn run() {
             launcher::commands::app_launch_config_get,
             launcher::commands::app_launch_config_save,
             launcher::commands::app_project_env,
+            launcher::commands::read_env_file,
+            launcher::commands::app_build_output,
             launcher::commands::app_cloudflare_get,
             launcher::commands::app_cloudflare_save,
             launcher::commands::app_cloudflare_start,

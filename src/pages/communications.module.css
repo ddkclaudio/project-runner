@@ -70,6 +70,13 @@
   box-shadow: none;
 }
 
+.flow :global(.react-flow__edge.animated .react-flow__edge-path) {
+  stroke: var(--brand-green);
+  stroke-width: 2.5;
+  stroke-dasharray: 8 12;
+  animation: commFlowDash 0.7s linear infinite;
+}
+
 .emptyHint {
   margin: 0;
   max-width: 280px;
@@ -421,6 +428,36 @@
   font-size: 12px;
 }
 
+.paneValue {
+  display: block;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--text-secondary);
+  word-break: break-word;
+}
+
+.outputLine {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 22px;
+  column-gap: 8px;
+  row-gap: 4px;
+  align-items: center;
+}
+
+.outputText {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  word-break: normal;
+}
+
+.outputNote {
+  grid-column: 1 / -1;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--text-muted);
+}
+
 .badges {
   display: flex;
   flex-wrap: wrap;
@@ -441,5 +478,11 @@
 @keyframes portSpin {
   to {
     transform: rotate(360deg);
+  }
+}
+
+@keyframes commFlowDash {
+  to {
+    stroke-dashoffset: -40;
   }
 }

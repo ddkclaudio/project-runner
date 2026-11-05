@@ -8,6 +8,7 @@ import { PageShell } from '@/components/ui/PageShell';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { InlineAlert } from '@/components/ui/InlineAlert';
+import { StatusMessage } from '@/components/StatusMessage';
 import { FormCard, FormRow } from '@/components/ui/FormCard';
 import { GridView } from '@/components/ui/GridView';
 import { ViewToolbar } from '@/components/ui/ViewToolbar';
@@ -350,10 +351,14 @@ function RemoteCatalog() {
         <>
           {warnings.map((warning, index) => (
             <InlineAlert key={`${index}:${warning}`} variant="warning">
-              {warning}
+              <StatusMessage text={warning} />
             </InlineAlert>
           ))}
-          {catalog.error && !rateLimited ? <InlineAlert>{launcherError(catalog.error)}</InlineAlert> : null}
+          {catalog.error && !rateLimited ? (
+            <InlineAlert>
+              <StatusMessage text={launcherError(catalog.error)} />
+            </InlineAlert>
+          ) : null}
           <ViewToolbar
             query={query}
             onQueryChange={setQuery}

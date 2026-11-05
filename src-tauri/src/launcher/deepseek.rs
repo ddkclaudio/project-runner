@@ -36,7 +36,8 @@ If start has several steps, only the last stays alive.
 Project Runner has a Cloudflare tunnel. The tunnel only needs the port the app listens on. Project Runner starts cloudflared; do not put cloudflared in start or pre-start.
 If the project already reads PORT (CRA, Vite, Next, Flask, uvicorn), put that same number only in env.PORT. If the project does not fix a port, write env.PORT as "3000". Do not invent CLOUDFLARE_*, TUNNEL_*, hostname, or token variables.
 
-The Executável screen has two tabs. The App tab is this Launchfile: name, runtime, kind, commands, and env. The Variáveis tab reads the clone's .env, or .env.example when .env is missing. That file is not part of the YAML. You may read .env.example names to learn what the project expects. Never copy secret values into the Launchfile. Write under env only what startup needs, starting with PORT.
+The running app and the Variáveis tab read environment variables only from this Launchfile. They do not load .env or .env.example.
+You may read .env, .env.example, and .env.sample to learn which names the project expects. .env.example and .env.sample show their values. A real .env has its values redacted. Use those files only as a hint. Never copy secret values into the Launchfile. Write under env only what startup needs, starting with PORT.
 
 Never invent file paths — list_dir / search / read_file first.
 Each command is a plain shell command. Put variables under env:, never VAR=value prefixes.
@@ -540,13 +541,23 @@ fn read_file(root: &Path, rel: &str) -> String {
         .and_then(|item| item.to_str())
         .unwrap_or("")
         .to_lowercase();
-    if name == ".env" || name.starts_with(".env.") {
+    if is_secret_env_file(&name) {
         text = redact_env(&text);
     }
     if truncated {
         text.push_str("\n\n[truncated]");
     }
     text
+}
+
+fn is_secret_env_file(name: &str) -> bool {
+    if name == ".env" {
+        return true;
+    }
+    if !name.starts_with(".env.") {
+        return false;
+    }
+    !(name.ends_with(".example") || name.ends_with(".sample") || name.ends_with(".template"))
 }
 
 fn redact_env(raw: &str) -> String {

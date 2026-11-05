@@ -18,9 +18,10 @@ import {
   type NodeProps,
   type OnConnectEnd,
 } from '@xyflow/react';
-import { IconArrowBackUp, IconArrowForwardUp, IconExternalLink, IconFolder, IconGrid4x4, IconPlayerPlay, IconRefresh, IconSearch } from '@tabler/icons-react';
+import { IconArrowBackUp, IconArrowForwardUp, IconCopy, IconExternalLink, IconFileImport, IconFolder, IconGrid4x4, IconPlayerPlay, IconRefresh, IconSearch } from '@tabler/icons-react';
 import { open as openDialog } from '@tauri-apps/plugin-dialog';
 import { openUrl } from '@tauri-apps/plugin-opener';
+import { FormCard, FormRow } from '@/components/ui/FormCard';
 import { FlowCanvas } from '@/components/ui/FlowCanvas';
 import { Button } from '@/components/ui/Button';
 import { InlineAlert } from '@/components/ui/InlineAlert';
@@ -31,11 +32,16 @@ import { PreferenceToggleRow } from '@/components/ui/PreferenceToggleRow';
 import { SearchableListPanel } from '@/components/ui/SearchableListPanel';
 import { SideDrawer, SideDrawerIconButton } from '@/components/ui/SideDrawer';
 import { StatusBadge } from '@/components/ui/StatusBadge';
+import { TabFilter } from '@/components/ui/TabFilter';
+import { Toggle } from '@/components/ui/Toggle';
 import { useToast } from '@/components/ui/Toast';
-import { LaunchConfigPanel } from '@/components/launcher/LaunchConfigForm';
+import { LaunchConfigPanel, useLaunchConfigActions } from '@/components/launcher/LaunchConfigForm';
+import { BranchSwitcher } from '@/components/layout/BranchSwitcher';
 import { appId, useLibraryMutations } from '@/components/launcher/LibraryCard';
 import { useOrg } from '@/contexts/OrgContext';
 import {
+  appBuildOutput,
+  appCloudflareGet,
   appHref,
   appLaunchConfigGet,
   communicationsGet,
@@ -47,6 +53,8 @@ import {
   portCheck,
   statusLabel,
   type AppView,
+  type BuildOutput,
+  type CloudflareView,
   type PortOccupancy,
   type PortStatus,
   type CommunicationEdge,
@@ -63,6 +71,7 @@ import {
   isLaunchConfigDirty,
   launchConfigQueryKey,
   launchDraftEpoch,
+  readCachedQuery,
   readDraft,
   readField,
   readSnapshot,
@@ -114,6 +123,8 @@ type FieldPrompt =
       flowY: number;
     }
   | { step: 'field'; purpose: 'bind'; sourceId: string; targetId: string }
+  | { step: 'field'; purpose: 'wire-source'; sourceId: string; targetId: string }
+  | { step: 'field'; purpose: 'wire-dest'; sourceId: string; targetId: string; sourceField: string; sourceType: ValueType }
   | { step: 'field'; purpose: 'retarget'; sourceId: string; targetId: string };
 type LiteralPrompt = {
   step: 'literal';
@@ -386,6 +397,28 @@ function toEdges(graph: Graph): Edge[] {
   }));
 }
 
+/** Ligações que alimentam `nodeId`, subindo até ao nó sem entrada. */
+function upstreamEdgeIds(edges: Edge[], nodeId: string): Set<string> {
+  const incoming = new Map<string, Edge[]>();
+  for (const edge of edges) {
+    const list = incoming.get(edge.target);
+    if (list) list.push(edge);
+    else incoming.set(edge.target, [edge]);
+  }
+  const ids = new Set<string>();
+  const seen = new Set<string>();
+  const walk = (id: string) => {
+    if (seen.has(id)) return;
+    seen.add(id);
+    for (const edge of incoming.get(id) ?? []) {
+      ids.add(edge.id);
+      walk(edge.source);
+    }
+  };
+  walk(nodeId);
+  return ids;
+}
+
 function mergeNodes(next: FlowNode[], previous: FlowNode[], keepSelection = false): FlowNode[] {
   const prior = new Map(previous.map((node) => [node.id, node]));
   return next.map((node) => {
@@ -646,6 +679,122 @@ function isLaunchVariable(key: string): boolean {
   );
 }
 
+const OUTPUT_LOCAL = 'output.local';
+const OUTPUT_CLOUDFLARE = 'output.cloudflare';
+const OUTPUT_BUILD = 'output.build';
+
+function isOutputField(key: string): boolean {
+  return key === OUTPUT_LOCAL || key === OUTPUT_CLOUDFLARE || key === OUTPUT_BUILD;
+}
+
+function cloudflareQueryKey(launchId: string) {
+  return ['launcher', 'cloudflare', launchId] as const;
+}
+
+function buildOutputQueryKey(launchId: string) {
+  return ['launcher', 'build-output', launchId] as const;
+}
+
+function tunnelEnabled(view: CloudflareView | undefined): boolean {
+  if (!view) return false;
+  const mode = view.mode ?? view.config.mode;
+  const host = view.config.hostname?.trim() ?? '';
+  return Boolean(view.running || view.config.startWithApp || (mode === 'named' && host));
+}
+
+function cloudflareOutputUrl(view: CloudflareView): string {
+  const live = view.running ? view.publicUrl?.trim() || '' : '';
+  if (live) return live;
+  const mode = view.mode ?? view.config.mode;
+  const host = view.config.hostname?.trim() || '';
+  if (mode === 'named' && host) return /^https?:\/\//i.test(host) ? host : `https://${host}`;
+  return '';
+}
+
+function localOutputUrl(live: AppView, launchId: string, view: CloudflareView | undefined): string {
+  const open = live.running ? live.openUrl?.trim() || '' : '';
+  if (open) return open;
+  if (view?.effectivePort) return `http://localhost:${view.effectivePort}`;
+  const fromEnv = readField(launchId, 'env.PORT')?.trim() ?? '';
+  if (/^\d+$/.test(fromEnv)) return `http://localhost:${fromEnv}`;
+  return '';
+}
+
+function resolveOutput(live: AppView, launchId: string, key: string): string | undefined {
+  const view = readCachedQuery<CloudflareView>(cloudflareQueryKey(launchId));
+  const build = readCachedQuery<BuildOutput>(buildOutputQueryKey(launchId));
+  if (key === OUTPUT_LOCAL) return localOutputUrl(live, launchId, view);
+  if (key === OUTPUT_CLOUDFLARE) {
+    if (!view || !tunnelEnabled(view)) return undefined;
+    return cloudflareOutputUrl(view);
+  }
+  if (key === OUTPUT_BUILD) return build?.path;
+  return undefined;
+}
+
+function outputLaunchFields(
+  live: AppView,
+  launchId: string,
+  view: CloudflareView | undefined,
+  build: BuildOutput | undefined,
+): LaunchField[] {
+  const fields: LaunchField[] = [
+    { key: OUTPUT_LOCAL, label: 'Local', value: localOutputUrl(live, launchId, view), fieldType: 'url' },
+  ];
+  if (view && tunnelEnabled(view)) {
+    const mode = view.mode ?? view.config.mode;
+    fields.push({
+      key: OUTPUT_CLOUDFLARE,
+      label: mode === 'named' ? 'Cloudflare DNS' : 'Cloudflare Quick',
+      value: cloudflareOutputUrl(view),
+      fieldType: 'url',
+    });
+  }
+  if (build) {
+    fields.push({ key: OUTPUT_BUILD, label: 'Build', value: build.path, fieldType: 'text' });
+  }
+  return fields;
+}
+
+function appUsesOutput(graph: Graph, apps: AppView[], launchId: string): boolean {
+  return graph.nodes.some((node) => {
+    if (!node.sourceField || !isOutputField(node.sourceField)) return false;
+    const root = chainAppNode(graph, node.id);
+    if (!root) return false;
+    const live = liveApp(apps, root);
+    return Boolean(live && appId(live) === launchId);
+  });
+}
+
+function pickedValueType(field: LaunchField): ValueType {
+  const type = (field.fieldType || '').toLowerCase();
+  if (type === 'url' || type === 'number' || type === 'boolean') return type;
+  if (isOutputField(field.key)) return outputFieldType(field.key);
+  return 'text';
+}
+
+function outputFieldType(key: string): ValueType {
+  if (key === OUTPUT_LOCAL || key === OUTPUT_CLOUDFLARE) return 'url';
+  if (key === OUTPUT_BUILD) return 'text';
+  const type = key.toLowerCase();
+  if (type === 'number' || type.endsWith('.port') || type === 'env.port') return 'number';
+  return 'text';
+}
+
+function chainUsesOutput(graph: Graph, nodeId: string): boolean {
+  const seen = new Set<string>();
+  let current = graph.nodes.find((node) => node.id === nodeId);
+  while (current && opKind(current.kind)) {
+    if (seen.has(current.id)) return false;
+    seen.add(current.id);
+    if (current.sourceField && isOutputField(current.sourceField)) return true;
+    const sourceId = current.sourceNodeId;
+    if (!sourceId) return false;
+    current = graph.nodes.find((node) => node.id === sourceId);
+  }
+  return false;
+}
+
 function isNumericField(field: LaunchField): boolean {
   return (field.fieldType || '').toLowerCase() === 'number';
 }
@@ -772,11 +921,17 @@ function evaluateChain(graph: Graph, apps: AppView[], nodeId: string, seen: Set<
     if (!live) return failure(node, node.id, 'missing-app');
     if (live.status === 'not_installed') return failure(node, node.id, 'not-installed');
     const id = appId(live);
-    if (!readSnapshot(id) && !readDraft(id)) return failure(node, node.id, 'unavailable');
-    if (!node.sourceField) return failure(node, node.id, 'missing-field');
-    const raw = readField(id, node.sourceField);
-    if (raw === undefined) return failure(node, node.id, 'missing-field');
-    upstream = { ok: true, value: raw, numeric: parseChainNumber(raw) !== null };
+    if (node.sourceField && isOutputField(node.sourceField)) {
+      const raw = resolveOutput(live, id, node.sourceField);
+      if (raw === undefined) return failure(node, node.id, 'missing-field');
+      upstream = { ok: true, value: raw, numeric: false };
+    } else {
+      if (!readSnapshot(id) && !readDraft(id)) return failure(node, node.id, 'unavailable');
+      if (!node.sourceField) return failure(node, node.id, 'missing-field');
+      const raw = readField(id, node.sourceField);
+      if (raw === undefined) return failure(node, node.id, 'missing-field');
+      upstream = { ok: true, value: raw, numeric: parseChainNumber(raw) !== null };
+    }
   }
   if (!upstream.ok) return upstream;
   if (node.kind === 'get') return upstream;
@@ -945,7 +1100,8 @@ function sourceLabel(graph: Graph, node: CommunicationNode): string {
 }
 
 function fieldHint(prompt: FieldPrompt, graph: Graph): string {
-  if (prompt.purpose === 'bind') return 'O Salvar grava o valor calculado neste campo.';
+  if (prompt.purpose === 'wire-source') return 'Escolha a saída que o Set vai ler.';
+  if (prompt.purpose === 'wire-dest' || prompt.purpose === 'bind') return 'O Salvar grava o valor calculado neste campo.';
   if (prompt.purpose === 'create' && prompt.op === 'value') return 'O texto digitado fica guardado neste node.';
   if (prompt.purpose === 'create' && prompt.op === 'get') return 'O node copia este valor. O Salvar grava só no destino.';
   if (prompt.purpose === 'create') return 'O node mostra o valor calculado. O Salvar grava só no destino.';
@@ -981,15 +1137,35 @@ async function warmLaunch(client: QueryClient, id: string) {
   });
 }
 
+async function warmOutputs(client: QueryClient, launchId: string) {
+  await Promise.all([
+    client.fetchQuery({
+      queryKey: cloudflareQueryKey(launchId),
+      queryFn: () => appCloudflareGet(launchId),
+    }),
+    client.fetchQuery({
+      queryKey: buildOutputQueryKey(launchId),
+      queryFn: () => appBuildOutput(launchId),
+    }),
+  ]);
+}
+
 async function warmChain(client: QueryClient, graph: Graph, apps: AppView[], nodeId: string) {
   const root = chainAppNode(graph, nodeId);
   if (!root) return;
   const live = liveApp(apps, root);
   if (!live || live.status === 'not_installed') return;
+  const id = appId(live);
   try {
-    await warmLaunch(client, appId(live));
+    await warmLaunch(client, id);
   } catch {
     // A pré-visualização mostra o Launchfile indisponível.
+  }
+  if (!chainUsesOutput(graph, nodeId)) return;
+  try {
+    await warmOutputs(client, id);
+  } catch {
+    // A saída fica indisponível até a próxima leitura.
   }
 }
 
@@ -1017,6 +1193,12 @@ async function warmGraph(client: QueryClient, graph: Graph, apps: AppView[]) {
       await warmLaunch(client, id);
     } catch {
       // evaluateChain marca a cadeia como indisponível.
+    }
+    if (!appUsesOutput(graph, apps, id)) continue;
+    try {
+      await warmOutputs(client, id);
+    } catch {
+      // A saída fica indisponível até a próxima leitura.
     }
   }
 }
@@ -1046,7 +1228,21 @@ function ChainPreviewValue({ nodeId, plain }: { nodeId: string; plain?: boolean 
 function ChainPreviewLoaded({ nodeId, launchId, plain }: { nodeId: string; launchId: string; plain?: boolean }) {
   const config = useLaunchConfig(launchId);
   const { graph, apps } = useCommunicationsGraph();
+  const usesOutput = chainUsesOutput(graph, nodeId);
+  const cloudflare = useQuery({
+    queryKey: cloudflareQueryKey(launchId),
+    queryFn: () => appCloudflareGet(launchId),
+    enabled: usesOutput,
+  });
+  const build = useQuery({
+    queryKey: buildOutputQueryKey(launchId),
+    queryFn: () => appBuildOutput(launchId),
+    enabled: usesOutput,
+  });
   if (config.isPending && !config.data && !readDraft(launchId)) {
+    return <span className={plain ? undefined : styles.nodeMeta}>A carregar…</span>;
+  }
+  if (usesOutput && ((cloudflare.isPending && !cloudflare.data) || (build.isPending && !build.data))) {
     return <span className={plain ? undefined : styles.nodeMeta}>A carregar…</span>;
   }
   if ((config.isError || !config.data) && !readDraft(launchId) && !readSnapshot(launchId)) {
@@ -1336,57 +1532,198 @@ function PortDetails({ node }: { node: CommunicationNode }) {
   );
 }
 
+function OutputCopyValue({ value, note }: { value: string; note?: string }) {
+  const toast = useToast();
+  const text = value.trim();
+  return (
+    <div className={styles.outputLine}>
+      <span className={cx(styles.paneValue, styles.outputText, !text && styles.missing)} title={text || undefined}>
+        {text || '—'}
+      </span>
+      <Button
+        type="button"
+        variant="ghost"
+        size="sm"
+        aria-label="Copiar"
+        title="Copiar"
+        disabled={!text}
+        style={{ width: 22, height: 22, padding: 0 }}
+        leftIcon={<IconCopy size={14} aria-hidden="true" />}
+        onClick={() => {
+          void navigator.clipboard
+            .writeText(text)
+            .then(() => toast.success('Copiado.'))
+            .catch(() => toast.error('Não foi possível copiar.'));
+        }}
+      />
+      {note ? <span className={styles.outputNote}>{note}</span> : null}
+    </div>
+  );
+}
+
+function OutputPane({ app }: { app: AppView }) {
+  const launchId = appId(app);
+  const cloudflare = useQuery({
+    queryKey: cloudflareQueryKey(launchId),
+    queryFn: () => appCloudflareGet(launchId),
+    refetchInterval: (query) => {
+      const data = query.state.data;
+      if (!tunnelEnabled(data)) return false;
+      if (!data?.running) return 10000;
+      return data.publicUrl ? 5000 : 1500;
+    },
+  });
+  const build = useQuery({
+    queryKey: buildOutputQueryKey(launchId),
+    queryFn: () => appBuildOutput(launchId),
+  });
+  const local = localOutputUrl(app, launchId, cloudflare.data);
+  const view = cloudflare.data;
+  const tunnelMode = view ? (view.mode ?? view.config.mode) : 'quick';
+  const tunnelLabel = tunnelMode === 'named' ? 'Cloudflare DNS' : 'Cloudflare Quick';
+  const tunnelUrl = view && tunnelEnabled(view) ? cloudflareOutputUrl(view) : '';
+  return (
+    <FormCard plain aria-label="Output da app">
+      <FormCard.Header title="" subtitle="URL local, túnel Cloudflare e pasta de build." />
+      <FormRow label="Local" stack>
+        <OutputCopyValue value={local} />
+      </FormRow>
+      {view && tunnelEnabled(view) ? (
+        <FormRow label={tunnelLabel} stack>
+          <OutputCopyValue value={tunnelUrl} />
+        </FormRow>
+      ) : null}
+      <FormRow label="Build" stack>
+        {build.data ? (
+          <OutputCopyValue value={build.data.path} note={build.data.exists ? undefined : 'Ainda não gerada'} />
+        ) : (
+          <span className={styles.missing}>{build.isError ? 'Pasta indisponível.' : 'A carregar…'}</span>
+        )}
+      </FormRow>
+    </FormCard>
+  );
+}
+
 function NodeDetails({
   node,
   apps,
   onAlwaysOn,
+  onOpenApp,
+  onClose,
 }: {
   node: CommunicationNode;
   apps: AppView[];
   onAlwaysOn: (alwaysOn: boolean) => void;
+  onOpenApp: () => void;
+  onClose: () => void;
 }) {
   const live = liveApp(apps, node);
   const installed = Boolean(live && live.status !== 'not_installed');
+  const launchId = live ? appId(live) : '';
+  const tools = useLaunchConfigActions(launchId);
+  const [tab, setTab] = useState<'info' | 'app' | 'env' | 'output'>('info');
+  useEffect(() => {
+    setTab('info');
+  }, [node.id]);
+
   return (
-    <div className={styles.details}>
-      <PreferenceToggleRow
-        title="Sempre ligado"
-        description="O Run flow inicia esta app se ela estiver parada."
-        checked={node.alwaysOn}
-        onChange={onAlwaysOn}
-      />
-      <dl className={styles.facts}>
-        <div className={styles.fact}>
-          <dt>Repositório</dt>
-          <dd>{node.repository || '—'}</dd>
-        </div>
-        <div className={styles.fact}>
-          <dt>Pasta</dt>
-          <dd>{node.folderName || '—'}</dd>
-        </div>
-        <div className={styles.fact}>
-          <dt>Node</dt>
-          <dd className={styles.uuid}>{node.id}</dd>
-        </div>
-        {live ? (
-          <div className={styles.fact}>
-            <dt>Biblioteca</dt>
-            <dd>
-              <div className={styles.badges}>
-                <StatusBadge label={statusLabel(live.status)} tone={live.status === 'installed' ? 'success' : live.status === 'update' ? 'warning' : 'muted'} />
-                <StatusBadge label={live.running ? 'Em execução' : 'Parada'} tone={live.running ? 'success' : 'muted'} />
-              </div>
-            </dd>
-          </div>
-        ) : (
-          <p className={styles.missing}>Este app não está mais na biblioteca.</p>
-        )}
-      </dl>
-      {installed && live ? <LaunchConfigPanel app={live} showSave={false} /> : null}
-      {live && !installed ? (
-        <p className={styles.missing}>Os campos do Executável aparecem depois da instalação. O Run flow instala esta app.</p>
-      ) : null}
-    </div>
+    <SideDrawer
+      modal={false}
+      lockScroll={false}
+      open
+      onClose={onClose}
+      title={appAlias(apps, node)}
+      ariaLabel={`Detalhes de ${appAlias(apps, node)}`}
+      headerActions={
+        <>
+          <Toggle checked={node.alwaysOn} onChange={onAlwaysOn} aria-label="Sempre ligado" />
+          {installed ? (
+            <>
+              <SideDrawerIconButton label="Importar variáveis" onClick={() => void tools.importEnv()} disabled={tools.busy}>
+                <IconFileImport size={18} aria-hidden="true" />
+              </SideDrawerIconButton>
+              <SideDrawerIconButton label="Abrir pasta do Launchfile" onClick={() => void tools.openLaunchDir()} disabled={tools.busy}>
+                <IconFolder size={18} aria-hidden="true" />
+              </SideDrawerIconButton>
+              <SideDrawerIconButton label="Regenerar com DeepSeek" onClick={() => void tools.generateWithDeepseek()} disabled={tools.busy}>
+                <IconRefresh size={18} aria-hidden="true" />
+              </SideDrawerIconButton>
+            </>
+          ) : null}
+          {live ? (
+            <SideDrawerIconButton label="Abrir no Project Runner" onClick={onOpenApp}>
+              <IconExternalLink size={18} aria-hidden="true" />
+            </SideDrawerIconButton>
+          ) : null}
+        </>
+      }
+    >
+      <div className={styles.details}>
+        <TabFilter
+          aria-label="Detalhes da app"
+          value={tab}
+          onChange={(value) => setTab(value === 'app' || value === 'env' || value === 'output' ? value : 'info')}
+          tabs={[
+            { value: 'info', label: 'Info' },
+            { value: 'app', label: 'App' },
+            { value: 'env', label: 'Variáveis' },
+            { value: 'output', label: 'Output' },
+          ]}
+        />
+        {tab === 'info' ? (
+          <FormCard plain aria-label="Info da app">
+            <FormCard.Header title="" subtitle="Identidade da app e a branch que o Run flow executa." />
+            <FormRow label="Repositório" stack>
+              <span className={styles.paneValue}>{node.repository || '—'}</span>
+            </FormRow>
+            {live?.gitClone ? (
+              <FormRow label="Branch" stack>
+                <BranchSwitcher repository={live.repository} />
+              </FormRow>
+            ) : null}
+            <FormRow label="Pasta" stack>
+              <span className={styles.paneValue}>{node.folderName || '—'}</span>
+            </FormRow>
+            <FormRow label="Node" stack>
+              <span className={cx(styles.paneValue, styles.uuid)}>{node.id}</span>
+            </FormRow>
+            {live ? (
+              <FormRow label="Biblioteca" stack>
+                <div className={styles.badges}>
+                  <StatusBadge label={statusLabel(live.status)} tone={live.status === 'installed' ? 'success' : live.status === 'update' ? 'warning' : 'muted'} />
+                  <StatusBadge label={live.running ? 'Em execução' : 'Parada'} tone={live.running ? 'success' : 'muted'} />
+                </div>
+              </FormRow>
+            ) : (
+              <FormCard.Hint>Este app não está mais na biblioteca.</FormCard.Hint>
+            )}
+          </FormCard>
+        ) : null}
+        {(tab === 'app' || tab === 'env') && installed && live ? (
+          <LaunchConfigPanel app={live} showSave={false} showTools={false} pane={tab === 'app' ? 'app' : 'env'} />
+        ) : null}
+        {(tab === 'app' || tab === 'env') && live && !installed ? (
+          <FormCard plain aria-label={tab === 'app' ? 'App' : 'Variáveis'}>
+            <FormCard.Header
+              title=""
+              subtitle={
+                tab === 'app'
+                  ? 'Nome, runtime, tipo e comandos deste Launchfile.'
+                  : 'Valores do bloco env deste Launchfile.'
+              }
+            />
+            <FormCard.Hint>Instale a app para ver estes campos. O Run flow instala esta app.</FormCard.Hint>
+          </FormCard>
+        ) : null}
+        {tab === 'output' && live && installed ? <OutputPane app={live} /> : null}
+        {tab === 'output' && live && !installed ? (
+          <FormCard plain aria-label="Output da app">
+            <FormCard.Header title="" subtitle="URL local, túnel Cloudflare e pasta de build." />
+            <FormCard.Hint>Instale a app para ver estes campos. O Run flow instala esta app.</FormCard.Hint>
+          </FormCard>
+        ) : null}
+      </div>
+    </SideDrawer>
   );
 }
 
@@ -1516,20 +1853,34 @@ function PrimitiveDetails({ node, onLiteral }: { node: CommunicationNode; onLite
 
 function FieldList({
   launchId,
+  app,
   numeric,
   valueType,
   taken,
   idleMessage,
+  includeOutputs = false,
   onPick,
 }: {
   launchId: string;
+  app?: AppView;
   numeric: boolean;
   valueType: ValueType | null;
   taken: Set<string>;
   idleMessage: string;
+  includeOutputs?: boolean;
   onPick: (field: LaunchField) => void;
 }) {
   const config = useLaunchConfig(launchId);
+  const cloudflare = useQuery({
+    queryKey: cloudflareQueryKey(launchId),
+    queryFn: () => appCloudflareGet(launchId),
+    enabled: includeOutputs && Boolean(launchId),
+  });
+  const build = useQuery({
+    queryKey: buildOutputQueryKey(launchId),
+    queryFn: () => appBuildOutput(launchId),
+    enabled: includeOutputs && Boolean(launchId),
+  });
   const [query, setQuery] = useState('');
   if (config.isPending && !config.isSuccess && config.fields.length === 0) {
     return <p className={styles.missing}>A carregar variáveis…</p>;
@@ -1537,7 +1888,9 @@ function FieldList({
   if (config.isError && config.fields.length === 0) {
     return <p className={styles.missing}>Launchfile indisponível.</p>;
   }
-  const available = config.fields.filter((field) => acceptsField(field, numeric, valueType, taken));
+  const outputs =
+    includeOutputs && app && !numeric && !valueType ? outputLaunchFields(app, launchId, cloudflare.data, build.data) : [];
+  const available = [...outputs, ...config.fields.filter((field) => acceptsField(field, numeric, valueType, taken))];
   const term = fold(query.trim());
   const shown = available.filter((field) => !term || fold(`${field.label} ${field.key} ${field.value}`).includes(term));
   return (
@@ -1573,7 +1926,7 @@ function FieldModal({
   onClose: () => void;
 }) {
   const { graph, apps, libraryPending } = useCommunicationsGraph();
-  const appNodeId = prompt.purpose === 'bind' ? prompt.targetId : prompt.sourceId;
+  const appNodeId = prompt.purpose === 'bind' || prompt.purpose === 'wire-dest' ? prompt.targetId : prompt.sourceId;
   const appNode = graph.nodes.find((node) => node.id === appNodeId);
   const live = appNode && isAppNode(appNode) ? liveApp(apps, appNode) : undefined;
   const launchId = live ? appId(live) : '';
@@ -1593,7 +1946,9 @@ function FieldModal({
   const sourceLaunchId = sourceLive && sourceLive.status !== 'not_installed' ? appId(sourceLive) : '';
   useLaunchConfig(sourceLaunchId, Boolean(sourceLaunchId));
   const valueType: ValueType | null =
-    prompt.purpose === 'bind' && source && isProducer(source)
+    prompt.purpose === 'wire-dest'
+      ? prompt.sourceType
+      : prompt.purpose === 'bind' && source && isProducer(source)
       ? source.kind === 'primitive' || source.kind === 'port'
         ? outputType(source, source.literal ?? '')
         : source.kind === 'increment' || source.kind === 'decrement'
@@ -1605,7 +1960,7 @@ function FieldModal({
                 return result.ok ? classifyValue(result.value) : 'text';
               })()
       : null;
-  const taken = prompt.purpose === 'bind' && appNode ? takenTargetFields(graph, apps, appNode) : EMPTY_TAKEN;
+  const taken = (prompt.purpose === 'bind' || prompt.purpose === 'wire-dest') && appNode ? takenTargetFields(graph, apps, appNode) : EMPTY_TAKEN;
   const statusText =
     status === 'pending'
       ? 'A carregar…'
@@ -1614,15 +1969,17 @@ function FieldModal({
         : 'Esta app não está na biblioteca.';
 
   return (
-    <Modal isOpen onClose={onClose} title={prompt.purpose === 'bind' ? 'Variável de destino' : 'Variável de origem'} maxWidth={440}>
+    <Modal isOpen onClose={onClose} title={prompt.purpose === 'bind' || prompt.purpose === 'wire-dest' ? 'Variável de destino' : 'Variável de origem'} maxWidth={440}>
       <Modal.Content>
         <Modal.Text>{fieldHint(prompt, graph)}</Modal.Text>
         {status === 'ready' && launchId ? (
           <FieldList
             launchId={launchId}
+            app={live}
             numeric={numeric}
             valueType={valueType}
             taken={taken}
+            includeOutputs={prompt.purpose !== 'bind' && prompt.purpose !== 'wire-dest'}
             idleMessage={idleEmpty(prompt, graph)}
             onPick={onPick}
           />
@@ -1832,6 +2189,7 @@ function CommunicationsCanvas({ orgId, initial }: { orgId: string; initial: Grap
   const [prompt, setPrompt] = useState<Prompt | null>(null);
   const [saving, setSaving] = useState(false);
   const [runningFlow, setRunningFlow] = useState(false);
+  const [activeFlowNodeId, setActiveFlowNodeId] = useState<string | null>(null);
   const [flowPhase, setFlowPhase] = useState('');
   const [error, setError] = useState('');
   const [steps, setSteps] = useState({ undo: 0, redo: 0 });
@@ -2203,8 +2561,9 @@ function CommunicationsCanvas({ orgId, initial }: { orgId: string; initial: Grap
     if (!source || !target || !opKind(target.kind)) return;
     const sourceIsApp = isAppNode(source);
     if (sourceIsApp) {
-      if (!field || !isLaunchVariable(field.key)) return;
-      if ((target.kind === 'increment' || target.kind === 'decrement') && !isNumericField(field)) return;
+      if (!field || !(isLaunchVariable(field.key) || isOutputField(field.key))) return;
+      if (isOutputField(field.key) && (target.kind === 'increment' || target.kind === 'decrement')) return;
+      if ((target.kind === 'increment' || target.kind === 'decrement') && !isOutputField(field.key) && !isNumericField(field)) return;
     }
     const edges = current.edges.filter((edge) => edge.target !== targetId);
     edges.push({ id: crypto.randomUUID(), source: sourceId, target: targetId });
@@ -2227,42 +2586,69 @@ function CommunicationsCanvas({ orgId, initial }: { orgId: string; initial: Grap
       toast.error(`${nodeTitle(source)} falhou: tipo incompatível com ${field.label || field.key}.`);
       return;
     }
-    if (current.edges.some((edge) => edge.source === sourceId && edge.target === targetId)) return;
     if (takenTargetFields(current, appsRef.current, target).has(field.key)) {
       toast.error('Este campo já tem uma ligação.');
       return;
     }
-    const produced = producedValue(current, appsRef.current, source);
-    if (outputType(source, produced) === 'number') {
-      const id = crypto.randomUUID();
-      const variable = field.key.replace(/^env\./i, '');
-      commit({
-        nodes: [
-          ...current.nodes,
-          {
-            id,
-            folderName: '',
-            repository: '',
-            name: variable,
-            x: snapFlow(target.x - 240),
-            y: snapFlow(target.y),
-            alwaysOn: false,
-            kind: 'get',
-            sourceNodeId: source.id,
-            sourceField: field.key,
-          },
-        ],
-        edges: [
-          ...current.edges,
-          { id: crypto.randomUUID(), source: source.id, target: id },
-          { id: crypto.randomUUID(), source: id, target: target.id, targetField: field.key },
-        ],
-      });
+    const id = crypto.randomUUID();
+    const variable = field.key.replace(/^env\./i, '');
+    const created: CommunicationNode = {
+      id,
+      folderName: '',
+      repository: '',
+      name: variable,
+      x: snapFlow(target.x - 240),
+      y: snapFlow(target.y),
+      alwaysOn: false,
+      kind: 'get',
+      sourceNodeId: source.id,
+    };
+    commit({
+      nodes: [...current.nodes, created],
+      edges: [
+        ...current.edges.filter((edge) => !(edge.source === sourceId && edge.target === targetId && !edge.targetField?.trim())),
+        { id: crypto.randomUUID(), source: source.id, target: id },
+        { id: crypto.randomUUID(), source: id, target: target.id, targetField: field.key },
+      ],
+    });
+  }
+
+  function wireAppField(sourceId: string, targetId: string, sourceField: string, sourceType: ValueType, field: LaunchField) {
+    const current = graphRef.current;
+    const source = current.nodes.find((node) => node.id === sourceId);
+    const target = current.nodes.find((node) => node.id === targetId);
+    if (!source || !target || !isAppNode(source) || !isAppNode(target)) return;
+    if (!isLaunchVariable(field.key) || !fieldAccepts(field, sourceType)) {
+      toast.error(`${nodeTitle(source)} falhou: tipo incompatível com ${field.label || field.key}.`);
       return;
     }
+    if (takenTargetFields(current, appsRef.current, target).has(field.key)) {
+      toast.error('Este campo já tem uma ligação.');
+      return;
+    }
+    const id = crypto.randomUUID();
+    const variable = field.key.replace(/^env\./i, '');
     commit({
-      ...current,
-      edges: [...current.edges, { id: crypto.randomUUID(), source: sourceId, target: targetId, targetField: field.key }],
+      nodes: [
+        ...current.nodes,
+        {
+          id,
+          folderName: '',
+          repository: '',
+          name: variable,
+          x: snapFlow(target.x - 240),
+          y: snapFlow(target.y),
+          alwaysOn: false,
+          kind: 'get',
+          sourceNodeId: source.id,
+          sourceField,
+        },
+      ],
+      edges: [
+        ...current.edges.filter((edge) => !(edge.source === sourceId && edge.target === targetId && !edge.targetField?.trim())),
+        { id: crypto.randomUUID(), source: source.id, target: id },
+        { id: crypto.randomUUID(), source: id, target: target.id, targetField: field.key },
+      ],
     });
   }
 
@@ -2297,6 +2683,22 @@ function CommunicationsCanvas({ orgId, initial }: { orgId: string; initial: Grap
         flowY: prompt.flowY,
         sourceField: field.key,
       });
+      setPrompt(null);
+      return;
+    }
+    if (prompt.purpose === 'wire-source') {
+      setPrompt({
+        step: 'field',
+        purpose: 'wire-dest',
+        sourceId: prompt.sourceId,
+        targetId: prompt.targetId,
+        sourceField: field.key,
+        sourceType: pickedValueType(field),
+      });
+      return;
+    }
+    if (prompt.purpose === 'wire-dest') {
+      wireAppField(prompt.sourceId, prompt.targetId, prompt.sourceField, prompt.sourceType, field);
       setPrompt(null);
       return;
     }
@@ -2380,10 +2782,7 @@ function CommunicationsCanvas({ orgId, initial }: { orgId: string; initial: Grap
     const targetIsOp = Boolean(opKind(target.kind));
     if (target.kind === 'primitive' || target.kind === 'port') return;
     if (!sourceIsOp && !targetIsOp) {
-      commit({
-        ...current,
-        edges: [...current.edges, { id: crypto.randomUUID(), source: source.id, target: target.id }],
-      });
+      setPrompt({ step: 'field', purpose: 'wire-source', sourceId: source.id, targetId: target.id });
       return;
     }
     if (targetIsOp) {
@@ -2575,11 +2974,12 @@ function CommunicationsCanvas({ orgId, initial }: { orgId: string; initial: Grap
       const seen = new Set<string>();
       let snapshot = await libraryList();
       for (const node of enabled) {
-        const key = node.folderName || node.repository;
+        const key = appKey(snapshot.apps, node);
         if (!key || seen.has(key)) continue;
         seen.add(key);
         const app = liveApp(snapshot.apps, node);
         if (!app || app.running) continue;
+        setActiveFlowNodeId(key);
         setFlowPhase(`A iniciar ${app.name}…`);
         if (app.status === 'not_installed') {
           const installed = await mutations.install(app);
@@ -2593,6 +2993,7 @@ function CommunicationsCanvas({ orgId, initial }: { orgId: string; initial: Grap
     } finally {
       runningRef.current = false;
       setRunningFlow(false);
+      setActiveFlowNodeId(null);
       setFlowPhase('');
     }
   }
@@ -2716,6 +3117,18 @@ function CommunicationsCanvas({ orgId, initial }: { orgId: string; initial: Grap
     }
   }
 
+  const shownEdges = useMemo(() => {
+    if (!activeFlowNodeId) return edges;
+    const ids = graph.nodes
+      .filter((node) => isAppNode(node) && appKey(apps, node) === activeFlowNodeId)
+      .map((node) => node.id);
+    const live = new Set<string>();
+    for (const id of ids.length > 0 ? ids : [activeFlowNodeId]) {
+      for (const edgeId of upstreamEdgeIds(edges, id)) live.add(edgeId);
+    }
+    return edges.map((edge) => (live.has(edge.id) ? { ...edge, animated: true, zIndex: 1 } : edge));
+  }, [edges, activeFlowNodeId, graph, apps]);
+
   return (
     <CommunicationsContext.Provider value={contextValue}>
       <div className={styles.editor}>
@@ -2781,7 +3194,7 @@ function CommunicationsCanvas({ orgId, initial }: { orgId: string; initial: Grap
             <FlowCanvas<FlowNode>
               className={styles.flow}
               nodes={nodes}
-              edges={edges}
+              edges={shownEdges}
               nodeTypes={nodeTypes}
               onNodesChange={onNodesChange}
               onEdgesChange={onEdgesChange}
@@ -2912,25 +3325,12 @@ function CommunicationsCanvas({ orgId, initial }: { orgId: string; initial: Grap
           <SideDrawer
             modal={false}
             lockScroll={false}
-            open={selected !== null}
+            open={selected !== null && !isAppNode(selected)}
             onClose={() => setSelectedId(null)}
-            title={selected ? (isAppNode(selected) ? appAlias(apps, selected) : nodeTitle(selected)) : 'App'}
-            ariaLabel={selected ? `Detalhes de ${isAppNode(selected) ? appAlias(apps, selected) : nodeTitle(selected)}` : 'Detalhes'}
-            headerActions={
-              selected && isAppNode(selected) && liveApp(apps, selected) ? (
-                <SideDrawerIconButton
-                  label="Abrir no Project Runner"
-                  onClick={() => {
-                    const live = liveApp(apps, selected);
-                    if (live) navigate(appHref(live));
-                  }}
-                >
-                  <IconExternalLink size={18} aria-hidden="true" />
-                </SideDrawerIconButton>
-              ) : null
-            }
+            title={selected && !isAppNode(selected) ? nodeTitle(selected) : 'App'}
+            ariaLabel={selected && !isAppNode(selected) ? `Detalhes de ${nodeTitle(selected)}` : 'Detalhes'}
           >
-            {selected ? (
+            {selected && !isAppNode(selected) ? (
               selected.kind === 'primitive' ? (
                 <PrimitiveDetails node={selected} onLiteral={(literal) => patchNode(selected.id, { literal })} />
               ) : selected.kind === 'port' ? (
@@ -2941,11 +3341,21 @@ function CommunicationsCanvas({ orgId, initial }: { orgId: string; initial: Grap
                   onStep={(step) => patchNode(selected.id, { step })}
                   onLiteral={(literal) => patchNode(selected.id, { literal })}
                 />
-              ) : (
-                <NodeDetails node={selected} apps={apps} onAlwaysOn={(alwaysOn) => setAlwaysOn(selected.id, alwaysOn)} />
-              )
+              ) : null
             ) : null}
           </SideDrawer>
+          {selected && isAppNode(selected) ? (
+            <NodeDetails
+              node={selected}
+              apps={apps}
+              onAlwaysOn={(alwaysOn) => setAlwaysOn(selected.id, alwaysOn)}
+              onOpenApp={() => {
+                const live = liveApp(apps, selected);
+                if (live) navigate(appHref(live));
+              }}
+              onClose={() => setSelectedId(null)}
+            />
+          ) : null}
         </div>
         {prompt?.step === 'field' ? <FieldModal prompt={prompt} onPick={onFieldPicked} onClose={() => setPrompt(null)} /> : null}
         {prompt?.step === 'literal' ? (

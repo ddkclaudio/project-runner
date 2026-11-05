@@ -6,6 +6,7 @@ import {
   appLaunchConfigSave,
   type LaunchConfigView,
   type LaunchField,
+  type ProjectEnvEntry,
 } from '@/lib/launcher-api';
 
 /**
@@ -136,6 +137,33 @@ function cloneFields(fields: LaunchField[]): LaunchField[] {
   return fields.map((field) => ({ ...field }));
 }
 
+function envFieldName(key: string) {
+  return key.toLowerCase().startsWith('env.') ? key.slice(4) : '';
+}
+
+/** Casa cada chave do arquivo com `env.CHAVE`. PORT entra por último para a porta nova se propagar depois que os outros valores do arquivo já estão no lugar. */
+export function mergeImportedEnv(fields: LaunchField[], entries: ProjectEnvEntry[]) {
+  const byName = new Map<string, ProjectEnvEntry>();
+  for (const entry of entries) {
+    const key = entry.key.trim();
+    if (!key || /\s/.test(key) || key.toLowerCase() === 'browser') continue;
+    byName.set(key.toLowerCase(), { key, value: entry.value });
+  }
+  const ordered = [...byName.values()].sort((left, right) => {
+    const leftPort = left.key.toLowerCase() === 'port' ? 1 : 0;
+    const rightPort = right.key.toLowerCase() === 'port' ? 1 : 0;
+    return leftPort - rightPort;
+  });
+  let next = cloneFields(fields);
+  for (const entry of ordered) {
+    const existing = next.find((field) => envFieldName(field.key) === entry.key.toLowerCase());
+    const key = existing?.key ?? `env.${entry.key}`;
+    const label = existing?.label ?? `Env · ${entry.key}`;
+    next = withPropagatedValue(next, key, entry.value, { key, label, value: '', fieldType: 'text' });
+  }
+  return { fields: next, count: ordered.length };
+}
+
 /** Garante a chave e aplica a mesma propagação de `patchField` (porta exata, :porta e argumento numérico). */
 function withPropagatedValue(fields: LaunchField[], key: string, value: string, template?: LaunchField): LaunchField[] {
   const base = fields.some((field) => field.key === key)
@@ -166,6 +194,10 @@ async function invalidateSavedQueries(appId: string) {
 
 export function readSnapshot(appId: string): LaunchConfigView | undefined {
   return queryClientRef?.getQueryData<LaunchConfigView>(launchConfigQueryKey(appId));
+}
+
+export function readCachedQuery<T>(key: readonly unknown[]): T | undefined {
+  return queryClientRef?.getQueryData<T>(key);
 }
 
 export function readDraft(appId: string): LaunchField[] | undefined {
@@ -251,6 +283,24 @@ async function applyComputedNow(appId: string, key: string, value: string): Prom
  */
 export function applyComputed(appId: string, key: string, value: string): Promise<LaunchConfigView> {
   return enqueue(appId, () => applyComputedNow(appId, key, value));
+}
+
+async function importEnvNow(appId: string, entries: ProjectEnvEntry[]): Promise<number> {
+  const saved = await loadSnapshot(appId);
+  const base = drafts.get(appId) ?? saved.fields;
+  const merged = mergeImportedEnv(base, entries);
+  if (merged.count === 0) return 0;
+  const view = await saveLaunchFields(appId, merged.fields);
+  const client = requireClient();
+  client.setQueryData(launchConfigQueryKey(appId), view);
+  setDraft(appId, undefined);
+  await invalidateSavedQueries(appId);
+  return merged.count;
+}
+
+/** Grava as variáveis importadas no Launchfile e descarta o rascunho desta app. */
+export function importLaunchEnv(appId: string, entries: ProjectEnvEntry[]): Promise<number> {
+  return enqueue(appId, () => importEnvNow(appId, entries));
 }
 
 async function regenerateNow(appId: string): Promise<string> {

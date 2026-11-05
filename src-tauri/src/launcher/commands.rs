@@ -202,7 +202,7 @@ fn assemble_catalog(
     let (version, from_cache, mut groups) = match catalog {
         Ok((version, value, from_cache)) => (version, from_cache, catalog_groups(&value)),
         Err(err) => {
-            warnings.push(format!("Catálogo: {err}"));
+            warnings.push(format!("[[/settings/github/catalog]]Catálogo: {err}"));
             (String::new(), false, Vec::new())
         }
     };
@@ -550,6 +550,16 @@ fn parse_env_file(raw: &str) -> Vec<ProjectEnvEntry> {
 }
 
 #[tauri::command]
+pub fn read_env_file(path: String) -> Result<Vec<ProjectEnvEntry>, String> {
+    let path = PathBuf::from(path.trim());
+    if !path.is_file() {
+        return Err("Arquivo não encontrado.".into());
+    }
+    let raw = fs::read_to_string(&path).map_err(|err| err.to_string())?;
+    Ok(parse_env_file(&raw))
+}
+
+#[tauri::command]
 pub fn app_project_env(paths: State<'_, AppPaths>, repository: String) -> Result<ProjectEnvFile, String> {
     let (meta, workspace) = roots(&paths)?;
     let apps = store::load_apps(&meta);
@@ -589,6 +599,58 @@ fn cloudflare_paths_full(
     let app = store::find_app(&apps, repository)?.clone();
     let info = store::ensure_launch_info(&workspace, &app)?;
     Ok((meta, workspace, info, app))
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BuildOutput {
+    pub path: String,
+    pub name: String,
+    pub exists: bool,
+}
+
+fn package_prefers_dist(root: &std::path::Path) -> bool {
+    let Ok(raw) = fs::read_to_string(root.join("package.json")) else {
+        return true;
+    };
+    let lower = raw.to_ascii_lowercase();
+    lower.contains("\"vite\"") || lower.contains("\"@vitejs/")
+}
+
+/// Pasta de saída do clone: `dist` (Vite) ou `build` (o resto).
+pub fn resolve_build_output(root: &std::path::Path) -> BuildOutput {
+    let dist = root.join("dist");
+    let build = root.join("build");
+    let dist_exists = dist.is_dir();
+    let build_exists = build.is_dir();
+    let (dir, name, exists) = if dist_exists && build_exists {
+        if package_prefers_dist(root) {
+            (dist, "dist", true)
+        } else {
+            (build, "build", true)
+        }
+    } else if dist_exists {
+        (dist, "dist", true)
+    } else if build_exists {
+        (build, "build", true)
+    } else if package_prefers_dist(root) {
+        (dist, "dist", false)
+    } else {
+        (build, "build", false)
+    };
+    BuildOutput {
+        path: dir.display().to_string(),
+        name: name.into(),
+        exists,
+    }
+}
+
+#[tauri::command]
+pub fn app_build_output(paths: State<'_, AppPaths>, repository: String) -> Result<BuildOutput, String> {
+    let (meta, workspace) = roots(&paths)?;
+    let apps = store::load_apps(&meta);
+    let app = store::find_app(&apps, &repository)?;
+    Ok(resolve_build_output(&store::install_dir(&workspace, app)))
 }
 
 #[tauri::command]
@@ -1009,7 +1071,7 @@ mod tests {
         assert_eq!(
             payload.warnings,
             vec![
-                "Catálogo: O GitHub não encontrou esse repositório ou essa release.".to_string(),
+                "[[/settings/github/catalog]]Catálogo: O GitHub não encontrou esse repositório ou essa release.".to_string(),
                 "Outra: O GitHub recusou o token.".to_string(),
             ]
         );
@@ -1060,5 +1122,22 @@ mod tests {
         let payload = assemble_catalog("acme/catalog".into(), catalog, accounts).unwrap();
         assert!(payload.warnings.is_empty());
         assert_eq!(names(&payload), vec!["standard:acme/alpha".to_string()]);
+    }
+
+    #[test]
+    fn build_output_prefers_the_folder_that_exists() {
+        let root = std::env::temp_dir().join(format!("painel-build-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("dist")).unwrap();
+        std::fs::write(root.join("package.json"), r#"{"devDependencies":{"vite":"5.0.0"}}"#).unwrap();
+        let found = super::resolve_build_output(&root);
+        assert_eq!(found.name, "dist");
+        assert!(found.exists);
+        std::fs::create_dir_all(root.join("build")).unwrap();
+        std::fs::write(root.join("package.json"), r#"{"dependencies":{"react-scripts":"5.0.0"}}"#).unwrap();
+        let cra = super::resolve_build_output(&root);
+        assert_eq!(cra.name, "build");
+        assert!(cra.exists);
+        let _ = std::fs::remove_dir_all(&root);
     }
 }

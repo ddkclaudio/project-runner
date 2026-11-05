@@ -1,4 +1,5 @@
 import { useState, type FormEvent, type ReactNode } from 'react';
+import { openUrl } from '@tauri-apps/plugin-opener';
 import { Link, useNavigate } from 'react-router-dom';
 import { IconArrowRight, IconPlus, IconTrash } from '@tabler/icons-react';
 import { ItemCard, gridCardStyles as gc } from '@/components/ui/ItemCard';
@@ -10,17 +11,23 @@ import { StatusBadge, type StatusTone } from '@/components/ui/StatusBadge';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { FormCard, FormRow } from '@/components/ui/FormCard';
-import { InlineAlert } from '@/components/ui/InlineAlert';
-import { useToast } from '@/components/ui/Toast';
 import type { ContextMenuItem } from '@/components/ui/ContextMenu';
-import {
-  launcherApplyUpdate,
-  launcherCheckUpdate,
-  launcherError,
-  type ServiceAccount,
-  type UpdateStatus,
-} from '@/lib/launcher-api';
+import { type ServiceAccount } from '@/lib/launcher-api';
 import libraryStyles from '@/pages/library.module.css';
+
+export const GITHUB_TOKEN_CREATE_URL = 'https://github.com/settings/tokens/new?description=Project%20Runner';
+export const CLOUDFLARE_TOKEN_CREATE_URL = 'https://dash.cloudflare.com/profile/api-tokens';
+
+export function TokenAccountHint({ createUrl }: { createUrl: string }) {
+  return (
+    <FormCard.Hint>
+      O nome aparece na lista. O token fica só nesta conta.{' '}
+      <button type="button" className={libraryStyles.linkBtn} onClick={() => void openUrl(createUrl)}>
+        Criar token
+      </button>
+    </FormCard.Hint>
+  );
+}
 
 export function accountTitle(account: ServiceAccount, accounts: ServiceAccount[]) {
   const label = account.label.trim();
@@ -44,40 +51,6 @@ function OpenLink({ href, className, children }: { href: string; className: stri
     <Link to={href} className={className} onClick={(event) => event.stopPropagation()}>
       {children}
     </Link>
-  );
-}
-
-export function GithubVersionRow({ repository }: { repository: string }) {
-  const toast = useToast();
-  const [update, setUpdate] = useState<UpdateStatus | null>(null);
-  return (
-    <FormRow label="Versão" alignStart>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-        {update ? (
-          <InlineAlert variant={update.updateAvailable ? 'warning' : 'info'}>{update.message}</InlineAlert>
-        ) : null}
-        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-          <Button
-            type="button"
-            onClick={() =>
-              void launcherCheckUpdate(true, repository)
-                .then(setUpdate)
-                .catch((err) => toast.error(launcherError(err)))
-            }
-          >
-            Procurar atualização
-          </Button>
-          <Button
-            type="button"
-            variant="secondary"
-            disabled={!update?.updateAvailable}
-            onClick={() => void launcherApplyUpdate(repository).catch((err) => toast.error(launcherError(err)))}
-          >
-            Aplicar
-          </Button>
-        </div>
-      </div>
-    </FormRow>
   );
 }
 
@@ -324,13 +297,10 @@ export function AccountForm({
   const [id] = useState(() => account?.id || crypto.randomUUID());
   const [label, setLabel] = useState(account?.label ?? '');
   const [token, setToken] = useState(account?.token ?? '');
-  const [updateRepository, setUpdateRepository] = useState(account?.updateRepository ?? '');
   const tokenOk = Boolean(token.trim());
   const dirty =
     mode === 'edit' &&
-    (label.trim() !== (account?.label ?? '').trim() ||
-      token.trim() !== (account?.token ?? '').trim() ||
-      (githubExtras && updateRepository.trim() !== (account?.updateRepository ?? '').trim()));
+    (label.trim() !== (account?.label ?? '').trim() || token.trim() !== (account?.token ?? '').trim());
 
   function submit(event: FormEvent) {
     event.preventDefault();
@@ -340,7 +310,7 @@ export function AccountForm({
       id,
       label: label.trim(),
       token: token.trim(),
-      updateRepository: githubExtras ? updateRepository.trim() : (account?.updateRepository ?? '').trim(),
+      updateRepository: (account?.updateRepository ?? '').trim(),
     });
   }
 
@@ -357,17 +327,8 @@ export function AccountForm({
           onChange={(event) => setToken(event.target.value)}
           autoComplete="off"
         />
-        <FormCard.Hint>O nome aparece na lista. O token fica só nesta conta.</FormCard.Hint>
+        <TokenAccountHint createUrl={githubExtras ? GITHUB_TOKEN_CREATE_URL : CLOUDFLARE_TOKEN_CREATE_URL} />
       </FormRow>
-      {githubExtras ? (
-        <>
-          <FormRow label="Atualização">
-            <Input value={updateRepository} onChange={(event) => setUpdateRepository(event.target.value)} />
-            <FormCard.Hint>Vazio desliga a atualização. Não use o repositório Avalonia do GithubLauncher.</FormCard.Hint>
-          </FormRow>
-          <GithubVersionRow repository={updateRepository} />
-        </>
-      ) : null}
       {mode === 'new' || dirty || onRemove ? (
         <FormCard.Footer
           left={

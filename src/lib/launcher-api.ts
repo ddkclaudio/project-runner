@@ -419,6 +419,10 @@ export function appProjectEnv(repository: string) {
   return invoke<ProjectEnvFile>('app_project_env', { repository });
 }
 
+export function readEnvFile(path: string) {
+  return invoke<ProjectEnvEntry[]>('read_env_file', { path });
+}
+
 export function appLaunchConfigSave(repository: string, input: LaunchConfigSave) {
   return invoke<LaunchConfigView>('app_launch_config_save', { repository, input });
 }
@@ -469,6 +473,16 @@ export function settingsGet() {
 
 export function settingsSave(input: Omit<PublicSettings, 'dataDir' | 'appVersion'>) {
   return invoke<PublicSettings>('settings_save', { input });
+}
+
+export type BuildOutput = {
+  path: string;
+  name: string;
+  exists: boolean;
+};
+
+export function appBuildOutput(repository: string) {
+  return invoke<BuildOutput>('app_build_output', { repository });
 }
 
 export function appCloudflareGet(repository: string) {

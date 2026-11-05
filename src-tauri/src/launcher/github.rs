@@ -50,6 +50,20 @@ pub struct AssetInfo {
     pub size: u64,
 }
 
+fn response_detail(body: &str) -> String {
+    let trimmed = body.trim();
+    if trimmed.starts_with('{') {
+        if let Ok(value) = serde_json::from_str::<Value>(trimmed) {
+            let message = value.get("message").and_then(|item| item.as_str()).unwrap_or("").trim();
+            if !message.is_empty() {
+                return message.to_string();
+            }
+        }
+        return String::new();
+    }
+    trimmed.lines().next().unwrap_or("").trim().to_string()
+}
+
 fn map_status(status: reqwest::StatusCode, body: &str) -> Result<(), String> {
     if status == reqwest::StatusCode::FORBIDDEN || status == reqwest::StatusCode::TOO_MANY_REQUESTS {
         return Err(rate_limit_message());
@@ -58,7 +72,7 @@ fn map_status(status: reqwest::StatusCode, body: &str) -> Result<(), String> {
         return Err("O GitHub não encontrou esse repositório ou essa release.".into());
     }
     if !status.is_success() && status != reqwest::StatusCode::NOT_MODIFIED {
-        let detail = body.lines().next().unwrap_or("").trim();
+        let detail = response_detail(body);
         if detail.is_empty() {
             return Err(format!("O GitHub respondeu {status}."));
         }
@@ -430,7 +444,7 @@ pub async fn list_account_repos(root: &Path) -> Result<GithubRepoList, String> {
                     repos.push(item);
                 }
             }
-            Err(err) => warnings.push(format!("{label}: {err}")),
+            Err(err) => warnings.push(format!("[[/settings/github/{}]]{label}: {err}", account.id)),
         }
     }
     repos.sort_by(|a, b| {

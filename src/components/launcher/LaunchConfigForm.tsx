@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useRef, useState, type KeyboardEvent } from 'react';
+import { open as openDialog } from '@tauri-apps/plugin-dialog';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import { IconExternalLink, IconFolder, IconRefresh } from '@tabler/icons-react';
 import { appId } from '@/components/launcher/LibraryCard';
@@ -7,6 +7,7 @@ import { AppProgressBar } from '@/components/launcher/AppProgressBar';
 import { Button } from '@/components/ui/Button';
 import { Checkbox } from '@/components/ui/Checkbox';
 import { FormCard, FormRow } from '@/components/ui/FormCard';
+import formStyles from '@/components/ui/FormCard/FormCard.module.css';
 import { InlineAlert } from '@/components/ui/InlineAlert';
 import { Input } from '@/components/ui/Input';
 import { PageShell } from '@/components/ui/PageShell';
@@ -15,8 +16,10 @@ import { Select } from '@/components/ui/Select';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { Textarea } from '@/components/ui/Textarea';
 import { useToast } from '@/components/ui/Toast';
+import { cx } from '@/utils';
 import {
   commit,
+  importLaunchEnv,
   isLaunchConfigDirty,
   launchFieldsDiffer,
   patchField,
@@ -25,8 +28,8 @@ import {
 } from '@/lib/launch-config';
 import {
   appOpenLaunchfileDir,
-  appProjectEnv,
   launcherError,
+  readEnvFile,
   type AppView,
   type LaunchConfigView,
   type LaunchField,
@@ -112,31 +115,166 @@ function LaunchFieldControl({
   return <Input value={field.value} onChange={(event) => onChange(event.target.value)} />;
 }
 
-function envFieldName(key: string) {
-  return key.toLowerCase().startsWith('env.') ? key.slice(4).toLowerCase() : '';
+function fieldReadout(field: LaunchField): string {
+  const type = (field.fieldType || 'text').toLowerCase();
+  const trimmed = field.value.trim();
+  if (type === 'boolean') return isTruthyLaunchValue(field.value) ? 'Sim' : 'Não';
+  return trimmed || '—';
 }
 
-function isMovedEnvField(key: string) {
-  const name = envFieldName(key);
-  return name === 'port' || name === 'ci';
+function AppFieldEditor({
+  field,
+  launchId,
+  disabled,
+}: {
+  field: LaunchField;
+  launchId: string;
+  disabled: boolean;
+}) {
+  const toast = useToast();
+  const skipSave = useRef(false);
+  const closeTimer = useRef<number | null>(null);
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(field.value);
+  const type = (field.fieldType || 'text').toLowerCase();
+  const discrete = field.key === 'kind' || type === 'boolean';
+
+  function clearCloseTimer() {
+    if (closeTimer.current !== null) {
+      window.clearTimeout(closeTimer.current);
+      closeTimer.current = null;
+    }
+  }
+
+  function persist(next: string) {
+    if (next === field.value) return;
+    patchField(launchId, field.key, next);
+    void commit(launchId).catch((err) => toast.error(launcherError(err)));
+  }
+
+  function close(save: boolean) {
+    clearCloseTimer();
+    const skip = skipSave.current;
+    skipSave.current = false;
+    setEditing(false);
+    if (save && !skip) persist(draft);
+  }
+
+  if (!editing) {
+    const shown = fieldReadout(field);
+    return (
+      <span
+        className={cx(formStyles.readout, shown === '—' && formStyles.readoutEmpty)}
+        onDoubleClick={() => {
+          if (disabled) return;
+          skipSave.current = false;
+          setDraft(field.value);
+          setEditing(true);
+        }}
+      >
+        {shown}
+      </span>
+    );
+  }
+
+  const editingField = { ...field, value: draft };
+  return (
+    <div
+      onBlur={(event) => {
+        const next = event.relatedTarget;
+        if (next instanceof Node && event.currentTarget.contains(next)) return;
+        if (discrete) {
+          clearCloseTimer();
+          closeTimer.current = window.setTimeout(() => close(true), 180);
+          return;
+        }
+        close(true);
+      }}
+      onKeyDown={(event) => {
+        if (event.key === 'Escape') {
+          event.preventDefault();
+          skipSave.current = true;
+          setDraft(field.value);
+          setEditing(false);
+        }
+        if (event.key === 'Enter' && type !== 'multiline' && field.key !== 'env') {
+          event.preventDefault();
+          (event.target as HTMLElement | null)?.blur?.();
+        }
+      }}
+    >
+      <LaunchFieldControl
+        field={editingField}
+        onChange={(value) => {
+          setDraft(value);
+          if (!discrete) return;
+          clearCloseTimer();
+          skipSave.current = false;
+          setEditing(false);
+          if (value === field.value) return;
+          patchField(launchId, field.key, value);
+          void commit(launchId).catch((err) => toast.error(launcherError(err)));
+        }}
+        onError={(message) => toast.error(message)}
+      />
+    </div>
+  );
 }
 
-function launchPort(fields: LaunchField[]) {
-  const value = fields.find((field) => envFieldName(field.key) === 'port')?.value.trim() ?? '';
-  const port = Number(value);
-  return Number.isInteger(port) && port > 0 && port <= 65535 ? value : '3000';
+function isEnvField(key: string) {
+  const name = key.toLowerCase();
+  return name === 'env' || name.startsWith('env.');
 }
 
-function launchCi(fields: LaunchField[]) {
-  return fields.find((field) => envFieldName(field.key) === 'ci')?.value ?? 'false';
-}
+function ProjectEnvTab({
+  launchId,
+  fields,
+  busy,
+  onImportEnv,
+  showImport = true,
+  plain = false,
+}: {
+  launchId: string;
+  fields: LaunchField[];
+  busy: boolean;
+  onImportEnv: () => void;
+  showImport?: boolean;
+  plain?: boolean;
+}) {
+  const entries = fields
+    .filter((field) => field.key.toLowerCase().startsWith('env.'))
+    .map((field) => ({ key: field.key, name: field.key.slice(4), value: field.value }));
 
-function withExpectedEnv(
-  entries: { key: string; value: string }[],
-  expected: { key: string; value: string }[],
-) {
-  const present = new Set(entries.map((entry) => entry.key));
-  return [...expected.filter((entry) => !present.has(entry.key)), ...entries];
+  return (
+    <FormCard plain={plain} aria-label="Variáveis de ambiente">
+      <FormCard.Header
+        title={showImport ? 'Variáveis' : ''}
+        subtitle="Valores do bloco env deste Launchfile."
+        actions={
+          showImport ? (
+            <Button type="button" variant="secondary" disabled={busy} onClick={onImportEnv}>
+              Importar variáveis
+            </Button>
+          ) : undefined
+        }
+      />
+      {entries.length === 0 ? (
+        <FormCard.Hint>Este Launchfile não tem variáveis.</FormCard.Hint>
+      ) : (
+        entries.map((entry) => (
+          <FormRow key={entry.key} label={entry.name} stack={plain}>
+            <EnvValueControl
+              value={entry.value}
+              readout={plain}
+              fieldKey={entry.key}
+              launchId={launchId}
+              disabled={busy}
+            />
+          </FormRow>
+        ))
+      )}
+    </FormCard>
+  );
 }
 
 function parsedPrimitive(value: string): 'number' | 'boolean' | 'url' | 'text' {
@@ -151,7 +289,117 @@ function parsedTruthy(value: string) {
   return ['true', 'yes', 'on'].includes(value.trim().toLowerCase());
 }
 
-function EnvValueControl({ value }: { value: string }) {
+function EnvValueControl({
+  value,
+  readout = false,
+  fieldKey,
+  launchId,
+  disabled = false,
+}: {
+  value: string;
+  readout?: boolean;
+  fieldKey?: string;
+  launchId?: string;
+  disabled?: boolean;
+}) {
+  const toast = useToast();
+  const skipSave = useRef(false);
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(value);
+
+  if (readout && editing) {
+    const kind = parsedPrimitive(value);
+    const finish = (save: boolean) => {
+      const skip = skipSave.current;
+      skipSave.current = false;
+      setEditing(false);
+      if (!save || skip || draft === value || !fieldKey || !launchId) return;
+      patchField(launchId, fieldKey, draft);
+      void commit(launchId).catch((err) => toast.error(launcherError(err)));
+    };
+    const keys = {
+      autoFocus: true,
+      'aria-label': fieldKey ?? value,
+      onBlur: () => finish(true),
+      onKeyDown: (event: KeyboardEvent<HTMLElement>) => {
+        if (event.key === 'Escape') {
+          event.preventDefault();
+          skipSave.current = true;
+          setDraft(value);
+          setEditing(false);
+        }
+        if (event.key === 'Enter') {
+          event.preventDefault();
+          event.currentTarget.blur();
+        }
+      },
+    };
+    if (kind === 'boolean') {
+      return (
+        <Checkbox
+          checked={parsedTruthy(draft)}
+          onChange={(checked) => {
+            const next = checked ? 'true' : 'false';
+            setDraft(next);
+            skipSave.current = false;
+            setEditing(false);
+            if (next === value || !fieldKey || !launchId) return;
+            patchField(launchId, fieldKey, next);
+            void commit(launchId).catch((err) => toast.error(launcherError(err)));
+          }}
+        />
+      );
+    }
+    if (kind === 'number') {
+      return (
+        <Input
+          type="number"
+          inputMode="decimal"
+          value={draft}
+          onFocus={(event) => event.currentTarget.select()}
+          onChange={(event) => setDraft(event.target.value)}
+          {...keys}
+        />
+      );
+    }
+    if (kind === 'url') {
+      return (
+        <Input
+          type="url"
+          value={draft}
+          onFocus={(event) => event.currentTarget.select()}
+          onChange={(event) => setDraft(event.target.value)}
+          {...keys}
+        />
+      );
+    }
+    return (
+      <Input
+        value={draft}
+        onFocus={(event) => event.currentTarget.select()}
+        onChange={(event) => setDraft(event.target.value)}
+        {...keys}
+      />
+    );
+  }
+
+  if (readout) {
+    const trimmed = value.trim();
+    const shown = !trimmed ? '—' : parsedPrimitive(trimmed) === 'boolean' ? (parsedTruthy(trimmed) ? 'Sim' : 'Não') : trimmed;
+    return (
+      <span
+        className={cx(formStyles.readout, !trimmed && formStyles.readoutEmpty)}
+        onDoubleClick={() => {
+          if (disabled || !fieldKey || !launchId) return;
+          skipSave.current = false;
+          setDraft(value);
+          setEditing(true);
+        }}
+      >
+        {shown}
+      </span>
+    );
+  }
   const kind = parsedPrimitive(value);
   if (kind === 'boolean') {
     return <Checkbox checked={parsedTruthy(value)} onChange={() => undefined} disabled />;
@@ -165,52 +413,16 @@ function EnvValueControl({ value }: { value: string }) {
   return <Input value={value} readOnly aria-label={value} />;
 }
 
-function ProjectEnvTab({
-  appId: launchId,
-  port,
-  ci,
-}: {
-  appId: string;
-  port: string;
-  ci: string;
-}) {
-  const envFile = useQuery({
-    queryKey: ['launcher', 'project-env', launchId],
-    queryFn: () => appProjectEnv(launchId),
-    enabled: Boolean(launchId),
-  });
-  const source = envFile.data?.source;
-  const entries = withExpectedEnv(envFile.data?.entries ?? [], [
-    { key: 'PORT', value: port },
-    { key: 'CI', value: ci },
-  ]);
-  const subtitle = envFile.isLoading
-    ? 'A ler…'
-    : source === 'example'
-      ? 'O projeto não tem .env. Estes são os valores esperados em .env.example.'
-      : 'Definidas no .env do projeto.';
-
-  return (
-    <FormCard aria-label="Variáveis de ambiente">
-      <FormCard.Header title="Variáveis" subtitle={envFile.isError ? launcherError(envFile.error) : subtitle} />
-      {envFile.isLoading
-        ? null
-        : entries.map((entry) => (
-            <FormRow key={entry.key} label={entry.key}>
-              <EnvValueControl value={entry.value} />
-            </FormRow>
-          ))}
-    </FormCard>
-  );
-}
-
 function LaunchConfigForm({
   appId: launchId,
   loaded,
   fields,
   busy,
   showSave = true,
+  pane = 'both',
+  showTools = true,
   onSaveFields,
+  onImportEnv,
   onGenerateDeepseek,
   onOpenFolder,
 }: {
@@ -219,7 +431,10 @@ function LaunchConfigForm({
   fields: LaunchField[];
   busy: boolean;
   showSave?: boolean;
+  pane?: 'both' | 'app' | 'env';
+  showTools?: boolean;
   onSaveFields: () => void;
+  onImportEnv: () => void;
   onGenerateDeepseek: () => void;
   onOpenFolder: () => void;
 }) {
@@ -228,11 +443,15 @@ function LaunchConfigForm({
   if (!loaded) return null;
 
   const working = fields.length ? fields : loaded.fields;
-  const visibleFields = working.filter((field) => field.key !== 'hint' && !isMovedEnvField(field.key));
+  const visibleFields = working.filter((field) => field.key !== 'hint' && !isEnvField(field.key));
   const dirty = launchFieldsDiffer(loaded.fields, working);
 
+  const showApp = pane === 'app' || (pane === 'both' && tab === 'app');
+  const showEnv = pane === 'env' || (pane === 'both' && tab === 'env');
+
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 16, marginBottom: 20 }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: pane === 'both' ? 16 : 0, marginBottom: pane === 'both' ? 20 : 0 }}>
+      {pane === 'both' ? (
       <TabFilter
         aria-label="Executável"
         value={tab}
@@ -242,11 +461,13 @@ function LaunchConfigForm({
           { value: 'env', label: 'Variáveis' },
         ]}
       />
-      {tab === 'env' ? (
-        <ProjectEnvTab appId={launchId} port={launchPort(working)} ci={launchCi(working)} />
       ) : null}
-      {tab === 'app' ? (
-      <FormCard aria-label="Configuração de execução">
+      {showEnv ? (
+        <ProjectEnvTab launchId={launchId} fields={working} busy={busy} showImport={showTools} plain={!showTools} onImportEnv={onImportEnv} />
+      ) : null}
+      {showApp ? (
+      <FormCard plain={!showTools} aria-label="Configuração de execução">
+        {showTools ? (
         <FormCard.Header
           title="Launchfile"
           subtitle={
@@ -279,13 +500,20 @@ function LaunchConfigForm({
             </>
           }
         />
+        ) : (
+          <FormCard.Header title="" subtitle="Nome, runtime, tipo e comandos deste Launchfile." />
+        )}
         {visibleFields.map((field) => (
-          <FormRow key={field.key} label={field.label}>
-            <LaunchFieldControl
-              field={field}
-              onChange={(value) => patchField(launchId, field.key, value)}
-              onError={(message) => toast.error(message)}
-            />
+          <FormRow key={field.key} label={field.label} stack={!showTools}>
+            {showTools ? (
+              <LaunchFieldControl
+                field={field}
+                onChange={(value) => patchField(launchId, field.key, value)}
+                onError={(message) => toast.error(message)}
+              />
+            ) : (
+              <AppFieldEditor field={field} launchId={launchId} disabled={busy} />
+            )}
           </FormRow>
         ))}
         {working.some((field) => field.key === 'hint') ? (
@@ -306,16 +534,7 @@ function LaunchConfigForm({
   );
 }
 
-export function LaunchConfigPanel({
-  app,
-  showHeading = false,
-  showSave = true,
-}: {
-  app: AppView;
-  showHeading?: boolean;
-  showSave?: boolean;
-}) {
-  const launchId = appId(app);
+export function useLaunchConfigActions(launchId: string) {
   const toast = useToast();
   const config = useLaunchConfig(launchId);
   const [configBusy, setConfigBusy] = useState(false);
@@ -324,7 +543,7 @@ export function LaunchConfigPanel({
   const clearProgress = useAppProgressStore((s) => s.clearProgress);
 
   async function saveFields() {
-    if (!isLaunchConfigDirty(launchId)) return;
+    if (!launchId || !isLaunchConfigDirty(launchId)) return;
     setConfigBusy(true);
     try {
       await commit(launchId);
@@ -337,6 +556,7 @@ export function LaunchConfigPanel({
   }
 
   async function generateWithDeepseek() {
+    if (!launchId) return;
     if (useAppProgressStore.getState().isBusy(launchId) || configBusy) {
       toast.error('Já em curso…');
       return;
@@ -354,7 +574,25 @@ export function LaunchConfigPanel({
     }
   }
 
+  async function importEnv() {
+    if (!launchId || useAppProgressStore.getState().isBusy(launchId) || configBusy) return;
+    setConfigBusy(true);
+    try {
+      const selected = await openDialog({ multiple: false, title: 'Importar variáveis' });
+      if (typeof selected !== 'string' || !selected) return;
+      const entries = await readEnvFile(selected);
+      const count = await importLaunchEnv(launchId, entries);
+      if (count === 0) toast.info('O arquivo não tem variáveis.');
+      else toast.success(count === 1 ? '1 variável gravada no Launchfile.' : `${count} variáveis gravadas no Launchfile.`);
+    } catch (err) {
+      toast.error(launcherError(err));
+    } finally {
+      setConfigBusy(false);
+    }
+  }
+
   async function openLaunchDir() {
+    if (!launchId) return;
     try {
       await appOpenLaunchfileDir(launchId);
     } catch (err) {
@@ -362,19 +600,49 @@ export function LaunchConfigPanel({
     }
   }
 
+  return {
+    config,
+    progress,
+    busy: configBusy || Boolean(progress),
+    saveFields,
+    generateWithDeepseek,
+    importEnv,
+    openLaunchDir,
+  };
+}
+
+export function LaunchConfigPanel({
+  app,
+  showHeading = false,
+  showSave = true,
+  pane = 'both',
+  showTools = true,
+}: {
+  app: AppView;
+  showHeading?: boolean;
+  showSave?: boolean;
+  pane?: 'both' | 'app' | 'env';
+  showTools?: boolean;
+}) {
+  const launchId = appId(app);
+  const tools = useLaunchConfigActions(launchId);
+
   const body = (
     <>
-      {config.error ? <InlineAlert>{launcherError(config.error)}</InlineAlert> : null}
-      {progress ? <AppProgressBar progress={progress} /> : null}
+      {tools.config.error ? <InlineAlert>{launcherError(tools.config.error)}</InlineAlert> : null}
+      {tools.progress ? <AppProgressBar progress={tools.progress} /> : null}
       <LaunchConfigForm
         appId={launchId}
-        loaded={config.data}
-        fields={config.fields}
-        busy={configBusy || Boolean(progress)}
+        loaded={tools.config.data}
+        fields={tools.config.fields}
+        busy={tools.busy}
         showSave={showSave}
-        onSaveFields={() => void saveFields()}
-        onGenerateDeepseek={() => void generateWithDeepseek()}
-        onOpenFolder={() => void openLaunchDir()}
+        pane={pane}
+        showTools={showTools}
+        onSaveFields={() => void tools.saveFields()}
+        onImportEnv={() => void tools.importEnv()}
+        onGenerateDeepseek={() => void tools.generateWithDeepseek()}
+        onOpenFolder={() => void tools.openLaunchDir()}
       />
     </>
   );
@@ -383,7 +651,7 @@ export function LaunchConfigPanel({
   return (
     <PageShell>
       <PageShell.Heading subtitle="Configuração de arranque e variáveis do projeto.">
-        Executável {config.data ? <StatusBadge label={config.data.runnerLabel} tone="info" /> : null}
+        Executável {tools.config.data ? <StatusBadge label={tools.config.data.runnerLabel} tone="info" /> : null}
       </PageShell.Heading>
       {body}
     </PageShell>

@@ -26,7 +26,7 @@ import {
   type ServiceAccount,
 } from '@/lib/launcher-api';
 import { logOpenFolder, logPath } from '@/lib/activity-log';
-import { AccountForm, AccountLibrary, accountTitle, GithubVersionRow, type AccountLibraryExtra } from '@/components/settings/AccountLibrary';
+import { AccountForm, AccountLibrary, accountTitle, GITHUB_TOKEN_CREATE_URL, TokenAccountHint, type AccountLibraryExtra } from '@/components/settings/AccountLibrary';
 import libraryStyles from './library.module.css';
 
 type Draft = Omit<PublicSettings, 'dataDir' | 'appVersion'>;
@@ -155,8 +155,7 @@ export function ProfileSettingsPage() {
     settings.data &&
       (draft.appListAccountName.trim() !== (settings.data.appListAccountName ?? '').trim() ||
         draft.appListApiToken.trim() !== (settings.data.appListApiToken ?? '').trim() ||
-        draft.appListRepository.trim() !== (settings.data.appListRepository ?? '').trim() ||
-        draft.painelUpdateRepository.trim() !== (settings.data.painelUpdateRepository ?? '').trim()),
+        draft.appListRepository.trim() !== (settings.data.appListRepository ?? '').trim()),
   );
 
   async function saveDeepseek(event: React.FormEvent) {
@@ -324,9 +323,9 @@ export function ProfileSettingsPage() {
       <PageShell>
         <PageShell.Heading subtitle="GitHub">Catálogo</PageShell.Heading>
         {error ? <InlineAlert>{error}</InlineAlert> : null}
-        <FormCard onSubmit={(event) => void saveGithub(event)} aria-label="Catálogo e atualização">
+        <FormCard onSubmit={(event) => void saveGithub(event)} aria-label="Catálogo">
           <FormCard.Header
-            title="Catálogo e atualização"
+            title="Catálogo"
             subtitle="A Nova app lista os repositórios de todas as contas."
           />
           <FormRow label="Nome da conta">
@@ -343,7 +342,7 @@ export function ProfileSettingsPage() {
               onChange={(event) => patchDraft({ appListApiToken: event.target.value })}
               autoComplete="off"
             />
-            <FormCard.Hint>O nome aparece na lista. O token fica só nesta conta.</FormCard.Hint>
+            <TokenAccountHint createUrl={GITHUB_TOKEN_CREATE_URL} />
           </FormRow>
           <FormRow label="Catálogo">
             <Input
@@ -351,14 +350,6 @@ export function ProfileSettingsPage() {
               onChange={(event) => patchDraft({ appListRepository: event.target.value })}
             />
           </FormRow>
-          <FormRow label="Atualização">
-            <Input
-              value={draft.painelUpdateRepository}
-              onChange={(event) => patchDraft({ painelUpdateRepository: event.target.value })}
-            />
-            <FormCard.Hint>Vazio desliga a atualização. Não use o repositório Avalonia do GithubLauncher.</FormCard.Hint>
-          </FormRow>
-          <GithubVersionRow repository={draft.painelUpdateRepository} />
           {githubDirty ? (
             <FormCard.Footer
               right={

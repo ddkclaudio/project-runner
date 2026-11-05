@@ -6,6 +6,26 @@
   min-width: 0;
 }
 
+.plain {
+  background: transparent;
+  border: none;
+  border-radius: 0;
+}
+
+.plain .header {
+  padding: 2px 0 12px;
+}
+
+.plain .row {
+  padding-left: 0;
+  padding-right: 0;
+}
+
+.plain .header + .hint {
+  padding-left: 0;
+  padding-right: 0;
+}
+
 .header {
   padding: 20px 22px 16px;
   border-bottom: 1px solid var(--border-subtle);
@@ -68,8 +88,24 @@
   border-top: none;
 }
 
+.rowStack {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 6px;
+}
+
+.rowStack .rowLabel {
+  padding-top: 0;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-muted);
+}
+
 .rowAlignStart .rowLabel {
   padding-top: 2px;
+}
+
+.rowStack.rowAlignStart .rowLabel {
+  padding-top: 0;
 }
 
 .rowLabel {
@@ -98,6 +134,24 @@
   color: var(--text-muted);
   margin-top: 8px;
   line-height: 1.6;
+}
+
+.header + .hint {
+  margin: 0;
+  padding: 16px 22px 18px;
+}
+
+.readout {
+  display: block;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--text-secondary);
+  word-break: break-word;
+  cursor: text;
+}
+
+.readoutEmpty {
+  color: var(--text-placeholder);
 }
 
 .fieldError {
