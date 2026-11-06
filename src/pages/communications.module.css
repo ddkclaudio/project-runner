@@ -326,6 +326,7 @@
 }
 
 .nodeBody {
+  position: relative;
   display: flex;
   flex-direction: column;
   gap: 1px;
@@ -348,6 +349,42 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.pinList {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px 0 6px;
+  border-top: 1px solid var(--border-default);
+}
+
+.pinRow {
+  position: relative;
+  display: flex;
+  align-items: center;
+  min-height: 22px;
+  padding: 1px 16px;
+}
+
+.pinNameEnd {
+  margin-left: auto;
+  text-align: right;
+}
+
+.pinRow :global(.react-flow__handle) {
+  width: 18px;
+  height: 18px;
+}
+
+.pinName {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  line-height: 1.3;
+  color: var(--text-secondary);
 }
 
 .opNode {

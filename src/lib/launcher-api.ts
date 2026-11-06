@@ -243,7 +243,9 @@ export type CommunicationEdge = {
   id: string;
   source: string;
   target: string;
-  /** Campo da app de destino. Ausente na aresta entre operações. */
+  /** Saída da app de origem (`output.local`, `output.cloudflare`, `output.build`). Só na aresta que sai do pino único de uma app. */
+  sourceField?: string;
+  /** Variável da app de destino (`env.VITE_API_URL`). O pino de entrada usa esta chave. Ausente na aresta entre operações. */
   targetField?: string;
 };
 

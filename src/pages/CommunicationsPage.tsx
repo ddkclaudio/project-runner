@@ -10,6 +10,7 @@ import {
   applyNodeChanges,
   Handle,
   Position,
+  useUpdateNodeInternals,
   type Connection,
   type Edge,
   type EdgeChange,
@@ -123,7 +124,7 @@ type FieldPrompt =
       flowY: number;
     }
   | { step: 'field'; purpose: 'bind'; sourceId: string; targetId: string }
-  | { step: 'field'; purpose: 'wire-source'; sourceId: string; targetId: string }
+  | { step: 'field'; purpose: 'wire-source'; sourceId: string; targetId: string; targetField?: string }
   | { step: 'field'; purpose: 'wire-dest'; sourceId: string; targetId: string; sourceField: string; sourceType: ValueType }
   | { step: 'field'; purpose: 'retarget'; sourceId: string; targetId: string };
 type LiteralPrompt = {
@@ -144,6 +145,7 @@ type OpMenuState = {
   flowY: number;
   sourceId: string;
   showMath: boolean;
+  sourceField?: string;
 };
 
 const HISTORY_LIMIT = 50;
@@ -151,6 +153,8 @@ const EMPTY_APPS: AppView[] = [];
 const EMPTY_TAKEN = new Set<string>();
 /** Grade invisível, em px. Arrasto, nodes novos e alinhar à grelha usam este valor. */
 const FLOW_SNAP = 20;
+/** Pino único de saída do node de app. Local, Cloudflare e Build não são pinos. */
+const APP_SOURCE = 'out';
 const SNAP_GRID: [number, number] = [FLOW_SNAP, FLOW_SNAP];
 
 function snapFlow(value: number): number {
@@ -215,7 +219,7 @@ function signature(graph: Graph): string {
     .sort()
     .join('\n');
   const edges = graph.edges
-    .map((edge) => [edge.id, edge.source, edge.target, edge.targetField ?? ''].join('\t'))
+    .map((edge) => [edge.id, edge.source, edge.target, edge.sourceField ?? '', edge.targetField ?? ''].join('\t'))
     .sort()
     .join('\n');
   return `${nodes}\n--\n${edges}`;
@@ -341,6 +345,7 @@ function normalize(graph: CommunicationsGraph): Graph {
     }),
     edges: (graph.edges ?? []).map((edge) => {
       const next: CommunicationEdge = { id: edge.id, source: edge.source, target: edge.target };
+      if (edge.sourceField) next.sourceField = edge.sourceField;
       if (edge.targetField) next.targetField = edge.targetField;
       return next;
     }),
@@ -389,12 +394,20 @@ function toFlow(graph: Graph, apps: AppView[], selectedId: string | null): FlowN
 }
 
 function toEdges(graph: Graph): Edge[] {
-  return graph.edges.map((edge) => ({
-    id: edge.id,
-    source: edge.source,
-    target: edge.target,
-    type: 'smoothstep',
-  }));
+  return graph.edges.map((edge) => {
+    const target = graph.nodes.find((node) => node.id === edge.target);
+    const next: Edge = {
+      id: edge.id,
+      source: edge.source,
+      target: edge.target,
+      type: 'smoothstep',
+    };
+    const sourceHandle = edgeSourceHandle(graph, edge);
+    if (sourceHandle) next.sourceHandle = sourceHandle;
+    const key = edge.targetField?.trim() ?? '';
+    if (target && isAppNode(target) && key) next.targetHandle = key;
+    return next;
+  });
 }
 
 /** Ligações que alimentam `nodeId`, subindo até ao nó sem entrada. */
@@ -629,6 +642,14 @@ function pointerClient(event: MouseEvent | TouchEvent): { x: number; y: number }
   return { x: event.clientX, y: event.clientY };
 }
 
+function nodeIdAtPoint(x: number, y: number): string | null {
+  for (const el of document.elementsFromPoint(x, y)) {
+    const node = el.closest('.react-flow__node');
+    if (node instanceof HTMLElement && node.dataset.id) return node.dataset.id;
+  }
+  return null;
+}
+
 function disconnectSource(node: CommunicationNode): CommunicationNode {
   const next: CommunicationNode = { ...node };
   delete next.sourceNodeId;
@@ -757,6 +778,14 @@ function outputLaunchFields(
 }
 
 function appUsesOutput(graph: Graph, apps: AppView[], launchId: string): boolean {
+  const fromEdge = graph.edges.some((edge) => {
+    if (!isOutputField(edge.sourceField?.trim() ?? '')) return false;
+    const source = graph.nodes.find((node) => node.id === edge.source);
+    if (!source || !isAppNode(source)) return false;
+    const live = liveApp(apps, source);
+    return Boolean(live && appId(live) === launchId);
+  });
+  if (fromEdge) return true;
   return graph.nodes.some((node) => {
     if (!node.sourceField || !isOutputField(node.sourceField)) return false;
     const root = chainAppNode(graph, node.id);
@@ -1050,6 +1079,21 @@ function destinationDrift(graph: Graph, apps: AppView[]): boolean {
   });
 }
 
+function readEdgeValue(graph: Graph, apps: AppView[], edge: CommunicationEdge, source: CommunicationNode): ChainResult {
+  if (isAppNode(source)) {
+    const key = edge.sourceField?.trim() ?? '';
+    if (!isOutputField(key)) return failure(source, source.id, 'missing-field');
+    const live = liveApp(apps, source);
+    if (!live) return failure(source, source.id, 'missing-app');
+    if (live.status === 'not_installed') return failure(source, source.id, 'not-installed');
+    const raw = resolveOutput(live, appId(live), key);
+    if (!raw?.trim()) return failure(source, source.id, 'missing-field');
+    return { ok: true, value: raw, numeric: false };
+  }
+  if (!isProducer(source)) return failure(source, source.id, 'missing-source');
+  return evaluateChain(graph, apps, source.id, new Set());
+}
+
 function planWrites(graph: Graph, apps: AppView[]): WritePlan {
   const writes: PlannedWrite[] = [];
   const seen = new Set<string>();
@@ -1058,7 +1102,7 @@ function planWrites(graph: Graph, apps: AppView[]): WritePlan {
     if (!key || isRetiredLaunchField(key)) continue;
     const source = graph.nodes.find((node) => node.id === edge.source);
     const dest = graph.nodes.find((node) => node.id === edge.target);
-    if (!source || !isProducer(source)) {
+    if (!source) {
       return { ok: false, message: 'Uma ligação falhou: a origem não está no grafo.' };
     }
     if (!dest || !isAppNode(dest)) {
@@ -1073,14 +1117,14 @@ function planWrites(graph: Graph, apps: AppView[]): WritePlan {
       return { ok: false, message: `${nodeTitle(source)} falhou: o campo ${key} já tem uma ligação.` };
     }
     seen.add(slot);
-    const result = evaluateChain(graph, apps, source.id, new Set());
+    const result = readEdgeValue(graph, apps, edge, source);
     if (!result.ok) return { ok: false, message: failureMessage(result) };
     writes.push({
       sourceName: nodeTitle(source),
       appId: appId(live),
       key,
       value: result.value,
-      valueType: outputType(source, result.value),
+      valueType: isAppNode(source) ? outputFieldType(edge.sourceField ?? '') : outputType(source, result.value),
       destNode: dest,
       destName: live.name || dest.name || 'App',
     });
@@ -1100,8 +1144,8 @@ function sourceLabel(graph: Graph, node: CommunicationNode): string {
 }
 
 function fieldHint(prompt: FieldPrompt, graph: Graph): string {
-  if (prompt.purpose === 'wire-source') return 'Escolha a saída que o Set vai ler.';
-  if (prompt.purpose === 'wire-dest' || prompt.purpose === 'bind') return 'O Salvar grava o valor calculado neste campo.';
+  if (prompt.purpose === 'wire-source') return 'Escolha Local, Cloudflare ou Build. Esse valor segue nesta linha.';
+  if (prompt.purpose === 'wire-dest' || prompt.purpose === 'bind') return 'O pino desta variável aparece e o Salvar grava o valor.';
   if (prompt.purpose === 'create' && prompt.op === 'value') return 'O texto digitado fica guardado neste node.';
   if (prompt.purpose === 'create' && prompt.op === 'get') return 'O node copia este valor. O Salvar grava só no destino.';
   if (prompt.purpose === 'create') return 'O node mostra o valor calculado. O Salvar grava só no destino.';
@@ -1181,12 +1225,20 @@ async function warmGraph(client: QueryClient, graph: Graph, apps: AppView[]) {
   }
   for (const edge of graph.edges) {
     const key = edge.targetField?.trim() ?? '';
-    if (!key || isRetiredLaunchField(key)) continue;
-    const dest = graph.nodes.find((node) => node.id === edge.target);
-    if (!dest || !isAppNode(dest)) continue;
-    const live = liveApp(apps, dest);
-    if (!live || live.status === 'not_installed') continue;
-    ids.add(appId(live));
+    if (key && !isRetiredLaunchField(key)) {
+      const dest = graph.nodes.find((node) => node.id === edge.target);
+      if (dest && isAppNode(dest)) {
+        const live = liveApp(apps, dest);
+        if (live && live.status !== 'not_installed') ids.add(appId(live));
+      }
+    }
+    if (isOutputField(edge.sourceField?.trim() ?? '')) {
+      const source = graph.nodes.find((node) => node.id === edge.source);
+      if (source && isAppNode(source)) {
+        const origin = liveApp(apps, source);
+        if (origin && origin.status !== 'not_installed') ids.add(appId(origin));
+      }
+    }
   }
   for (const id of ids) {
     try {
@@ -1265,7 +1317,54 @@ function ChainPreview({ nodeId, plain }: { nodeId: string; plain?: boolean }) {
   return <ChainPreviewLoaded nodeId={node.id} launchId={appId(live)} plain={plain} />;
 }
 
+function edgeSourceHandle(graph: Graph, edge: CommunicationEdge): string | undefined {
+  const source = graph.nodes.find((node) => node.id === edge.source);
+  if (!source || !isAppNode(source)) return undefined;
+  const onEdge = edge.sourceField?.trim() ?? '';
+  if (isOutputField(onEdge)) return onEdge;
+  const target = graph.nodes.find((node) => node.id === edge.target);
+  const onNode = target?.sourceNodeId === source.id ? target.sourceField?.trim() ?? '' : '';
+  if (isOutputField(onNode)) return onNode;
+  return APP_SOURCE;
+}
+
+function appInputKeys(graph: Graph, nodeId: string): string[] {
+  const keys: string[] = [];
+  for (const edge of graph.edges) {
+    const key = edge.targetField?.trim() ?? '';
+    if (edge.target !== nodeId || !isLaunchVariable(key) || keys.includes(key)) continue;
+    keys.push(key);
+  }
+  return keys;
+}
+
+function appOutputKeys(graph: Graph, nodeId: string): string[] {
+  const found = new Set<string>();
+  for (const edge of graph.edges) {
+    if (edge.source !== nodeId) continue;
+    const handle = edgeSourceHandle(graph, edge);
+    if (handle && isOutputField(handle)) found.add(handle);
+  }
+  return [OUTPUT_LOCAL, OUTPUT_CLOUDFLARE, OUTPUT_BUILD].filter((key) => found.has(key));
+}
+
+function pinLabel(key: string): string {
+  return key.replace(/^env\./i, '');
+}
+
+function outputFromHandle(handle: string | null | undefined): string | undefined {
+  return handle && isOutputField(handle) ? handle : undefined;
+}
+
+function outputPinLabel(key: string): string {
+  if (key === OUTPUT_LOCAL) return 'Local';
+  if (key === OUTPUT_CLOUDFLARE) return 'Cloudflare';
+  if (key === OUTPUT_BUILD) return 'Build';
+  return pinLabel(key);
+}
+
 function appReads(graph: Graph, nodeId: string): boolean {
+  if (graph.edges.some((edge) => edge.source === nodeId && isOutputField(edge.sourceField?.trim() ?? ''))) return true;
   return graph.nodes.some((node) => {
     if (!opKind(node.kind)) return false;
     if (chainAppNode(graph, node.id)?.id === nodeId) return true;
@@ -1289,24 +1388,60 @@ function NodeHeader({ children }: { children: string }) {
 
 function AppNode({ id, data, selected }: NodeProps<AppFlowNode>) {
   const { graph, apps } = useCommunicationsGraph();
+  const updateNodeInternals = useUpdateNodeInternals();
   const node = graph.nodes.find((item) => item.id === id);
   const reads = node ? appReads(graph, node.id) : false;
   const receives = node ? appReceives(graph, node.id) : false;
   const live = node ? liveApp(apps, node) : undefined;
   const launchId = live && live.status !== 'not_installed' ? appId(live) : '';
+  const pins = appInputKeys(graph, id);
+  const outputs = appOutputKeys(graph, id);
+  const pinKey = `${pins.join('\n')}\n${outputs.join('\n')}`;
+  useEffect(() => {
+    updateNodeInternals(id);
+  }, [id, pinKey, updateNodeInternals]);
   let header = 'Tipo desconhecido';
   if (reads && receives) header = 'Get · Set';
   else if (reads) header = 'Get';
   else if (receives) header = 'Set';
   return (
     <div className={cx(styles.node, selected && styles.nodeSelected)}>
-      <Handle type="target" position={Position.Left} />
       {reads || receives ? <NodeHeader>{header}</NodeHeader> : launchId ? <AppTypeHeader launchId={launchId} /> : <NodeHeader>{header}</NodeHeader>}
       <div className={styles.nodeBody}>
         <div className={styles.nodeTitle}>{data.label}</div>
         <div className={styles.nodeMeta}>{data.repository || 'Sem repositório'}</div>
+        <Handle type="source" position={Position.Right} id={APP_SOURCE} />
       </div>
-      <Handle type="source" position={Position.Right} />
+      {pins.length > 0 || outputs.length > 0 ? (
+        <div className={styles.pinList}>
+          {Array.from({ length: Math.max(pins.length, outputs.length) }, (_, index) => {
+            const input = pins[index];
+            const output = outputs[index];
+            return (
+              <div key={input ?? output} className={styles.pinRow}>
+                {input ? (
+                  <>
+                    <Handle type="target" position={Position.Left} id={input} />
+                    <span className={styles.pinName} title={input}>
+                      {pinLabel(input)}
+                    </span>
+                  </>
+                ) : (
+                  <span />
+                )}
+                {output ? (
+                  <>
+                    <span className={cx(styles.pinName, styles.pinNameEnd)} title={output}>
+                      {outputPinLabel(output)}
+                    </span>
+                    <Handle type="source" position={Position.Right} id={output} />
+                  </>
+                ) : null}
+              </div>
+            );
+          })}
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -1859,6 +1994,8 @@ function FieldList({
   taken,
   idleMessage,
   includeOutputs = false,
+  outputsOnly = false,
+  outputDest,
   onPick,
 }: {
   launchId: string;
@@ -1868,6 +2005,8 @@ function FieldList({
   taken: Set<string>;
   idleMessage: string;
   includeOutputs?: boolean;
+  outputsOnly?: boolean;
+  outputDest?: LaunchField;
   onPick: (field: LaunchField) => void;
 }) {
   const config = useLaunchConfig(launchId);
@@ -1882,15 +2021,16 @@ function FieldList({
     enabled: includeOutputs && Boolean(launchId),
   });
   const [query, setQuery] = useState('');
-  if (config.isPending && !config.isSuccess && config.fields.length === 0) {
+  if (!outputsOnly && config.isPending && !config.isSuccess && config.fields.length === 0) {
     return <p className={styles.missing}>A carregar variáveis…</p>;
   }
-  if (config.isError && config.fields.length === 0) {
+  if (!outputsOnly && config.isError && config.fields.length === 0) {
     return <p className={styles.missing}>Launchfile indisponível.</p>;
   }
   const outputs =
     includeOutputs && app && !numeric && !valueType ? outputLaunchFields(app, launchId, cloudflare.data, build.data) : [];
-  const available = [...outputs, ...config.fields.filter((field) => acceptsField(field, numeric, valueType, taken))];
+  const listedOutputs = outputDest ? outputs.filter((field) => fieldAccepts(outputDest, pickedValueType(field))) : outputs;
+  const available = [...listedOutputs, ...(outputsOnly ? [] : config.fields.filter((field) => acceptsField(field, numeric, valueType, taken)))];
   const term = fold(query.trim());
   const shown = available.filter((field) => !term || fold(`${field.label} ${field.key} ${field.value}`).includes(term));
   return (
@@ -1960,6 +2100,15 @@ function FieldModal({
                 return result.ok ? classifyValue(result.value) : 'text';
               })()
       : null;
+  const pinned =
+    prompt.purpose === 'wire-source' && prompt.targetField
+      ? { key: prompt.targetField, targetId: prompt.targetId }
+      : undefined;
+  const pinnedNode = pinned ? graph.nodes.find((node) => node.id === pinned.targetId) : undefined;
+  const pinnedLive = pinnedNode && isAppNode(pinnedNode) ? liveApp(apps, pinnedNode) : undefined;
+  const pinnedLaunchId = pinnedLive && pinnedLive.status !== 'not_installed' ? appId(pinnedLive) : '';
+  const pinnedConfig = useLaunchConfig(pinnedLaunchId, Boolean(pinnedLaunchId));
+  const pinnedField = pinned ? pinnedConfig.fields.find((field) => field.key === pinned.key) : undefined;
   const taken = (prompt.purpose === 'bind' || prompt.purpose === 'wire-dest') && appNode ? takenTargetFields(graph, apps, appNode) : EMPTY_TAKEN;
   const statusText =
     status === 'pending'
@@ -1969,7 +2118,7 @@ function FieldModal({
         : 'Esta app não está na biblioteca.';
 
   return (
-    <Modal isOpen onClose={onClose} title={prompt.purpose === 'bind' || prompt.purpose === 'wire-dest' ? 'Variável de destino' : 'Variável de origem'} maxWidth={440}>
+    <Modal isOpen onClose={onClose} title={prompt.purpose === 'wire-source' ? 'Saída' : prompt.purpose === 'bind' || prompt.purpose === 'wire-dest' ? 'Variável de destino' : 'Variável de origem'} maxWidth={440}>
       <Modal.Content>
         <Modal.Text>{fieldHint(prompt, graph)}</Modal.Text>
         {status === 'ready' && launchId ? (
@@ -1980,7 +2129,9 @@ function FieldModal({
             valueType={valueType}
             taken={taken}
             includeOutputs={prompt.purpose !== 'bind' && prompt.purpose !== 'wire-dest'}
-            idleMessage={idleEmpty(prompt, graph)}
+            outputsOnly={prompt.purpose === 'wire-source'}
+            outputDest={pinnedField}
+            idleMessage={prompt.purpose === 'wire-source' ? (pinnedField ? 'Nenhuma saída com este tipo.' : 'Nenhuma saída disponível.') : idleEmpty(prompt, graph)}
             onPick={onPick}
           />
         ) : (
@@ -2508,12 +2659,17 @@ function CommunicationsCanvas({ orgId, initial }: { orgId: string; initial: Grap
 
   function canConnect(connection: Connection | Edge) {
     if (!connection.source || !connection.target || connection.source === connection.target) return false;
-    if (graphRef.current.edges.some((edge) => edge.source === connection.source && edge.target === connection.target)) {
-      return false;
-    }
     const target = graphRef.current.nodes.find((node) => node.id === connection.target);
     if (target?.kind === 'primitive' || target?.kind === 'port') return false;
-    if (target && opKind(target.kind) && wouldCycle(graphRef.current, connection.source, connection.target)) return false;
+    if (target && opKind(target.kind)) {
+      if (wouldCycle(graphRef.current, connection.source, connection.target)) return false;
+      if (graphRef.current.edges.some((edge) => edge.source === connection.source && edge.target === connection.target)) return false;
+      return true;
+    }
+    const handle = connection.targetHandle ?? '';
+    if (handle && isLaunchVariable(handle) && target && isAppNode(target)) {
+      if (takenTargetFields(graphRef.current, appsRef.current, target).has(handle)) return false;
+    }
     return true;
   }
 
@@ -2577,6 +2733,27 @@ function CommunicationsCanvas({ orgId, initial }: { orgId: string; initial: Grap
     commit({ nodes, edges });
   }
 
+  function launchFieldOf(node: CommunicationNode, key: string): LaunchField | undefined {
+    const live = liveApp(appsRef.current, node);
+    if (!live || live.status === 'not_installed') return undefined;
+    const id = appId(live);
+    const fields = readDraft(id) ?? readSnapshot(id)?.fields;
+    return fields?.find((field) => field.key === key);
+  }
+
+  async function ensureLaunchField(node: CommunicationNode, key: string): Promise<LaunchField | undefined> {
+    const cached = launchFieldOf(node, key);
+    if (cached) return cached;
+    const live = liveApp(appsRef.current, node);
+    if (!live || live.status === 'not_installed') return undefined;
+    try {
+      await warmLaunch(queryClient, appId(live));
+    } catch {
+      return undefined;
+    }
+    return launchFieldOf(node, key);
+  }
+
   function bindTarget(sourceId: string, targetId: string, field: LaunchField) {
     const current = graphRef.current;
     const source = current.nodes.find((node) => node.id === sourceId);
@@ -2590,26 +2767,9 @@ function CommunicationsCanvas({ orgId, initial }: { orgId: string; initial: Grap
       toast.error('Este campo já tem uma ligação.');
       return;
     }
-    const id = crypto.randomUUID();
-    const variable = field.key.replace(/^env\./i, '');
-    const created: CommunicationNode = {
-      id,
-      folderName: '',
-      repository: '',
-      name: variable,
-      x: snapFlow(target.x - 240),
-      y: snapFlow(target.y),
-      alwaysOn: false,
-      kind: 'get',
-      sourceNodeId: source.id,
-    };
     commit({
-      nodes: [...current.nodes, created],
-      edges: [
-        ...current.edges.filter((edge) => !(edge.source === sourceId && edge.target === targetId && !edge.targetField?.trim())),
-        { id: crypto.randomUUID(), source: source.id, target: id },
-        { id: crypto.randomUUID(), source: id, target: target.id, targetField: field.key },
-      ],
+      ...current,
+      edges: [...current.edges, { id: crypto.randomUUID(), source: source.id, target: target.id, targetField: field.key }],
     });
   }
 
@@ -2618,7 +2778,7 @@ function CommunicationsCanvas({ orgId, initial }: { orgId: string; initial: Grap
     const source = current.nodes.find((node) => node.id === sourceId);
     const target = current.nodes.find((node) => node.id === targetId);
     if (!source || !target || !isAppNode(source) || !isAppNode(target)) return;
-    if (!isLaunchVariable(field.key) || !fieldAccepts(field, sourceType)) {
+    if (!isOutputField(sourceField) || !isLaunchVariable(field.key) || !fieldAccepts(field, sourceType)) {
       toast.error(`${nodeTitle(source)} falhou: tipo incompatível com ${field.label || field.key}.`);
       return;
     }
@@ -2626,28 +2786,17 @@ function CommunicationsCanvas({ orgId, initial }: { orgId: string; initial: Grap
       toast.error('Este campo já tem uma ligação.');
       return;
     }
-    const id = crypto.randomUUID();
-    const variable = field.key.replace(/^env\./i, '');
     commit({
-      nodes: [
-        ...current.nodes,
-        {
-          id,
-          folderName: '',
-          repository: '',
-          name: variable,
-          x: snapFlow(target.x - 240),
-          y: snapFlow(target.y),
-          alwaysOn: false,
-          kind: 'get',
-          sourceNodeId: source.id,
-          sourceField,
-        },
-      ],
+      ...current,
       edges: [
-        ...current.edges.filter((edge) => !(edge.source === sourceId && edge.target === targetId && !edge.targetField?.trim())),
-        { id: crypto.randomUUID(), source: source.id, target: id },
-        { id: crypto.randomUUID(), source: id, target: target.id, targetField: field.key },
+        ...current.edges,
+        {
+          id: crypto.randomUUID(),
+          source: source.id,
+          target: target.id,
+          sourceField,
+          targetField: field.key,
+        },
       ],
     });
   }
@@ -2687,13 +2836,31 @@ function CommunicationsCanvas({ orgId, initial }: { orgId: string; initial: Grap
       return;
     }
     if (prompt.purpose === 'wire-source') {
+      const sourceField = field.key;
+      const sourceType = pickedValueType(field);
+      if (prompt.targetField) {
+        const sourceId = prompt.sourceId;
+        const targetId = prompt.targetId;
+        const targetField = prompt.targetField;
+        setPrompt(null);
+        void (async () => {
+          const target = graphRef.current.nodes.find((node) => node.id === targetId);
+          const dest = target ? await ensureLaunchField(target, targetField) : undefined;
+          if (!dest) {
+            toast.error('Launchfile indisponível.');
+            return;
+          }
+          wireAppField(sourceId, targetId, sourceField, sourceType, dest);
+        })();
+        return;
+      }
       setPrompt({
         step: 'field',
         purpose: 'wire-dest',
         sourceId: prompt.sourceId,
         targetId: prompt.targetId,
-        sourceField: field.key,
-        sourceType: pickedValueType(field),
+        sourceField,
+        sourceType,
       });
       return;
     }
@@ -2760,6 +2927,27 @@ function CommunicationsCanvas({ orgId, initial }: { orgId: string; initial: Grap
       createLinkedOp({ kind, source, flowX: menu.flowX, flowY: menu.flowY });
       return;
     }
+    if (menu.sourceField && isOutputField(menu.sourceField)) {
+      if ((kind === 'increment' || kind === 'decrement') && outputFieldType(menu.sourceField) !== 'number') {
+        toast.error(`${opLabel(kind)} precisa de um valor numérico.`);
+        return;
+      }
+      if (kind === 'value') {
+        setPrompt({
+          step: 'literal',
+          purpose: 'create',
+          op: 'value',
+          sourceId: source.id,
+          flowX: menu.flowX,
+          flowY: menu.flowY,
+          sourceField: menu.sourceField,
+          initial: '',
+        });
+        return;
+      }
+      createLinkedOp({ kind, source, flowX: menu.flowX, flowY: menu.flowY, sourceField: menu.sourceField });
+      return;
+    }
     setPrompt({
       step: 'field',
       purpose: 'create',
@@ -2767,6 +2955,43 @@ function CommunicationsCanvas({ orgId, initial }: { orgId: string; initial: Grap
       sourceId: source.id,
       flowX: menu.flowX,
       flowY: menu.flowY,
+    });
+  }
+
+  function startAppLink(sourceId: string, targetId: string, sourceField?: string, targetField?: string) {
+    const source = graphRef.current.nodes.find((node) => node.id === sourceId);
+    const target = graphRef.current.nodes.find((node) => node.id === targetId);
+    if (!source || !target || !isAppNode(source) || !isAppNode(target) || sourceId === targetId) return;
+    setPicker(null);
+    setOpMenu(null);
+    if (sourceField && isOutputField(sourceField) && targetField) {
+      void (async () => {
+        const dest = await ensureLaunchField(target, targetField);
+        if (!dest) {
+          toast.error('Launchfile indisponível.');
+          return;
+        }
+        wireAppField(sourceId, targetId, sourceField, outputFieldType(sourceField), dest);
+      })();
+      return;
+    }
+    if (sourceField && isOutputField(sourceField)) {
+      setPrompt({
+        step: 'field',
+        purpose: 'wire-dest',
+        sourceId,
+        targetId,
+        sourceField,
+        sourceType: outputFieldType(sourceField),
+      });
+      return;
+    }
+    setPrompt({
+      step: 'field',
+      purpose: 'wire-source',
+      sourceId,
+      targetId,
+      ...(targetField ? { targetField } : {}),
     });
   }
 
@@ -2781,8 +3006,10 @@ function CommunicationsCanvas({ orgId, initial }: { orgId: string; initial: Grap
     const sourceIsOp = Boolean(opKind(source.kind) || source.kind === 'primitive' || source.kind === 'port');
     const targetIsOp = Boolean(opKind(target.kind));
     if (target.kind === 'primitive' || target.kind === 'port') return;
-    if (!sourceIsOp && !targetIsOp) {
-      setPrompt({ step: 'field', purpose: 'wire-source', sourceId: source.id, targetId: target.id });
+    const pin = connection.targetHandle && isLaunchVariable(connection.targetHandle) ? connection.targetHandle : '';
+    const fromOutput = outputFromHandle(connection.sourceHandle);
+    if (!sourceIsOp && isAppNode(target)) {
+      startAppLink(source.id, target.id, fromOutput, pin || undefined);
       return;
     }
     if (targetIsOp) {
@@ -2792,6 +3019,18 @@ function CommunicationsCanvas({ orgId, initial }: { orgId: string; initial: Grap
         return;
       }
       setPrompt({ step: 'field', purpose: 'retarget', sourceId: source.id, targetId: target.id });
+      return;
+    }
+    if (pin) {
+      const sourceId = source.id;
+      const targetId = target.id;
+      void ensureLaunchField(target, pin).then((field) => {
+        if (!field) {
+          toast.error('Launchfile indisponível.');
+          return;
+        }
+        bindTarget(sourceId, targetId, field);
+      });
       return;
     }
     setPrompt({ step: 'field', purpose: 'bind', sourceId: source.id, targetId: target.id });
@@ -2804,7 +3043,7 @@ function CommunicationsCanvas({ orgId, initial }: { orgId: string; initial: Grap
     }, 120);
   }
 
-  async function openOpMenu(sourceId: string, point: { x: number; y: number }) {
+  async function openOpMenu(sourceId: string, point: { x: number; y: number }, sourceField?: string) {
     const token = ++menuToken.current;
     armPaneSuppress();
     const source = graphRef.current.nodes.find((node) => node.id === sourceId);
@@ -2824,17 +3063,34 @@ function CommunicationsCanvas({ orgId, initial }: { orgId: string; initial: Grap
       flowY: snapFlow(flow.y),
       sourceId,
       showMath: showMathForSource(graphRef.current, appsRef.current, latest),
+      ...(sourceField ? { sourceField } : {}),
     });
   }
 
   const onConnectEnd: OnConnectEnd = (event, state) => {
     const fromId = state.fromNode?.id;
     const toId = state.toNode?.id;
-    if (fromId && toId) {
+    const fromOutput = outputFromHandle(state.fromHandle?.id);
+    if (fromId && toId && state.toHandle?.type === 'target') {
       if (fromId !== toId && state.isValid === false && state.fromHandle?.type === 'source') {
         const target = graphRef.current.nodes.find((node) => node.id === toId);
+        const source = graphRef.current.nodes.find((node) => node.id === fromId);
+        const handleId = state.toHandle.id ?? '';
         if (target && opKind(target.kind) && wouldCycle(graphRef.current, fromId, toId)) {
           toast.error('Esta ligação fecharia um ciclo.');
+          return;
+        }
+        if (isLaunchVariable(handleId) && source && target && isAppNode(target)) {
+          if (isAppNode(source)) {
+            startAppLink(fromId, toId, fromOutput);
+            return;
+          }
+          if (isProducer(source)) {
+            setPicker(null);
+            setOpMenu(null);
+            setPrompt({ step: 'field', purpose: 'bind', sourceId: fromId, targetId: toId });
+            return;
+          }
         }
       }
       return;
@@ -2842,7 +3098,26 @@ function CommunicationsCanvas({ orgId, initial }: { orgId: string; initial: Grap
     if (!fromId || state.fromHandle?.type !== 'source') return;
     const point = pointerClient(event);
     if (!point) return;
-    void openOpMenu(fromId, point);
+    const hitId = nodeIdAtPoint(point.x, point.y);
+    if (hitId && hitId !== fromId) {
+      const source = graphRef.current.nodes.find((node) => node.id === fromId);
+      const target = graphRef.current.nodes.find((node) => node.id === hitId);
+      if (source && target && isAppNode(target)) {
+        if (isAppNode(source)) {
+          startAppLink(fromId, hitId, fromOutput);
+          return;
+        }
+        if (isProducer(source)) {
+          setPicker(null);
+          setOpMenu(null);
+          setPrompt({ step: 'field', purpose: 'bind', sourceId: fromId, targetId: hitId });
+          return;
+        }
+      }
+      if (target) return;
+    }
+    if (hitId === fromId) return;
+    void openOpMenu(fromId, point, fromOutput);
   };
 
   function onNodesChange(changes: NodeChange<FlowNode>[]) {
@@ -3201,7 +3476,7 @@ function CommunicationsCanvas({ orgId, initial }: { orgId: string; initial: Grap
               onConnect={onConnect}
               onConnectEnd={onConnectEnd}
               isValidConnection={canConnect}
-              connectionRadius={36}
+              connectionRadius={16}
               deleteKeyCode={['Backspace', 'Delete']}
               fitView={false}
               defaultViewport={{ x: 0, y: 0, zoom: 1 }}

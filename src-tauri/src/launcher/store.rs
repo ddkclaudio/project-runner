@@ -1596,7 +1596,12 @@ pub struct CommunicationEdge {
     pub id: String,
     pub source: String,
     pub target: String,
-    /// Campo da app de destino. Vazio na aresta entre operações e na ligação só visual entre apps.
+    /// Saída da app de origem (`output.local`, `output.cloudflare`, `output.build`).
+    /// Só na aresta de uma app para outra app. Vazio quando a origem é uma operação.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub source_field: String,
+    /// Variável da app de destino. Vazio na aresta entre operações.
+    /// Uma app pode receber várias linhas, uma por variável.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub target_field: String,
 }
@@ -1643,6 +1648,13 @@ fn clip_block(value: &str, max: usize) -> String {
 }
 
 /// Kind desconhecido ou vazio continua node de app. `get` copia o valor. `port` guarda a porta.
+fn is_output_field(value: &str) -> bool {
+    matches!(
+        value.trim(),
+        "output.local" | "output.cloudflare" | "output.build"
+    )
+}
+
 fn op_kind(kind: &str) -> &'static str {
     match kind.trim() {
         "increment" => "increment",
@@ -1817,7 +1829,7 @@ pub fn sanitize_communications(graph: CommunicationsGraph) -> CommunicationsGrap
     let ids: std::collections::HashSet<String> = nodes.iter().map(|node| node.id.clone()).collect();
     let mut edges = Vec::new();
     let mut seen_edges = std::collections::HashSet::new();
-    let mut pairs = std::collections::HashSet::new();
+    let mut pairs: std::collections::HashSet<(String, String, String)> = std::collections::HashSet::new();
     for edge in graph.edges {
         if edges.len() >= MAX_COMMUNICATION_EDGES {
             break;
@@ -1831,19 +1843,31 @@ pub fn sanitize_communications(graph: CommunicationsGraph) -> CommunicationsGrap
         if !ids.contains(&source) || !ids.contains(&target) {
             continue;
         }
-        if !seen_edges.insert(id.clone()) || !pairs.insert((source.clone(), target.clone())) {
+        let source_is_app = app_ids.contains(&source);
+        let target_is_app = app_ids.contains(&target);
+        let source_is_op = op_ids.contains(&source);
+        let mut source_field = String::new();
+        let mut target_field = String::new();
+        if target_is_app && source_is_op {
+            target_field = clip_line(&edge.target_field, MAX_COMMUNICATION_FIELD);
+        } else if source_is_app && target_is_app {
+            source_field = clip_line(&edge.source_field, MAX_COMMUNICATION_FIELD);
+            target_field = clip_line(&edge.target_field, MAX_COMMUNICATION_FIELD);
+            // O pino de saída escolhe Local, Cloudflare ou Build. Sem os dois campos a linha não existe.
+            if !is_output_field(&source_field) || target_field.is_empty() {
+                continue;
+            }
+        }
+        if !seen_edges.insert(id.clone())
+            || !pairs.insert((source.clone(), target.clone(), target_field.clone()))
+        {
             continue;
         }
-        // targetField só na aresta de uma operação para uma app.
-        let target_field = if op_ids.contains(&source) && app_ids.contains(&target) {
-            clip_line(&edge.target_field, MAX_COMMUNICATION_FIELD)
-        } else {
-            String::new()
-        };
         edges.push(CommunicationEdge {
             id,
             source,
             target,
+            source_field,
             target_field,
         });
     }
@@ -1943,7 +1967,11 @@ mod tests {
                 {"id": "e2", "source": "a", "target": "missing"},
                 {"id": "e3", "source": "op", "target": "a", "targetField": " env.PORT "},
                 {"id": "e4", "source": "val", "target": "op", "targetField": "port"},
-                {"id": "e5", "source": "a", "target": "bad", "targetField": "port"}
+                {"id": "e5", "source": "a", "target": "bad", "targetField": "port"},
+                {"id": "e6", "source": "a", "target": "bad", "sourceField": " output.local ", "targetField": " env.VITE_API_URL "},
+                {"id": "e7", "source": "a", "target": "bad", "sourceField": "output.build", "targetField": "env.PORT"},
+                {"id": "e8", "source": "a", "target": "bad", "sourceField": "output.local", "targetField": "env.VITE_API_URL"},
+                {"id": "e9", "source": "a", "target": "bad", "sourceField": "port", "targetField": "env.PORT"}
             ]
         }"#;
         let parsed: CommunicationsGraph = serde_json::from_str(raw).unwrap();
@@ -1990,8 +2018,13 @@ mod tests {
         assert_eq!(dest.target_field, "env.PORT");
         let chain = graph.edges.iter().find(|edge| edge.id == "e4").unwrap();
         assert!(chain.target_field.is_empty(), "aresta entre operações não tem targetField");
-        let visual = graph.edges.iter().find(|edge| edge.id == "e5").unwrap();
-        assert!(visual.target_field.is_empty(), "ligação entre apps não grava campo");
+        assert!(graph.edges.iter().all(|edge| edge.id != "e5" && edge.id != "e8" && edge.id != "e9"));
+        let local = graph.edges.iter().find(|edge| edge.id == "e6").unwrap();
+        assert_eq!(local.source_field, "output.local");
+        assert_eq!(local.target_field, "env.VITE_API_URL");
+        let build = graph.edges.iter().find(|edge| edge.id == "e7").unwrap();
+        assert_eq!(build.source_field, "output.build");
+        assert_eq!(build.target_field, "env.PORT");
 
         let saved = serde_json::to_value(&graph).unwrap();
         let nodes = saved["nodes"].as_array().unwrap();
